@@ -171,14 +171,14 @@ winch-test-macros = { path = "winch/test-macros" }
 
 target-lexicon = { version = "0.12.3", default-features = false, features = ["std"] }
 anyhow = "1.0.22"
-wasmparser = "0.102.0"
-wat = "1.0.61"
-wast = "55.0.0"
-wasmprinter = "0.2.54"
-wasm-encoder = "0.25.0"
-wasm-smith = "0.12.5"
-wasm-mutate = "0.2.22"
-wit-parser = "0.6.4"
+wasmparser = { path = "../wasm-tools/crates/wasmparser" }
+wat = { path = "../wasm-tools/crates/wat" }
+wast = { path = "../wasm-tools/crates/wast" }
+wasmprinter = { path = "../wasm-tools/crates/wasmprinter" }
+wasm-encoder = { path = "../wasm-tools/crates/wasm-encoder" }
+wasm-smith = { path = "../wasm-tools/crates/wasm-smith" }
+wasm-mutate = { path = "../wasm-tools/crates/wasm-mutate" }
+wit-parser = { path = "../wasm-tools/crates/wit-parser" }
 windows-sys = "0.45.0"
 env_logger = "0.9"
 rustix = "0.36.7"

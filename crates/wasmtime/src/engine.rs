@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use target_lexicon::triple;
 #[cfg(feature = "cache")]
 use wasmtime_cache::CacheConfig;
 use wasmtime_environ::obj;
@@ -485,6 +486,9 @@ impl Engine {
                 // The `BTI` instruction acts as a `NOP` when unsupported, so it
                 // is safe to enable it.
                 "use_bti" => Some(true),
+                // `MTE` instructions act as `NOP` when unsupported, so it is safe to
+                // enable it.
+                "use_mte" => Some(true),
                 // fall through to the very bottom to indicate that support is
                 // not enabled to test whether this feature is enabled on the
                 // host.

@@ -888,6 +888,13 @@
        ;; supported.
        (Xpaclri)
 
+       ;; IRG
+       (Irg (rd WritableReg) (rn Reg) (rm Reg))
+
+       ;; STG
+       ;; TODO: not all addressing modes are supported; maybe change this?
+       (Stg (rt Reg) (mem AMode))
+
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
        (Bti

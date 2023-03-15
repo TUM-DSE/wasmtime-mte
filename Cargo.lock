@@ -3291,8 +3291,6 @@ dependencies = [
 [[package]]
 name = "wasm-encoder"
 version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4eff853c4f09eec94d76af527eddad4e9de13b11d6286a1ef7134bc30135a2b7"
 dependencies = [
  "leb128",
 ]
@@ -3300,8 +3298,6 @@ dependencies = [
 [[package]]
 name = "wasm-mutate"
 version = "0.2.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "956f9fd2f785491bdb243ae608c53fd6bb9956f9e174c1fc5a77354fce396698"
 dependencies = [
  "egg",
  "log",
@@ -3314,8 +3310,6 @@ dependencies = [
 [[package]]
 name = "wasm-smith"
 version = "0.12.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549cb78be46f43ad6746402871336cb6a989127fb847e93eb6ba0817647485a6"
 dependencies = [
  "arbitrary",
  "flagset",
@@ -3366,8 +3360,6 @@ dependencies = [
 [[package]]
 name = "wasmparser"
 version = "0.102.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48134de3d7598219ab9eaf6b91b15d8e50d31da76b8519fe4ecfcec2cf35104b"
 dependencies = [
  "indexmap",
  "url",
@@ -3385,8 +3377,6 @@ dependencies = [
 [[package]]
 name = "wasmprinter"
 version = "0.2.54"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dc17ae63836d010a2bf001c26a5fedbb9a05e5f71117fb63e0ab878bfbe1ca3"
 dependencies = [
  "anyhow",
  "wasmparser",
@@ -3897,8 +3887,6 @@ dependencies = [
 [[package]]
 name = "wast"
 version = "55.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4984d3e1406571f4930ba5cf79bd70f75f41d0e87e17506e0bd19b0e5d085f05"
 dependencies = [
  "leb128",
  "memchr",
@@ -3909,8 +3897,6 @@ dependencies = [
 [[package]]
 name = "wat"
 version = "1.0.61"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af2b53f4da14db05d32e70e9c617abdf6620c575bd5dd972b7400037b4df2091"
 dependencies = [
  "wast 55.0.0",
 ]
@@ -4173,8 +4159,6 @@ dependencies = [
 [[package]]
 name = "wit-parser"
 version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f887c3da527a51b321076ebe6a7513026a4757b6d4d144259946552d6fc728b3"
 dependencies = [
  "anyhow",
  "id-arena",

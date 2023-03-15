@@ -2347,6 +2347,25 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 op
             ));
         }
+        Operator::SegmentNew => {
+            todo!()
+            // TODO: we need to check how we actually implement these in CLIF. Maybe there are intrinsic calls?
+            // Create aarch64 specific instructions
+        },
+        Operator::SegmentFree { memarg } => {
+            let _ = memarg;
+            todo!()
+        },
+        Operator::SegmentStackNew { memarg } => {
+            let _ = memarg;
+            todo!()
+        },
+        // Operator::I32Store { memarg }
+        // | Operator::I64Store { memarg }
+        // | Operator::F32Store { memarg }
+        // | Operator::F64Store { memarg } => {
+        //     translate_store(memarg, ir::Opcode::Store, builder, state, environ)?;
+        // }
     };
     Ok(())
 }

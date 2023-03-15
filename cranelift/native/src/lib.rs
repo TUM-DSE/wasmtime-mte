@@ -145,6 +145,11 @@ pub fn infer_native_flags(isa_builder: &mut dyn Configurable) -> Result<(), &'st
             // macOS enforces the use of the B key for return addresses.
             isa_builder.enable("sign_return_address_with_bkey").unwrap();
         }
+
+        if std::arch::is_aarch64_feature_detected!("mte") {
+            // enable MTE
+            isa_builder.enable("use_mte").unwrap();
+        }
     }
 
     // There is no is_s390x_feature_detected macro yet, so for now

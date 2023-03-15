@@ -50,6 +50,12 @@ fn define_settings(_shared: &SettingGroup) -> SettingGroup {
         "",
         false,
     );
+    setting.add_bool(
+        "use_mte",
+        "Use Memory Tagging Extension instructions.",
+        "",
+        false,
+    );
 
     setting.build()
 }
