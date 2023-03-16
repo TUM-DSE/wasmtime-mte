@@ -43,6 +43,7 @@ pub const SUPPORTED_WASM_FEATURES: &[(&str, &str)] = &[
     ("memory64", "enables support for 64-bit memories"),
     #[cfg(feature = "component-model")]
     ("component-model", "enables support for the component model"),
+    ("mem-safety", "enables support for memory safety")
 ];
 
 pub const SUPPORTED_WASI_MODULES: &[(&str, &str)] = &[
@@ -367,6 +368,7 @@ impl CommonOptions {
             memory64,
             #[cfg(feature = "component-model")]
             component_model,
+            mem_safety,
         } = self.wasm_features.unwrap_or_default();
 
         if let Some(enable) = simd {
@@ -396,6 +398,9 @@ impl CommonOptions {
         #[cfg(feature = "component-model")]
         if let Some(enable) = component_model {
             config.wasm_component_model(enable);
+        }
+        if let Some(enable) = mem_safety {
+            config.wasm_mem_safety(enable);
         }
     }
 
@@ -433,6 +438,7 @@ pub struct WasmFeatures {
     pub memory64: Option<bool>,
     #[cfg(feature = "component-model")]
     pub component_model: Option<bool>,
+    pub mem_safety: Option<bool>,
 }
 
 fn parse_wasm_features(features: &str) -> Result<WasmFeatures> {
@@ -484,6 +490,7 @@ fn parse_wasm_features(features: &str) -> Result<WasmFeatures> {
         memory64: all.or(values["memory64"]),
         #[cfg(feature = "component-model")]
         component_model: all.or(values["component-model"]),
+        mem_safety: all.or(values["mem-safety"])
     })
 }
 
@@ -593,6 +600,7 @@ mod test {
             threads,
             multi_memory,
             memory64,
+            mem_safety,
         } = options.wasm_features.unwrap();
 
         assert_eq!(reference_types, Some(true));
@@ -603,6 +611,7 @@ mod test {
         assert_eq!(multi_memory, Some(true));
         assert_eq!(memory64, Some(true));
         assert_eq!(relaxed_simd, Some(true));
+        assert_eq!(mem_safety, Some(true));
 
         Ok(())
     }
@@ -620,6 +629,7 @@ mod test {
             threads,
             multi_memory,
             memory64,
+            mem_safety,
         } = options.wasm_features.unwrap();
 
         assert_eq!(reference_types, Some(false));
@@ -630,6 +640,7 @@ mod test {
         assert_eq!(multi_memory, Some(false));
         assert_eq!(memory64, Some(false));
         assert_eq!(relaxed_simd, Some(false));
+        assert_eq!(mem_safety, Some(false));
 
         Ok(())
     }
@@ -650,6 +661,7 @@ mod test {
             threads,
             multi_memory,
             memory64,
+            mem_safety,
         } = options.wasm_features.unwrap();
 
         assert_eq!(reference_types, Some(false));
@@ -660,6 +672,7 @@ mod test {
         assert_eq!(multi_memory, Some(true));
         assert_eq!(memory64, Some(true));
         assert_eq!(relaxed_simd, None);
+        assert_eq!(mem_safety, None);
 
         Ok(())
     }

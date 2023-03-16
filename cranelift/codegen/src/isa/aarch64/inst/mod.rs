@@ -394,10 +394,9 @@ fn pairmemarg_operands<F: Fn(VReg) -> VReg>(
 
 fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCollector<'_, F>) {
     match inst {
-        &Inst::Irg { rd, rn, rm } => {
+        &Inst::Irg { rd, rn } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
-            collector.reg_use(rm);
         }
         &Inst::Stg { rt, ref mem } => {
             collector.reg_use(rt);
@@ -1177,11 +1176,11 @@ impl Inst {
         // pretty-printing or memarg.with_allocs()) needs to match the
         // order in `aarch64_get_operands` above.
         match self {
-            &Inst::Irg { rd, rn, rm } => {
+            &Inst::Irg { rd, rn} => {
                 let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
                 let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
-                let rm = pretty_print_ireg(rm, OperandSize::Size64, allocs);
-                format!("irg {} {} {}", rd, rn, rm)
+                // let rm = pretty_print_ireg(zero_reg(), OperandSize::Size64, allocs);
+                format!("irg {} {}", rd, rn)
             }
             &Inst::Stg { rt, ref mem } => {
                 let rt = pretty_print_ireg(rt, OperandSize::Size64, allocs);

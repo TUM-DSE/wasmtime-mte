@@ -21,3 +21,6 @@ publish
 vendor
 examples/build
 .idea
+
+*.cwasm
+

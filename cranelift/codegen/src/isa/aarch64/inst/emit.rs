@@ -705,27 +705,42 @@ impl MachInstEmit for Inst {
         let mut start_off = sink.cur_offset();
 
         match self {
-            &MInst::Irg { rd, rn, rm } => {
+            &MInst::Irg { rd, rn } => {
+                // 10011010110_11111_000100_01001_01001
                 let top11 = 0b10011010_110;
                 let bit15_10 = 0b000100;
-                sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, rm));
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                // for now we will not use the register with excluded tags, so default to zero reg
+                // println!("{:b} {:b} {:b}", machreg_to_gpr(rd.to_reg()), machreg_to_gpr(rn), machreg_to_gpr(zero_reg()));
+                // println!("{:b}", enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
+                sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
             }
             &MInst::Stg { rt, ref mem } => {
                 let top11 = 0b11011001_001;
+                let rt = allocs.next(rt);
                 match mem {
                     &AMode::Unscaled { rn, simm9 } => {
-                        let reg = allocs.next(rn);
-                        sink.put4(enc_ldst_simm9(top11, simm9, 0b10, reg, rt));
+                        let rn = allocs.next(rn);
+                        sink.put4(enc_ldst_simm9(top11, simm9, 0b10, rn, rt));
                     }
                     &AMode::SPPreIndexed { simm9 } => {
-                        let reg = stack_reg();
-                        sink.put4(enc_ldst_simm9(top11, simm9, 0b11, reg, rt));
+                        let rn = stack_reg();
+                        sink.put4(enc_ldst_simm9(top11, simm9, 0b11, rn, rt));
                     }
                     &AMode::SPPostIndexed { simm9 } => {
-                        let reg = stack_reg();
-                        sink.put4(enc_ldst_simm9(top11, simm9, 0b01, reg, rt));
+                        let rn = stack_reg();
+                        sink.put4(enc_ldst_simm9(top11, simm9, 0b01, rn, rt));
                     }
-                    _ => panic!("unsupported addressing mode for stg")
+                    &AMode::RegOffset { rn, off, ..} => {
+                        let rn = allocs.next(rn);
+                        if let Some(simm9) = SImm9::maybe_from_i64(off) {
+                            sink.put4(enc_ldst_simm9(top11, simm9, 0b10, rn, rt));
+                        } else {
+                            panic!("Immediate does not fit into simm9: {}", off);
+                        }
+                    }
+                    _ => panic!("unsupported addressing mode for stg: {:?}", mem)
                 }
             }
             &Inst::AluRRR {

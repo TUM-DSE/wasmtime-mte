@@ -2348,24 +2348,33 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             ));
         }
         Operator::SegmentNew => {
-            todo!()
-            // TODO: we need to check how we actually implement these in CLIF. Maybe there are intrinsic calls?
-            // Create aarch64 specific instructions
+            // builder
+            // .ins()
+            // .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
+            // Ok(())
+            // builder.ins().arm64_irg()
         },
         Operator::SegmentFree { memarg } => {
             let _ = memarg;
             todo!()
         },
         Operator::SegmentStackNew { memarg } => {
-            let _ = memarg;
-            todo!()
+            // val is the size we want to allocate.
+            let _val = state.pop1();
+            // let val_ty = builder.func.dfg.value_type(val);
+
+            let (_, base) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 32, builder, state, environ)?
+            );
+            // TODO: we need to create a loop here; probably later optimizations will unroll the
+            //       loop if the iteration count can be determined.
+            // We also need to write optimizations ourselves that are able to merge stg into st2g and
+            // so on.
+            let tagged_pointer = builder.ins().arm64_irg(base);
+            builder.ins().arm64_stg(tagged_pointer, tagged_pointer);
+            state.push1(tagged_pointer);
         },
-        // Operator::I32Store { memarg }
-        // | Operator::I64Store { memarg }
-        // | Operator::F32Store { memarg }
-        // | Operator::F64Store { memarg } => {
-        //     translate_store(memarg, ir::Opcode::Store, builder, state, environ)?;
-        // }
     };
     Ok(())
 }

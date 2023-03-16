@@ -631,6 +631,7 @@ pub(crate) fn define(
 
     // Operand kind shorthands.
     let i8: &TypeVar = &ValueType::from(LaneType::from(types::Int::I8)).into();
+    let i32: &TypeVar = &ValueType::from(LaneType::from(types::Int::I32)).into();
     let f32_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F32)).into();
     let f64_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F64)).into();
 
@@ -3778,5 +3779,52 @@ pub(crate) fn define(
         .operands_out(vec![
             Operand::new("a", &TxN.dynamic_to_vector()).with_doc("New fixed vector")
         ]),
+    );
+
+    ig.push(
+        Inst::new(
+            "arm64_irg",
+            r#"
+        Generate random tag
+        "#,
+            &formats.unary,
+        )
+        .operands_in(vec![
+            Operand::new("p", iAddr).with_doc("Register to set tag in"),
+        ])
+        .operands_out(vec![Operand::new("a", iAddr)]),
+    );
+
+    ig.push(
+        Inst::new(
+            "arm64_stg",
+            r#"
+        Store tag to tag memory
+        "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("t", iAddr).with_doc("Register holding tag"),
+            Operand::new("p", iAddr).with_doc("Address to region"),
+        ])
+        // .can_store()
+        .other_side_effects()
+    );
+
+    ig.push(
+        Inst::new(
+            "arm64_st2g",
+            r#"
+        Store tag to tag memory
+        "#,
+            &formats.binary
+        )
+        .operands_in(vec![
+            Operand::new("x", iAddr).with_doc("Register holding tag"),
+            Operand::new("y", iAddr).with_doc("Address to region"),
+        ])
+        // .can_store()
+        .other_side_effects()
+        // .other_side_effects()
     );
 }

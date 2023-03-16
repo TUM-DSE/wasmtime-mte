@@ -889,7 +889,7 @@
        (Xpaclri)
 
        ;; IRG
-       (Irg (rd WritableReg) (rn Reg) (rm Reg))
+       (Irg (rd WritableReg) (rn Reg))
 
        ;; STG
        ;; TODO: not all addressing modes are supported; maybe change this?
@@ -1799,6 +1799,18 @@
       (value_regs
             (imm $I64 (ImmExtend.Zero) 0)
             (imm $I64 (ImmExtend.Zero) 0)))
+
+
+;; Helper for emitting MTE instructions
+(decl emit_arm64_stg (Reg AMode) SideEffectNoResult)
+(rule (emit_arm64_stg src amode)
+      (SideEffectNoResult.Inst (MInst.Stg src amode)))
+
+(decl emit_arm64_irg (Reg) Reg)
+(rule (emit_arm64_irg src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Irg dst src))))
+        dst))
 
 
 ;; Helper for emitting `MInst.Mov` instructions.

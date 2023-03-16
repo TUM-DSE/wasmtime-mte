@@ -812,6 +812,19 @@ impl Config {
         self
     }
 
+    /// Configures whether the WebAssembly mem_safet proposal will
+    /// be enabled for compilation.
+    ///
+    /// Note that this the upstream specification is not finalized and Wasmtime
+    /// may also have bugs for this feature since it hasn't been exercised
+    /// much.
+    ///
+    /// This is `false` by default.
+    pub fn wasm_mem_safety(&mut self, enable: bool) -> &mut Self {
+        self.features.mem_safety = enable;
+        self
+    }
+
     /// Configures which compilation strategy will be used for wasm modules.
     ///
     /// This method can be used to configure which compiler is used for wasm
