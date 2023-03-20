@@ -2373,7 +2373,11 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // so on.
             let tagged_pointer = builder.ins().arm64_irg(base);
             builder.ins().arm64_stg(tagged_pointer, tagged_pointer);
-            state.push1(tagged_pointer);
+            // This is a ugly hack: since codegen expects all pointers to be 32 bits, it will
+            // unconditionally insert i64.uextend; this will fail as uextend to the same type
+            // is invalid in clif.
+            let trunc_pointer = builder.ins().ireduce(I32, tagged_pointer);
+            state.push1(trunc_pointer);
         },
     };
     Ok(())

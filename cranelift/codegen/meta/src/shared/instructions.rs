@@ -631,7 +631,6 @@ pub(crate) fn define(
 
     // Operand kind shorthands.
     let i8: &TypeVar = &ValueType::from(LaneType::from(types::Int::I8)).into();
-    let i32: &TypeVar = &ValueType::from(LaneType::from(types::Int::I32)).into();
     let f32_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F32)).into();
     let f64_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F64)).into();
 
@@ -3792,6 +3791,7 @@ pub(crate) fn define(
         .operands_in(vec![
             Operand::new("p", iAddr).with_doc("Register to set tag in"),
         ])
+        .other_side_effects()
         .operands_out(vec![Operand::new("a", iAddr)]),
     );
 

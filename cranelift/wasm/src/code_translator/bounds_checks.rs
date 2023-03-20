@@ -305,11 +305,6 @@ fn cast_index_to_pointer_ty(
     assert!(index_ty.bits() < pointer_ty.bits());
 
     // Convert `index` to `addr_ty`.
-    dbg!(index);
-    dbg!(index.as_bits());
-    dbg!(pointer_ty);
-    dbg!(index_ty);
-    // TODO: we don't want the index to happen; somehow need to remove it
     let extended_index = pos.ins().uextend(pointer_ty, index);
 
     // Add debug value-label alias so that debuginfo can name the extended
