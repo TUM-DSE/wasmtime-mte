@@ -2401,7 +2401,12 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let cur_ptr = builder.block_params(next_inner_block)[1];
 
             let counter = builder.ins().iadd_imm(counter, -16);
-            let cur_ptr = builder.ins().iadd_imm(cur_ptr, 16);
+            // Moving this const out of the loop might be an optimization possibility
+            let offset = builder.ins().iconst(I64, 16);
+            let cur_ptr =
+                builder
+                    .ins()
+                    .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
             builder.ins().arm64_stg(cur_ptr, cur_ptr);
             builder.ins().jump(inner_block, &[counter, cur_ptr]);
 
@@ -2411,7 +2416,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             builder.switch_to_block(next_block);
             builder.seal_block(next_block);
 
-            // This is a ugly hack: since codegen expects all pointers to be 32 bits, it will
+            // This is a ugly hack: since codegen expects all heap indices to be 32 bits, it will
             // unconditionally insert i64.uextend; this will fail as uextend to the same type
             // is invalid in clif.
             let tagged_pointer = builder.ins().ireduce(I32, tagged_pointer);
