@@ -6,10 +6,10 @@ use crate::binemit::{Reloc, StackMap};
 use crate::ir::{types::*, RelSourceLoc};
 use crate::ir::{LibCall, MemFlags, TrapCode};
 use crate::isa::aarch64::inst::*;
+use crate::isa::aarch64::lower::isle::generated_code::MInst;
 use crate::machinst::{ty_bits, Reg, RegClass, Writable};
 use crate::trace;
 use core::convert::TryFrom;
-use crate::isa::aarch64::lower::isle::generated_code::MInst;
 
 /// Memory addressing mode finalization: convert "special" modes (e.g.,
 /// generic arbitrary stack offset) into real addressing modes, possibly by
@@ -756,7 +756,7 @@ impl MachInstEmit for Inst {
                             panic!("Immediate does not fit into simm9: {}", uimm12.value);
                         }
                     }
-                    _ => panic!("unsupported addressing mode for stg: {:?}", mem)
+                    _ => panic!("unsupported addressing mode for stg: {:?}", mem),
                 }
             }
             &Inst::AluRRR {

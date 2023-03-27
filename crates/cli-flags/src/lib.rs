@@ -43,7 +43,7 @@ pub const SUPPORTED_WASM_FEATURES: &[(&str, &str)] = &[
     ("memory64", "enables support for 64-bit memories"),
     #[cfg(feature = "component-model")]
     ("component-model", "enables support for the component model"),
-    ("mem-safety", "enables support for memory safety")
+    ("mem-safety", "enables support for memory safety"),
 ];
 
 pub const SUPPORTED_WASI_MODULES: &[(&str, &str)] = &[
@@ -490,7 +490,7 @@ fn parse_wasm_features(features: &str) -> Result<WasmFeatures> {
         memory64: all.or(values["memory64"]),
         #[cfg(feature = "component-model")]
         component_model: all.or(values["component-model"]),
-        mem_safety: all.or(values["mem-safety"])
+        mem_safety: all.or(values["mem-safety"]),
     })
 }
 

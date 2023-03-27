@@ -1176,7 +1176,7 @@ impl Inst {
         // pretty-printing or memarg.with_allocs()) needs to match the
         // order in `aarch64_get_operands` above.
         match self {
-            &Inst::Irg { rd, rn} => {
+            &Inst::Irg { rd, rn } => {
                 let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
                 let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
                 // let rm = pretty_print_ireg(zero_reg(), OperandSize::Size64, allocs);

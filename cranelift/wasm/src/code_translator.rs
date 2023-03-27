@@ -95,7 +95,7 @@ use itertools::Itertools;
 use smallvec::SmallVec;
 use std::convert::TryFrom;
 use std::vec::Vec;
-use wasmparser::{FuncValidator, MemArg, Operator, WasmModuleResources};
+use wasmparser::{FuncValidator, MemArg, Operator, ValType, WasmModuleResources};
 
 /// Given a `Reachability<T>`, unwrap the inner `T` or, when unreachable, set
 /// `state.reachable = false` and return.
@@ -2353,32 +2353,70 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
             // Ok(())
             // builder.ins().arm64_irg()
-        },
+        }
         Operator::SegmentFree { memarg } => {
             let _ = memarg;
             todo!()
-        },
+        }
         Operator::SegmentStackNew { memarg } => {
             // val is the size we want to allocate.
-            let _val = state.pop1();
-            // let val_ty = builder.func.dfg.value_type(val);
+            let val = state.pop1();
+
+            // First make sure that val is aligned to the next 16 bytes
+            let add = builder.ins().iadd_imm(val, 15);
+            let val = builder.ins().band_imm(add, !0xF);
 
             let (_, base) = unwrap_or_return_unreachable_state!(
                 state,
                 prepare_addr(memarg, 32, builder, state, environ)?
             );
-            // TODO: we need to create a loop here; probably later optimizations will unroll the
-            //       loop if the iteration count can be determined.
-            // We also need to write optimizations ourselves that are able to merge stg into st2g and
-            // so on.
+
+            // TODO: We also need to write optimizations ourselves that are able to merge stg into st2g
             let tagged_pointer = builder.ins().arm64_irg(base);
-            builder.ins().arm64_stg(tagged_pointer, tagged_pointer);
+
+            let inner_block = block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
+            let next_inner_block =
+                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
+            let next_block = block_with_params(builder, [ValType::I64], environ)?;
+
+            builder.ins().jump(inner_block, &[val, tagged_pointer]);
+
+            builder.switch_to_block(inner_block);
+
+            let counter = builder.block_params(inner_block)[0];
+
+            let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
+            canonicalise_brif(
+                builder,
+                cond,
+                next_inner_block,
+                &[counter, tagged_pointer],
+                next_block,
+                &[tagged_pointer],
+            );
+
+            builder.switch_to_block(next_inner_block);
+
+            let counter = builder.block_params(next_inner_block)[0];
+            let cur_ptr = builder.block_params(next_inner_block)[1];
+
+            let counter = builder.ins().iadd_imm(counter, -16);
+            let cur_ptr = builder.ins().iadd_imm(cur_ptr, 16);
+            builder.ins().arm64_stg(cur_ptr, cur_ptr);
+            builder.ins().jump(inner_block, &[counter, cur_ptr]);
+
+            builder.seal_block(inner_block);
+            builder.seal_block(next_inner_block);
+
+            builder.switch_to_block(next_block);
+            builder.seal_block(next_block);
+
             // This is a ugly hack: since codegen expects all pointers to be 32 bits, it will
             // unconditionally insert i64.uextend; this will fail as uextend to the same type
             // is invalid in clif.
-            let trunc_pointer = builder.ins().ireduce(I32, tagged_pointer);
-            state.push1(trunc_pointer);
-        },
+            let tagged_pointer = builder.ins().ireduce(I32, tagged_pointer);
+            state.push1(tagged_pointer);
+        }
     };
     Ok(())
 }
@@ -2843,7 +2881,7 @@ fn translate_atomic_rmw<FE: FuncEnvironment + ?Sized>(
             return Err(wasm_unsupported!(
                 "atomic_rmw: unsupported access type {:?}",
                 access_ty
-            ))
+            ));
         }
     };
     let w_ty_ok = match widened_ty {
@@ -2896,7 +2934,7 @@ fn translate_atomic_cas<FE: FuncEnvironment + ?Sized>(
             return Err(wasm_unsupported!(
                 "atomic_cas: unsupported access type {:?}",
                 access_ty
-            ))
+            ));
         }
     };
     let w_ty_ok = match widened_ty {
@@ -2948,7 +2986,7 @@ fn translate_atomic_load<FE: FuncEnvironment + ?Sized>(
             return Err(wasm_unsupported!(
                 "atomic_load: unsupported access type {:?}",
                 access_ty
-            ))
+            ));
         }
     };
     let w_ty_ok = match widened_ty {
@@ -2993,7 +3031,7 @@ fn translate_atomic_store<FE: FuncEnvironment + ?Sized>(
             return Err(wasm_unsupported!(
                 "atomic_store: unsupported access type {:?}",
                 access_ty
-            ))
+            ));
         }
     };
     let d_ty_ok = match data_ty {

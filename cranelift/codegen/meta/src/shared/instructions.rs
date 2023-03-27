@@ -3789,7 +3789,7 @@ pub(crate) fn define(
             &formats.unary,
         )
         .operands_in(vec![
-            Operand::new("p", iAddr).with_doc("Register to set tag in"),
+            Operand::new("p", iAddr).with_doc("Register to set tag in")
         ])
         .other_side_effects()
         .operands_out(vec![Operand::new("a", iAddr)]),
@@ -3808,7 +3808,7 @@ pub(crate) fn define(
             Operand::new("p", iAddr).with_doc("Address to region"),
         ])
         // .can_store()
-        .other_side_effects()
+        .other_side_effects(),
     );
 
     ig.push(
@@ -3817,14 +3817,13 @@ pub(crate) fn define(
             r#"
         Store tag to tag memory
         "#,
-            &formats.binary
+            &formats.binary,
         )
         .operands_in(vec![
             Operand::new("x", iAddr).with_doc("Register holding tag"),
             Operand::new("y", iAddr).with_doc("Address to region"),
         ])
         // .can_store()
-        .other_side_effects()
-        // .other_side_effects()
+        .other_side_effects(), // .other_side_effects()
     );
 }
