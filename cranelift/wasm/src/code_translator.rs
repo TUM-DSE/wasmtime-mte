@@ -2359,6 +2359,24 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             todo!()
         }
         Operator::SegmentStackNew { memarg } => {
+            /*
+            we build something along the lines of:
+            assert(size is multiple of 16)
+
+            tagged_pointer = irg(memarg)
+            cur_pointer = tagged_pointer
+
+            loop_start:
+            if (size == 0) goto end
+            stg(cur_pointer, tagged_pointer)
+            size -= 16
+            cur_pointer += 16
+            goto loop_start
+
+            end:
+            return tagged_pointer
+             */
+
             let size = state.pop1();
 
             // First make sure that size is aligned to the next 16 bytes
