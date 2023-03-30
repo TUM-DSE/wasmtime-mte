@@ -117,8 +117,8 @@ macro_rules! unwrap_or_return_unreachable_state {
 
 // Clippy warns about "align: _" but its important to document that the flags field is ignored
 #[cfg_attr(
-    feature = "cargo-clippy",
-    allow(clippy::unneeded_field_pattern, clippy::cognitive_complexity)
+feature = "cargo-clippy",
+allow(clippy::unneeded_field_pattern, clippy::cognitive_complexity)
 )]
 /// Translates wasm operators into Cranelift IR instructions.
 pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
@@ -283,8 +283,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // params since control flow joins at the top of the loop.
             state.popn(params.len());
             state
-                .stack
-                .extend_from_slice(builder.block_params(loop_body));
+            .stack
+            .extend_from_slice(builder.block_params(loop_body));
 
             builder.switch_to_block(loop_body);
             environ.translate_loop_header(builder)?;
@@ -380,10 +380,10 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                                 placeholder,
                             } => {
                                 let (params, _results) =
-                                    blocktype_params_results(validator, blocktype)?;
+                                blocktype_params_results(validator, blocktype)?;
                                 debug_assert_eq!(params.len(), num_return_values);
                                 let else_block =
-                                    block_with_params(builder, params.clone(), environ)?;
+                                block_with_params(builder, params.clone(), environ)?;
                                 canonicalise_then_jump(
                                     builder,
                                     destination,
@@ -453,8 +453,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             frame.truncate_value_stack_to_original_size(&mut state.stack);
             state
-                .stack
-                .extend_from_slice(builder.block_params(next_block));
+            .stack
+            .extend_from_slice(builder.block_params(next_block));
         }
         /**************************** Branch instructions *********************************
          * The branch instructions all have as arguments a target nesting level, which
@@ -634,8 +634,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             debug_assert_eq!(
                 inst_results.len(),
                 builder.func.dfg.signatures[builder.func.dfg.ext_funcs[fref].signature]
-                    .returns
-                    .len(),
+                .returns
+                .len(),
                 "translate_call results should match the call signature"
             );
             state.popn(num_args);
@@ -1183,8 +1183,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 let index_type = environ.heaps()[heap].index_type;
                 let offset = builder.ins().iconst(index_type, memarg.offset as i64);
                 builder
-                    .ins()
-                    .uadd_overflow_trap(addr, offset, ir::TrapCode::HeapOutOfBounds)
+                .ins()
+                .uadd_overflow_trap(addr, offset, ir::TrapCode::HeapOutOfBounds)
             };
             // `fn translate_atomic_wait` can inspect the type of `expected` to figure out what
             // code it needs to generate, if it wants.
@@ -1209,8 +1209,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 let index_type = environ.heaps()[heap].index_type;
                 let offset = builder.ins().iconst(index_type, memarg.offset as i64);
                 builder
-                    .ins()
-                    .uadd_overflow_trap(addr, offset, ir::TrapCode::HeapOutOfBounds)
+                .ins()
+                .uadd_overflow_trap(addr, offset, ir::TrapCode::HeapOutOfBounds)
             };
             let res = environ.translate_atomic_notify(
                 builder.cursor(),
@@ -2359,12 +2359,11 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             todo!()
         }
         Operator::SegmentStackNew { memarg } => {
-            // val is the size we want to allocate.
-            let val = state.pop1();
+            let size = state.pop1();
 
-            // First make sure that val is aligned to the next 16 bytes
-            let add = builder.ins().iadd_imm(val, 15);
-            let val = builder.ins().band_imm(add, !0xF);
+            // First make sure that size is aligned to the next 16 bytes
+            let is_aligned = builder.ins().band_imm(size, !15);
+            builder.ins().trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
 
             let (_, base) = unwrap_or_return_unreachable_state!(
                 state,
@@ -2376,10 +2375,10 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             let inner_block = block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
             let next_inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
+            block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
             let next_block = block_with_params(builder, [ValType::I64], environ)?;
 
-            builder.ins().jump(inner_block, &[val, tagged_pointer]);
+            builder.ins().jump(inner_block, &[size, tagged_pointer]);
 
             builder.switch_to_block(inner_block);
 
@@ -2400,14 +2399,15 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let counter = builder.block_params(next_inner_block)[0];
             let cur_ptr = builder.block_params(next_inner_block)[1];
 
+            builder.ins().arm64_stg(cur_ptr, cur_ptr);
+
             let counter = builder.ins().iadd_imm(counter, -16);
             // Moving this const out of the loop might be an optimization possibility
             let offset = builder.ins().iconst(I64, 16);
             let cur_ptr =
-                builder
-                    .ins()
-                    .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
-            builder.ins().arm64_stg(cur_ptr, cur_ptr);
+            builder
+            .ins()
+            .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
             builder.ins().jump(inner_block, &[counter, cur_ptr]);
 
             builder.seal_block(inner_block);
@@ -2421,6 +2421,67 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // is invalid in clif.
             let tagged_pointer = builder.ins().ireduce(I32, tagged_pointer);
             state.push1(tagged_pointer);
+        }
+        Operator::SegmentStackFree { memarg } => {
+            // let (size, stack_pointer) = state.pop2();
+            let size = state.pop1();
+
+            // First make sure that size is aligned to the next 16 bytes
+            let is_aligned = builder.ins().band_imm(size, !15);
+            builder.ins().trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
+
+            let (_, base) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 32, builder, state, environ)?
+            );
+            let (_, stack_pointer) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 32, builder, state, environ)?
+            );
+
+            let inner_block = block_with_params(builder, [ValType::I32, ValType::I64, ValType::I64], environ)?;
+            let next_inner_block =
+            block_with_params(builder, [ValType::I32, ValType::I64, ValType::I64], environ)?;
+            let next_block = block_with_params(builder, [], environ)?;
+
+            builder.ins().jump(inner_block, &[size, base, stack_pointer]);
+
+            builder.switch_to_block(inner_block);
+
+            let counter = builder.block_params(inner_block)[0];
+
+            let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
+            canonicalise_brif(
+                builder,
+                cond,
+                next_inner_block,
+                &[counter, base, stack_pointer],
+                next_block,
+                &[],
+            );
+
+            builder.switch_to_block(next_inner_block);
+
+            let counter = builder.block_params(next_inner_block)[0];
+            let cur_ptr = builder.block_params(next_inner_block)[1];
+            let tag = builder.block_params(next_inner_block)[2];
+
+            builder.ins().arm64_stg(tag, cur_ptr);
+
+            let counter = builder.ins().iadd_imm(counter, -16);
+            // Moving this const out of the loop might be an optimization possibility
+            let offset = builder.ins().iconst(I64, 16);
+            let cur_ptr =
+            builder
+            .ins()
+            .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
+            builder.ins().jump(inner_block, &[counter, cur_ptr, tag]);
+
+            builder.seal_block(inner_block);
+            builder.seal_block(next_inner_block);
+
+            builder.switch_to_block(next_block);
+            builder.seal_block(next_block);
         }
     };
     Ok(())
@@ -2480,7 +2541,7 @@ fn translate_unreachable_operator<FE: FuncEnvironment + ?Sized>(
                                 placeholder,
                             } => {
                                 let (params, _results) =
-                                    blocktype_params_results(validator, blocktype)?;
+                                blocktype_params_results(validator, blocktype)?;
                                 let else_block = block_with_params(builder, params, environ)?;
                                 let frame = state.control_stack.last().unwrap();
                                 frame.truncate_value_stack_to_else_params(&mut state.stack);
@@ -2584,7 +2645,7 @@ fn prepare_addr<FE>(
     state: &mut FuncTranslationState,
     environ: &mut FE,
 ) -> WasmResult<Reachability<(MemFlags, Value)>>
-where
+    where
     FE: FuncEnvironment + ?Sized,
 {
     let index = state.pop1();
@@ -2702,9 +2763,9 @@ where
         Err(_) => {
             let offset = builder.ins().iconst(heap.index_type, memarg.offset as i64);
             let adjusted_index =
-                builder
-                    .ins()
-                    .uadd_overflow_trap(index, offset, ir::TrapCode::HeapOutOfBounds);
+            builder
+            .ins()
+            .uadd_overflow_trap(index, offset, ir::TrapCode::HeapOutOfBounds);
             bounds_checks::bounds_check_and_compute_addr(
                 builder,
                 environ,
@@ -2759,13 +2820,13 @@ fn align_atomic_addr(
             addr
         } else {
             builder
-                .ins()
-                .iadd_imm(addr, i64::from(memarg.offset as i32))
+            .ins()
+            .iadd_imm(addr, i64::from(memarg.offset as i32))
         };
         debug_assert!(loaded_bytes.is_power_of_two());
         let misalignment = builder
-            .ins()
-            .band_imm(effective_addr, i64::from(loaded_bytes - 1));
+        .ins()
+        .band_imm(effective_addr, i64::from(loaded_bytes - 1));
         let f = builder.ins().icmp_imm(IntCC::NotEqual, misalignment, 0);
         builder.ins().trapnz(f, ir::TrapCode::HeapMisaligned);
     }
@@ -2823,8 +2884,8 @@ fn translate_load<FE: FuncEnvironment + ?Sized>(
         Reachability::Reachable((f, b)) => (f, b),
     };
     let (load, dfg) = builder
-        .ins()
-        .Load(opcode, result_ty, flags, Offset32::new(0), base);
+    .ins()
+    .Load(opcode, result_ty, flags, Offset32::new(0), base);
     state.push1(dfg.first_result(load));
     Ok(Reachability::Reachable(()))
 }
@@ -2845,8 +2906,8 @@ fn translate_store<FE: FuncEnvironment + ?Sized>(
         prepare_addr(memarg, mem_op_size(opcode, val_ty), builder, state, environ)?
     );
     builder
-        .ins()
-        .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
+    .ins()
+    .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
     Ok(())
 }
 
@@ -3383,8 +3444,8 @@ fn canonicalise_v128_values<'a>(
     debug_assert!(tmp_canonicalised.is_empty());
     // First figure out if any of the parameters need to be cast.  Mostly they don't need to be.
     let any_non_canonical = values
-        .iter()
-        .any(|v| is_non_canonical_v128(builder.func.dfg.value_type(*v)));
+    .iter()
+    .any(|v| is_non_canonical_v128(builder.func.dfg.value_type(*v)));
     // Hopefully we take this exit most of the time, hence doing no heap allocation.
     if !any_non_canonical {
         return values;
@@ -3426,10 +3487,10 @@ fn canonicalise_brif(
 ) -> ir::Inst {
     let mut tmp_canonicalised_then = SmallVec::<[ir::Value; 16]>::new();
     let canonicalised_then =
-        canonicalise_v128_values(&mut tmp_canonicalised_then, builder, params_then);
+    canonicalise_v128_values(&mut tmp_canonicalised_then, builder, params_then);
     let mut tmp_canonicalised_else = SmallVec::<[ir::Value; 16]>::new();
     let canonicalised_else =
-        canonicalise_v128_values(&mut tmp_canonicalised_else, builder, params_else);
+    canonicalise_v128_values(&mut tmp_canonicalised_else, builder, params_else);
     builder.ins().brif(
         cond,
         block_then,
@@ -3483,10 +3544,10 @@ fn bitcast_arguments<'a>(
     param_predicate: impl Fn(usize) -> bool,
 ) -> Vec<(Type, &'a mut Value)> {
     let filtered_param_types = params
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| param_predicate(*i))
-        .map(|(_, param)| param.value_type);
+    .iter()
+    .enumerate()
+    .filter(|(i, _)| param_predicate(*i))
+    .map(|(_, param)| param.value_type);
 
     // zip_eq, from the itertools::Itertools trait, is like Iterator::zip but panics if one
     // iterator ends before the other. The `param_predicate` is required to select exactly as many
@@ -3496,23 +3557,23 @@ fn bitcast_arguments<'a>(
     // The arguments which need to be bitcasted are those which have some vector type but the type
     // expected by the parameter is not the same vector type as that of the provided argument.
     pairs
-        .filter(|(param_type, _)| param_type.is_vector())
-        .filter(|(param_type, arg)| {
-            let arg_type = builder.func.dfg.value_type(**arg);
-            assert!(
-                arg_type.is_vector(),
-                "unexpected type mismatch: expected {}, argument {} was actually of type {}",
-                param_type,
-                *arg,
-                arg_type
-            );
+    .filter(|(param_type, _)| param_type.is_vector())
+    .filter(|(param_type, arg)| {
+        let arg_type = builder.func.dfg.value_type(**arg);
+        assert!(
+            arg_type.is_vector(),
+            "unexpected type mismatch: expected {}, argument {} was actually of type {}",
+            param_type,
+            *arg,
+            arg_type
+        );
 
-            // This is the same check that would be done by `optionally_bitcast_vector`, except we
-            // can't take a mutable borrow of the FunctionBuilder here, so we defer inserting the
-            // bitcast instruction to the caller.
-            arg_type != *param_type
-        })
-        .collect()
+        // This is the same check that would be done by `optionally_bitcast_vector`, except we
+        // can't take a mutable borrow of the FunctionBuilder here, so we defer inserting the
+        // bitcast instruction to the caller.
+        arg_type != *param_type
+    })
+    .collect()
 }
 
 /// A helper for bitcasting a sequence of return values for the function currently being built. If

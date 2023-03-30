@@ -3035,6 +3035,10 @@
 ;; TODO: Port lower_address() to ISLE.
 (extern constructor amode amode)
 
+;; Lower the address of a stg instruction
+(decl amode_stg (Type Value u32) AMode)
+(extern constructor amode_stg amode_stg)
+
 (decl sink_load_into_amode (Type Inst) AMode)
 (rule (sink_load_into_amode ty x @ (load _ addr offset))
       (let ((_ Unit (sink_inst x)))

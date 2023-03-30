@@ -564,6 +564,20 @@ fn lower_add_immediate(ctx: &mut Lower<Inst>, src: Reg, imm: i64) -> Reg {
     dst.to_reg()
 }
 
+/// TODO(martin): rename this function to something more useful
+fn lower_add_rr(ctx: &mut Lower<Inst>, rn: Reg, rm: Reg) -> Reg {
+    let dst = ctx.alloc_tmp(I64).only_reg().unwrap();
+    ctx.emit(Inst::AluRRR {
+        alu_op: ALUOp::Add,
+        size: OperandSize::Size64,
+        rd: dst,
+        rn,
+        rm,
+    });
+
+    dst.to_reg()
+}
+
 pub(crate) fn lower_constant_u64(ctx: &mut Lower<Inst>, rd: Writable<Reg>, value: u64) {
     for inst in Inst::load_constant(rd, value, &mut |ty| ctx.alloc_tmp(ty).only_reg().unwrap()) {
         ctx.emit(inst);

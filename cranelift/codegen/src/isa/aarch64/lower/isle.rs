@@ -16,7 +16,7 @@ use super::{
 };
 use crate::ir::condcodes;
 use crate::isa::aarch64::inst::{FPULeftShiftImm, FPURightShiftImm};
-use crate::isa::aarch64::lower::{lower_address, lower_pair_address};
+use crate::isa::aarch64::lower::{lower_add_rr, lower_address, lower_pair_address};
 use crate::isa::aarch64::AArch64Backend;
 use crate::machinst::valueregs;
 use crate::machinst::{isle::*, InputSourceInst};
@@ -504,6 +504,31 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
         let addr_ty = self.value_type(addr);
         assert!(addr_ty == I64 || addr_ty == R64);
         lower_address(self.lower_ctx, ty, addr, offset as i32)
+    }
+
+    fn amode_stg(&mut self, ty: Type, addr: Value, offset: u32) -> AMode {
+        let amode = self.amode(ty, addr, offset);
+
+        match amode {
+            AMode::RegReg { rn, rm } => {
+                let rd = lower_add_rr(self.lower_ctx, rn, rm);
+                AMode::Unscaled {
+                    rn: rd,
+                    simm9: SImm9::maybe_from_i64(0).unwrap() // should never fail
+                }
+            }
+            // TODO(martin): what do we need to do with extendop?
+            AMode::RegExtended { rn, rm, .. } => {
+                let rd = lower_add_rr(self.lower_ctx, rn, rm);
+                AMode::Unscaled {
+                    rn: rd,
+                    simm9: SImm9::maybe_from_i64(0).unwrap() // should never fail
+                }
+            }
+            _ => {
+                amode
+            }
+        }
     }
 
     fn pair_amode(&mut self, addr: Value, offset: u32) -> PairAMode {
