@@ -24,3 +24,5 @@ examples/build
 
 *.cwasm
 
+.direnv
+
