@@ -67,7 +67,7 @@
     local.get 0
     local.get 4
     local.get 3
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.tee 5
     i32.add
     i32.const -1
@@ -87,7 +87,7 @@
     local.get 5
     local.get 4
     local.get 3
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 0
     i32.const 16
     i32.add
@@ -103,7 +103,7 @@
     global.set $__stack_pointer
     local.get 2
     i32.const 16
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.tee 3
     local.get 1
     i32.add
@@ -112,7 +112,7 @@
     local.get 3
     local.get 2
     i32.const 16
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 2
     i32.const 256
     i32.add
@@ -130,23 +130,23 @@
     i32.const 384
     i32.add
     i32.const 16
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.set 2
     local.get 1
     i32.const 256
     i32.add
     i32.const 16
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.set 3
     local.get 1
     i32.const 128
     i32.add
     i32.const 16
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.set 4
     local.get 1
     i32.const 16
-    segment.new_stack align=1
+    segment.stack_new align=1
     local.set 5
     local.get 2
     local.get 0
@@ -189,23 +189,23 @@
     i32.const 384
     i32.add
     i32.const 16
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 3
     local.get 1
     i32.const 256
     i32.add
     i32.const 16
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 4
     local.get 1
     i32.const 128
     i32.add
     i32.const 16
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 5
     local.get 1
     i32.const 16
-    segment.free_stack align=1
+    segment.stack_free align=1
     local.get 1
     i32.const 656
     i32.add
