@@ -2353,10 +2353,11 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
             // Ok(())
             // builder.ins().arm64_irg()
+            todo!("not yet implemented: segment.new")
         }
         Operator::SegmentFree { memarg } => {
             let _ = memarg;
-            todo!()
+            todo!("not yet implemented: segment.free")
         }
         Operator::SegmentStackNew { memarg } => {
             /*
