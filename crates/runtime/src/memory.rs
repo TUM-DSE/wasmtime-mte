@@ -236,6 +236,10 @@ impl MmapMemory {
 
         if minimum > 0 {
             mmap.make_accessible(pre_guard_bytes, minimum)?;
+            // TODO: check if MTE is actually enabled before doing this?
+            //  Not sure if we need to do that, though -- just enabling MTE should not do anything,
+            //  as all pointers will be tagged with the default 0 tag anyways.
+            mmap.enable_mte(pre_guard_bytes, minimum)?;
         }
 
         // If a memory image was specified, try to create the MemoryImageSlot on

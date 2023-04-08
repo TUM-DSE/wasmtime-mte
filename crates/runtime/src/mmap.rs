@@ -310,6 +310,56 @@ impl Mmap {
         Ok(())
     }
 
+    // TODO(martin): x-compile for aarch64-unknown-linux-gnu, then test if this compiles and does the right thing
+    /// Enable MTE for this address space
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    pub fn enable_mte(&mut self, start: usize, len: usize) -> Result<()> {
+        use std::io;
+
+        if std::arch::is_aarch64_feature_detected!("mte") {
+            const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
+            const PR_TAGGED_ADDR_ENABLE: i32 = 1 << 0;
+            const PR_MTE_TCF_SHIFT: i32 = 1;
+            const PR_MTE_TCF_SYNC: i32 = 1 << PR_MTE_TCF_SHIFT;
+            const PR_MTE_TCF_ASYNC: i32 = 2 << PR_MTE_TCF_SHIFT;
+            const PR_MTE_TAG_SHIFT: i32 = 3;
+
+            unsafe {
+                if libc::prctl(
+                    PR_SET_TAGGED_ADDR_CTRL,
+                    PR_TAGGED_ADDR_ENABLE
+                        | PR_MTE_TCF_SYNC
+                        | PR_MTE_TCF_ASYNC
+                        | (0xfffe << PR_MTE_TAG_SHIFT),
+                    0,
+                    0,
+                    0,
+                ) != 0
+                {
+                    return Err::<(), io::Error>(io::Error::last_os_error().into()).context("unable to enable mte (prctl)");
+                }
+            }
+
+            let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
+            let ptr = self.ptr as *mut u8;
+            eprintln!("enabling mte for memory: ptr = {:x}, len = {:x}", self.ptr + start, len);
+
+            unsafe {
+                if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
+                    return Err::<(), io::Error>(io::Error::last_os_error().into()).context("unable to mprotect mte flags");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// We don't support MTE on non arm64 linux
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+    pub fn enable_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
+        Ok(())
+    }
+
     /// Make the memory starting at `start` and extending for `len` bytes accessible.
     /// `start` and `len` must be native page-size multiples and describe a range within
     /// `self`'s reserved memory.
