@@ -336,17 +336,23 @@ impl Mmap {
                     0,
                 ) != 0
                 {
-                    return Err::<(), io::Error>(io::Error::last_os_error().into()).context("unable to enable mte (prctl)");
+                    return Err::<(), io::Error>(io::Error::last_os_error().into())
+                        .context("unable to enable mte (prctl)");
                 }
             }
 
             let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
             let ptr = self.ptr as *mut u8;
-            eprintln!("enabling mte for memory: ptr = {:x}, len = {:x}", self.ptr + start, len);
+            eprintln!(
+                "enabling mte for memory: ptr = {:x}, len = {:x}",
+                self.ptr + start,
+                len
+            );
 
             unsafe {
                 if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
-                    return Err::<(), io::Error>(io::Error::last_os_error().into()).context("unable to mprotect mte flags");
+                    return Err::<(), io::Error>(io::Error::last_os_error().into())
+                        .context("unable to mprotect mte flags");
                 }
             }
         }

@@ -514,7 +514,7 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
                 let rd = lower_add_rr(self.lower_ctx, rn, rm);
                 AMode::Unscaled {
                     rn: rd,
-                    simm9: SImm9::maybe_from_i64(0).unwrap() // should never fail
+                    simm9: SImm9::maybe_from_i64(0).unwrap(), // should never fail
                 }
             }
             // TODO(martin): what do we need to do with extendop?
@@ -522,12 +522,10 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
                 let rd = lower_add_rr(self.lower_ctx, rn, rm);
                 AMode::Unscaled {
                     rn: rd,
-                    simm9: SImm9::maybe_from_i64(0).unwrap() // should never fail
+                    simm9: SImm9::maybe_from_i64(0).unwrap(), // should never fail
                 }
             }
-            _ => {
-                amode
-            }
+            _ => amode,
         }
     }
 
