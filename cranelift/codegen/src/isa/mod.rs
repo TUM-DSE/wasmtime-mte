@@ -221,6 +221,9 @@ pub struct TargetFrontendConfig {
 
     /// The pointer width of the target.
     pub pointer_width: PointerWidth,
+
+    /// If the target has mte
+    pub has_mte: bool,
 }
 
 impl TargetFrontendConfig {
@@ -232,6 +235,11 @@ impl TargetFrontendConfig {
     /// Get the width of pointers on this target, in units of bits.
     pub fn pointer_bits(self) -> u8 {
         self.pointer_width.bits()
+    }
+
+    /// If the target has mte
+    pub fn has_mte(self) -> bool {
+        self.has_mte
     }
 
     /// Get the width of pointers on this target, in units of bytes.
@@ -391,6 +399,11 @@ impl<'a> dyn TargetIsa + 'a {
         TargetFrontendConfig {
             default_call_conv: self.default_call_conv(),
             pointer_width: self.pointer_width(),
+            has_mte: self
+                .isa_flags()
+                .iter()
+                .find(|&f| f.name == "use_mte")
+                .map_or(false, |f| f.as_bool().unwrap_or(false)),
         }
     }
 }

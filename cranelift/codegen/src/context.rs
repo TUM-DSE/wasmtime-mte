@@ -202,6 +202,8 @@ impl Context {
             }
         }
 
+        // eprintln!("{}", self.func.display());
+
         Ok(())
     }
 

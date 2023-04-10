@@ -297,72 +297,88 @@ impl Mmap {
         assert!(len <= self.len);
         assert!(start <= self.len - len);
 
-        // Commit the accessible size.
-        let ptr = self.ptr as *mut u8;
-        unsafe {
-            mprotect(
-                ptr.add(start).cast(),
-                len,
-                MprotectFlags::READ | MprotectFlags::WRITE,
-            )?;
+        if std::arch::is_aarch64_feature_detected!("mte") {
+            self.make_accessible_with_mte(start, len)?
+        } else {
+            // Commit the accessible size.
+            let ptr = self.ptr as *mut u8;
+            unsafe {
+                mprotect(
+                    ptr.add(start).cast(),
+                    len,
+                    MprotectFlags::READ | MprotectFlags::WRITE,
+                )?;
+            }
         }
 
         Ok(())
     }
 
-    // TODO(martin): x-compile for aarch64-unknown-linux-gnu, then test if this compiles and does the right thing
-    /// Enable MTE for this address space
+    /// Make memory accessible while enabling mte
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    pub fn enable_mte(&mut self, start: usize, len: usize) -> Result<()> {
+    fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<()> {
         use std::io;
 
-        if std::arch::is_aarch64_feature_detected!("mte") {
-            const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
-            const PR_TAGGED_ADDR_ENABLE: i32 = 1 << 0;
-            const PR_MTE_TCF_SHIFT: i32 = 1;
-            const PR_MTE_TCF_SYNC: i32 = 1 << PR_MTE_TCF_SHIFT;
-            const PR_MTE_TCF_ASYNC: i32 = 2 << PR_MTE_TCF_SHIFT;
-            const PR_MTE_TAG_SHIFT: i32 = 3;
+        const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
+        const PR_TAGGED_ADDR_ENABLE: u64 = 1 << 0;
+        const PR_MTE_TCF_SHIFT: i32 = 1;
+        const PR_MTE_TCF_SYNC: u64 = 1u64 << PR_MTE_TCF_SHIFT;
+        const PR_MTE_TCF_ASYNC: u64 = 2u64 << PR_MTE_TCF_SHIFT;
+        const PR_MTE_TAG_SHIFT: i32 = 3;
 
-            unsafe {
-                if libc::prctl(
-                    PR_SET_TAGGED_ADDR_CTRL,
-                    PR_TAGGED_ADDR_ENABLE
+        unsafe {
+            if libc::prctl(
+                PR_SET_TAGGED_ADDR_CTRL,
+                PR_TAGGED_ADDR_ENABLE
                         | PR_MTE_TCF_SYNC
-                        | PR_MTE_TCF_ASYNC
-                        | (0xfffe << PR_MTE_TAG_SHIFT),
-                    0,
-                    0,
-                    0,
-                ) != 0
-                {
-                    return Err::<(), io::Error>(io::Error::last_os_error().into())
-                        .context("unable to enable mte (prctl)");
-                }
-            }
-
-            let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
-            let ptr = self.ptr as *mut u8;
-            eprintln!(
-                "enabling mte for memory: ptr = {:x}, len = {:x}",
-                self.ptr + start,
-                len
-            );
-
-            unsafe {
-                if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
-                    return Err::<(), io::Error>(io::Error::last_os_error().into())
-                        .context("unable to mprotect mte flags");
-                }
+                        // | PR_MTE_TCF_ASYNC
+                        | (0xfffeu64 << PR_MTE_TAG_SHIFT),
+                0,
+                0,
+                0,
+            ) != 0
+            {
+                return Err::<(), io::Error>(io::Error::last_os_error().into())
+                    .context("unable to enable mte (prctl)");
             }
         }
+
+        let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
+        let ptr = self.ptr as *mut u8;
+        eprintln!(
+            "enabling mte for memory (enable_mte): ptr = {:x}, len = {:x}",
+            self.ptr + start,
+            len
+        );
+
+        unsafe {
+            if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
+                return Err::<(), io::Error>(io::Error::last_os_error().into())
+                    .context("unable to mprotect mte flags");
+            }
+        }
+        //
+        // unsafe {
+        //     let old_ptr: *mut i8 = ptr.add(start).cast();
+        //     let mut ptr = old_ptr as u64;
+        //     asm!("irg {ptr}, {ptr}", ptr = inout(reg) ptr);
+        //     asm!("stg {ptr}, [{ptr}]", ptr = inout(reg) ptr);
+        //     let ptr = ptr as *mut i8;
+        //     ptr.write_volatile(42);
+        //     let result = ptr.read_volatile();
+        //     println!("got ptr[0] = {result}");
+        //     println!("expecting segfault...");
+        //     ptr.add(16).write_volatile(43);
+        //     let result = ptr.add(16).read_volatile();
+        //     println!("got ptr[16] = {result}");
+        // }
 
         Ok(())
     }
 
     /// We don't support MTE on non arm64 linux
     #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
-    pub fn enable_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
+    fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
         Ok(())
     }
 

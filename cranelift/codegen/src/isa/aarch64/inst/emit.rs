@@ -722,6 +722,9 @@ impl MachInstEmit for Inst {
                 // for now we will not use the register with excluded tags, so default to zero reg
                 // println!("{:b} {:b} {:b}", machreg_to_gpr(rd.to_reg()), machreg_to_gpr(rn), machreg_to_gpr(zero_reg()));
                 // println!("{:b}", enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
+
+                // The following inserts a breakpoint into the emitted code
+                // sink.put4(0b11010100001_0000000000000000_00000u32);
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
             }
             &MInst::Stg { rt, ref mem } => {

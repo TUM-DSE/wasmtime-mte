@@ -58,6 +58,11 @@ pub trait TargetEnvironment {
         ir::Type::int(u16::from(self.target_config().pointer_bits())).unwrap()
     }
 
+    /// If the target has mte
+    fn has_mte(&self) -> bool {
+        self.target_config().has_mte()
+    }
+
     /// Get the size of a native pointer, in bytes.
     fn pointer_bytes(&self) -> u8 {
         self.target_config().pointer_bytes()

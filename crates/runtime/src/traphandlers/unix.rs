@@ -343,6 +343,14 @@ pub fn lazy_per_thread_init() {
         // Prepare the stack with readable/writable memory and then register it
         // with `sigaltstack`.
         let stack_ptr = (ptr as usize + guard_size) as *mut std::ffi::c_void;
+        // eprintln!(
+        //     "enabling mte for memory (stack): ptr = {:x}, len = {:x}",
+        //     stack_ptr as usize,
+        //     MIN_STACK_SIZE,
+        // );
+        // if libc::mprotect(stack_ptr, MIN_STACK_SIZE, libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */) != 0 {
+        //     panic!("mprotect to configure memory for sigaltstack failed");
+        // }
         rustix::mm::mprotect(
             stack_ptr,
             MIN_STACK_SIZE,
