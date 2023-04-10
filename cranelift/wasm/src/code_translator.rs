@@ -2527,13 +2527,14 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             builder.switch_to_block(inner_block);
 
             let counter = builder.block_params(inner_block)[0];
+            let cur_ptr = builder.block_params(inner_block)[1];
 
             let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
             canonicalise_brif(
                 builder,
                 cond,
                 next_inner_block,
-                &[counter, tagged_pointer],
+                &[counter, cur_ptr],
                 next_block,
                 &[tagged_pointer],
             );
@@ -2543,7 +2544,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let counter = builder.block_params(next_inner_block)[0];
             let cur_ptr = builder.block_params(next_inner_block)[1];
 
-            builder.ins().arm64_stg(tagged_pointer, tagged_pointer);
+            builder.ins().arm64_stg(tagged_pointer, cur_ptr);
 
             let counter = builder.ins().iadd_imm(counter, -16);
             // Moving this const out of the loop might be an optimization possibility
@@ -2582,25 +2583,26 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             );
 
             let inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64, ValType::I64], environ)?;
+                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
             let next_inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64, ValType::I64], environ)?;
+                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
             let next_block = block_with_params(builder, [], environ)?;
 
             builder
                 .ins()
-                .jump(inner_block, &[size, base, stack_pointer]);
+                .jump(inner_block, &[size, base]);
 
             builder.switch_to_block(inner_block);
 
             let counter = builder.block_params(inner_block)[0];
+            let base = builder.block_params(inner_block)[1];
 
             let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
             canonicalise_brif(
                 builder,
                 cond,
                 next_inner_block,
-                &[counter, base, stack_pointer],
+                &[counter, base],
                 next_block,
                 &[],
             );
@@ -2609,9 +2611,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             let counter = builder.block_params(next_inner_block)[0];
             let cur_ptr = builder.block_params(next_inner_block)[1];
-            let tag = builder.block_params(next_inner_block)[2];
 
-            builder.ins().arm64_stg(stack_pointer, base);
+            builder.ins().arm64_stg(stack_pointer, cur_ptr);
 
             let counter = builder.ins().iadd_imm(counter, -16);
             // Moving this const out of the loop might be an optimization possibility
@@ -2620,7 +2621,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 builder
                     .ins()
                     .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
-            builder.ins().jump(inner_block, &[counter, cur_ptr, tag]);
+            builder.ins().jump(inner_block, &[counter, cur_ptr]);
 
             builder.seal_block(inner_block);
             builder.seal_block(next_inner_block);

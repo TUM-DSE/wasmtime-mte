@@ -3807,6 +3807,7 @@ pub(crate) fn define(
             Operand::new("t", iAddr).with_doc("Register holding tag"),
             Operand::new("p", iAddr).with_doc("Address to region"),
         ])
+        .can_store()
         .other_side_effects(),
     );
 
