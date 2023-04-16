@@ -297,9 +297,7 @@ impl Mmap {
         assert!(len <= self.len);
         assert!(start <= self.len - len);
 
-        if std::arch::is_aarch64_feature_detected!("mte") {
-            self.make_accessible_with_mte(start, len)?
-        } else {
+        if !self.make_accessible_with_mte(start, len)? {
             // Commit the accessible size.
             let ptr = self.ptr as *mut u8;
             unsafe {
@@ -316,8 +314,12 @@ impl Mmap {
 
     /// Make memory accessible while enabling mte
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<()> {
+    fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<bool> {
         use std::io;
+
+        if !std::arch::is_aarch64_feature_detected!("mte") {
+            return Ok(false);
+        }
 
         const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
         const PR_TAGGED_ADDR_ENABLE: u64 = 1 << 0;
@@ -338,7 +340,7 @@ impl Mmap {
                 0,
             ) != 0
             {
-                return Err::<(), io::Error>(io::Error::last_os_error().into())
+                return Err::<bool, io::Error>(io::Error::last_os_error().into())
                     .context("unable to enable mte (prctl)");
             }
         }
@@ -346,14 +348,14 @@ impl Mmap {
         let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
         let ptr = self.ptr as *mut u8;
         eprintln!(
-            "enabling mte for memory (enable_mte): ptr = {:x}, len = {:x}",
+            "enabling mte for memory (enable_mte): ptr = 0x{:x}, len = 0x{:x}",
             self.ptr + start,
             len
         );
 
         unsafe {
             if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
-                return Err::<(), io::Error>(io::Error::last_os_error().into())
+                return Err::<bool, io::Error>(io::Error::last_os_error().into())
                     .context("unable to mprotect mte flags");
             }
         }
@@ -373,13 +375,13 @@ impl Mmap {
         //     println!("got ptr[16] = {result}");
         // }
 
-        Ok(())
+        Ok(true)
     }
 
     /// We don't support MTE on non arm64 linux
     #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
-    fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
-        Ok(())
+    fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<bool> {
+        Ok(false)
     }
 
     /// Make the memory starting at `start` and extending for `len` bytes accessible.
