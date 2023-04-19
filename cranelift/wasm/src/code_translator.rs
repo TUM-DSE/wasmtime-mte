@@ -2479,155 +2479,66 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             todo!("not yet implemented: segment.new")
         }
         Operator::SegmentFree { memarg } => {
-            let _ = memarg;
-            todo!("not yet implemented: segment.free")
-        }
-        Operator::SegmentStackNew { memarg } => {
-            /*
-            we build something along the lines of:
-            assert(size is multiple of 16)
+            // This instruction iterates over the base_ptr (for size bytes) and
+            // tags every 16 bytes of memory with a special free tag.
 
-            tagged_pointer = irg(memarg)
-            cur_pointer = tagged_pointer
+            // Parameters (saved in state):
+            // base_ptr:  pointer to the memory that should be freed by tagging it
+            // size:      size of the memory (in bytes) that should be freed
 
-            loop_start:
-            if (size == 0) goto end
-            stg(cur_pointer, tagged_pointer)
-            size -= 16
-            cur_pointer += 16
-            goto loop_start
-
-            end:
-            return tagged_pointer
-             */
+            // MTE tag is stored in bits 56-59
+            let special_free_tag: i64 = 0b0000;
+            let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+            let special_free_tag_mask = (special_free_tag << 56) | tag_mask;
 
             let size = state.pop1();
 
-            // First make sure that size is aligned to the next 16 bytes
-            let is_aligned = builder.ins().band_imm(size, 15);
-            builder
-                .ins()
-                .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
-
-            let (_, base) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 32, builder, state, environ)?
-            );
-
-            // TODO: We also need to write optimizations ourselves that are able to merge stg into st2g
-            let tagged_pointer = builder.ins().arm64_irg(base);
-
-            let inner_block = block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
-            let next_inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
-            let next_block = block_with_params(builder, [ValType::I64], environ)?;
-
-            builder.ins().jump(inner_block, &[size, tagged_pointer]);
-
-            builder.switch_to_block(inner_block);
-
-            let counter = builder.block_params(inner_block)[0];
-            let cur_ptr = builder.block_params(inner_block)[1];
-
-            let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
-            canonicalise_brif(
-                builder,
-                cond,
-                next_inner_block,
-                &[counter, cur_ptr],
-                next_block,
-                &[tagged_pointer],
-            );
-
-            builder.switch_to_block(next_inner_block);
-
-            let counter = builder.block_params(next_inner_block)[0];
-            let cur_ptr = builder.block_params(next_inner_block)[1];
-
-            builder.ins().arm64_stg(tagged_pointer, cur_ptr);
-
-            let counter = builder.ins().iadd_imm(counter, -16);
-            // Moving this const out of the loop might be an optimization possibility
-            let offset = builder.ins().iconst(I64, 16);
-            let cur_ptr =
-                builder
-                    .ins()
-                    .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
-            builder.ins().jump(inner_block, &[counter, cur_ptr]);
-
-            builder.seal_block(inner_block);
-            builder.seal_block(next_inner_block);
-
-            builder.switch_to_block(next_block);
-            builder.seal_block(next_block);
-
-            state.push1(tagged_pointer);
-        }
-        Operator::SegmentStackFree { memarg } => {
-            // let (size, stack_pointer) = state.pop2();
-            let size = state.pop1();
-
-            // First make sure that size is aligned to the next 16 bytes
-            let is_aligned = builder.ins().band_imm(size, 15);
-            builder
-                .ins()
-                .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
-
-            let (_, stack_pointer) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 32, builder, state, environ)?
-            );
-            let (_, base) = unwrap_or_return_unreachable_state!(
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
                 state,
                 prepare_addr_impl(memarg, 32, builder, state, environ, true)?
             );
 
-            let inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
-            let next_inner_block =
-                block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
-            let next_block = block_with_params(builder, [], environ)?;
+            // remove existing tag in base_ptr
+            let base_ptr = builder.ins().band_imm(base_ptr, tag_mask);
 
-            builder
+            // set new special free tag in base_ptr
+            let tagged_ptr: Value = builder
                 .ins()
-                .jump(inner_block, &[size, base]);
+                .band_imm(base_ptr, special_free_tag_mask);
 
-            builder.switch_to_block(inner_block);
+            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
+        }
+        Operator::SegmentStackNew { memarg } => {
+            // TODO: add explanation what this instruction does
 
-            let counter = builder.block_params(inner_block)[0];
-            let base = builder.block_params(inner_block)[1];
+            let size = state.pop1();
 
-            let cond = builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
-            canonicalise_brif(
-                builder,
-                cond,
-                next_inner_block,
-                &[counter, base],
-                next_block,
-                &[],
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 32, builder, state, environ)?
             );
 
-            builder.switch_to_block(next_inner_block);
+            let tagged_ptr = builder.ins().arm64_irg(base_ptr);
 
-            let counter = builder.block_params(next_inner_block)[0];
-            let cur_ptr = builder.block_params(next_inner_block)[1];
+            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
 
-            builder.ins().arm64_stg(stack_pointer, cur_ptr);
+            state.push1(tagged_ptr);
+        }
+        Operator::SegmentStackFree { memarg } => {
+            // TODO: add explanation what this instruction does
 
-            let counter = builder.ins().iadd_imm(counter, -16);
-            // Moving this const out of the loop might be an optimization possibility
-            let offset = builder.ins().iconst(I64, 16);
-            let cur_ptr =
-                builder
-                    .ins()
-                    .uadd_overflow_trap(cur_ptr, offset, ir::TrapCode::HeapOutOfBounds);
-            builder.ins().jump(inner_block, &[counter, cur_ptr]);
+            let size = state.pop1();
 
-            builder.seal_block(inner_block);
-            builder.seal_block(next_inner_block);
+            let (_, stack_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 32, builder, state, environ)?
+            );
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr_impl(memarg, 32, builder, state, environ, true)?
+            );
 
-            builder.switch_to_block(next_block);
-            builder.seal_block(next_block);
+            tag_memory_region(base_ptr, stack_ptr, size, builder, environ)?;
         }
         Operator::I32StoreSegment { memarg } => {
             translate_store(memarg, ir::Opcode::Store, builder, state, environ, true)?;
@@ -3794,4 +3705,106 @@ fn bitcast_wasm_params<FE: FuncEnvironment + ?Sized>(
         flags.set_endianness(ir::Endianness::Little);
         *arg = builder.ins().bitcast(t, flags, *arg);
     }
+}
+
+// TODO: We also need to write optimizations ourselves that are able to merge stg into st2g for increased performance
+
+/// This helper function iterates over `iter_ptr` for `size` bytes and tags
+/// every 16 bytes of memory using the ARM `stg` instruction with the tag
+/// found in `tagged_ptr`.
+fn tag_memory_region<FE>(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: Value,
+    builder: &mut FunctionBuilder,
+    environ: &mut FE,
+) -> WasmResult<()>
+where
+    FE: FuncEnvironment + ?Sized,
+{
+    // Pseudo code (high level):
+    // 
+    // for (size; size != 0; size -= 16, iter_ptr += 16):
+    //     stg(tagged_ptr, iter_ptr)
+
+    // Pseudo code (low level):
+    //
+    // loop:
+    //     +---condition_block
+    //     | if (size == 0) goto end
+    //     |
+    //     | +---loop_body_block
+    //     | | stg(tagged_ptr, iter_ptr)
+    //     | | size -= 16
+    //     | | iter_ptr += 16
+    //     | | goto loop
+    //     | +---
+    //     +---
+    //
+    // end:
+    // +---next_block
+    // +---
+
+    // Assert that `size` is 16 byte aligned, and trap if not
+    let is_aligned = builder.ins().band_imm(size, 0b1111);
+    builder
+        .ins()
+        .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
+
+    // === Block definitions
+    // condition_block(size, iter_ptr)
+    let condition_block = block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
+
+    // loop_body_block(size, iter_ptr)
+    let loop_body_block = block_with_params(builder, [ValType::I32, ValType::I64], environ)?;
+
+    // next_block
+    let next_block = block_with_params(builder, [], environ)?;
+
+    builder.ins().jump(condition_block, &[size, iter_ptr]);
+
+    // === Condition block
+    builder.switch_to_block(condition_block);
+
+    let size_counter = builder.block_params(condition_block)[0];
+    let iter_ptr = builder.block_params(condition_block)[1];
+
+    let cond = builder.ins().icmp_imm(IntCC::NotEqual, size_counter, 0);
+    canonicalise_brif(
+        builder,
+        cond,
+        loop_body_block,
+        &[size_counter, iter_ptr],
+        next_block,
+        &[],
+    );
+
+    // === Loop body block
+    builder.switch_to_block(loop_body_block);
+
+    let size_counter = builder.block_params(loop_body_block)[0];
+    let iter_ptr = builder.block_params(loop_body_block)[1];
+
+    builder.ins().arm64_stg(tagged_ptr, iter_ptr);
+
+    let size_counter = builder.ins().iadd_imm(size_counter, -16);
+    // TODO: moving this const out of the loop might be an optimization possibility
+    // iter_ptr += 16, but trap on overflow
+    let offset = builder.ins().iconst(I64, 16);
+    let iter_ptr =
+        builder
+            .ins()
+            .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
+
+    builder.ins().jump(condition_block, &[size_counter, iter_ptr]);
+
+    builder.seal_block(loop_body_block);
+    builder.seal_block(condition_block);
+
+    // === Next block
+    builder.switch_to_block(next_block);
+
+    builder.seal_block(next_block);
+
+    Ok(())
 }

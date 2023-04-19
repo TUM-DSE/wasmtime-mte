@@ -45,27 +45,26 @@ pub fn bounds_check_and_compute_addr<Env>(
     // Static size of the heap access.
     access_size: u8,
     // if the index is a tagged address
-    is_tagged_addr: bool
+    is_tagged_addr: bool,
 ) -> WasmResult<Reachability<ir::Value>>
 where
     Env: FuncEnvironment + ?Sized,
 {
     // TODO: add a parameter that says if the addr is a tagged address, don't rely on this hack.
-    let (index, index_addr) =
-        if is_tagged_addr {
-            // for mte, we need to strip out the tag for the index, otherwise bounds checks will fail
-            let masked_index = builder.ins().band_imm(index, 0x0FFFFFFFFFFFFFFF);
-            (masked_index, index)
-        } else {
-            let index = cast_index_to_pointer_ty(
-                index,
-                heap.index_type,
-                env.pointer_type(),
-                &mut builder.cursor(),
-            );
-            // index and base are equal if the index is not tagged
-            (index, index)
-        };
+    let (index, index_addr) = if is_tagged_addr {
+        // for mte, we need to strip out the tag for the index, otherwise bounds checks will fail
+        let masked_index = builder.ins().band_imm(index, 0x0FFFFFFFFFFFFFFF);
+        (masked_index, index)
+    } else {
+        let index = cast_index_to_pointer_ty(
+            index,
+            heap.index_type,
+            env.pointer_type(),
+            &mut builder.cursor(),
+        );
+        // index and base are equal if the index is not tagged
+        (index, index)
+    };
     let offset_and_size = offset_plus_size(offset, access_size);
     let spectre_mitigations_enabled = env.heap_access_spectre_mitigation();
 
