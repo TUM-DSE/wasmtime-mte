@@ -1,3 +1,28 @@
+;; Example:
+;; $ ./wasmtime compile demo.wast --cranelift-enable use_mte --wasm-features=mem-safety
+;; $ ./wasmtime run --allow-precompiled --cranelift-enable use_mte --wasm-features=mem-safety demo.cwasm 0 42
+;; val = 42
+;; $ ./wasmtime run --allow-precompiled --cranelift-enable use_mte --wasm-features=mem-safety demo.cwasm 16 42
+;; (segmentation fault)
+;;
+;; Compiled from this source code:
+;;
+;;  #include <stdio.h>
+;;  #include <stdlib.h>
+;;
+;;  int main(int argc, char **argv) {
+;;      if (argc < 3) {
+;;          printf("Usage: %s index value\n", argv[0]);
+;;          return 1;
+;;      }
+;;      volatile int x[16];
+;;      int index = atoi(argv[1]);
+;;      int value = atoi(argv[2]);
+;;      x[index] = value;
+;;      printf("val = %d\n", x[index]);
+;;      return 0;
+;;  }
+
 (module
   (type (;0;) (func (param i32 i32 i32) (result i32)))
   (type (;1;) (func (param i32 i64 i32) (result i64)))
@@ -46,16 +71,16 @@
     unreachable
   )
   (func $main (;9;) (type 2) (param i32 i32) (result i32)
-    (local i32 i32)
+    (local i32 i64 i64)
     global.get $__stack_pointer
-    i32.const 288
+    i32.const 96
     i32.sub
     local.tee 2
     global.set $__stack_pointer
     local.get 2
     i32.const 32
     i32.add
-    i32.const 16
+    i32.const 64
     segment.stack_new align=1
     local.set 3
     block ;; label = @1
@@ -80,15 +105,18 @@
       local.get 1
       i32.load offset=4
       call $atoi
-      i32.add
-      local.tee 0
+      i64.extend_i32_u
+      i64.const 2
+      i64.shl
+      i64.add
+      local.tee 4
       local.get 1
       i32.load offset=8
       call $atoi
-      i32.store8
+      i32.store_segment align=1
       local.get 2
-      local.get 0
-      i32.load8_s
+      local.get 4
+      i32.load_segment align=1
       i32.store offset=16
       i32.const 1101
       local.get 2
@@ -103,10 +131,10 @@
     local.get 2
     i32.const 32
     i32.add
-    i32.const 16
+    i32.const 64
     segment.stack_free align=1
     local.get 2
-    i32.const 288
+    i32.const 96
     i32.add
     global.set $__stack_pointer
     local.get 1
@@ -166,7 +194,7 @@
       end
       i32.const 0
       local.set 2
-      i32.const 131072
+      i32.const 0
       i32.const 70800
       local.get 4
       i32.add
@@ -176,7 +204,7 @@
       local.get 4
       i32.sub
       i32.and
-      i32.const 131072
+      i32.const 0
       select
       i32.const 70800
       i32.sub
