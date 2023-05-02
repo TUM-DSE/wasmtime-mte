@@ -44,27 +44,27 @@ pub fn bounds_check_and_compute_addr<Env>(
     offset: u32,
     // Static size of the heap access.
     access_size: u8,
-    // if the index is a tagged address
-    is_tagged_addr: bool,
 ) -> WasmResult<Reachability<ir::Value>>
 where
     Env: FuncEnvironment + ?Sized,
 {
-    // TODO: add a parameter that says if the addr is a tagged address, don't rely on this hack.
-    let (index, index_addr) = if is_tagged_addr {
-        // for mte, we need to strip out the tag for the index, otherwise bounds checks will fail
-        let masked_index = builder.ins().band_imm(index, 0x0FFFFFFFFFFFFFFF);
-        (masked_index, index)
+    let index_addr = cast_index_to_pointer_ty(
+        index,
+        heap.index_type,
+        env.pointer_type(),
+        &mut builder.cursor(),
+    );
+
+    // TODO: need to check if this code works
+    // if this a tagged addr, we need to mask out the tag for bounds checks
+    let index = if env.target_config().has_mte {
+        builder
+            .ins()
+            .band_imm(index_addr, 0xF0FF_FFFF_FFFF_FFFFu64 as i64)
     } else {
-        let index = cast_index_to_pointer_ty(
-            index,
-            heap.index_type,
-            env.pointer_type(),
-            &mut builder.cursor(),
-        );
-        // index and base are equal if the index is not tagged
-        (index, index)
+        index_addr
     };
+
     let offset_and_size = offset_plus_size(offset, access_size);
     let spectre_mitigations_enabled = env.heap_access_spectre_mitigation();
 
@@ -107,7 +107,6 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-                is_tagged_addr,
             ))
         }
 
@@ -147,7 +146,6 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-                is_tagged_addr,
             ))
         }
 
@@ -172,7 +170,6 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-                is_tagged_addr,
             ))
         }
 
@@ -202,7 +199,6 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-                is_tagged_addr,
             ))
         }
 
@@ -269,7 +265,6 @@ where
                 env.pointer_type(),
                 index_addr,
                 offset,
-                is_tagged_addr,
             ))
         }
 
@@ -300,7 +295,6 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-                is_tagged_addr,
             ))
         }
     })
@@ -353,14 +347,13 @@ fn explicit_check_oob_condition_and_compute_addr(
     // bounds (and therefore we should trap) and is zero when the heap access is
     // in bounds (and therefore we can proceed).
     oob_condition: ir::Value,
-    is_tagged_addr: bool,
 ) -> ir::Value {
     if !spectre_mitigations_enabled {
         pos.ins()
             .trapnz(oob_condition, ir::TrapCode::HeapOutOfBounds);
     }
 
-    let mut addr = compute_addr(pos, heap, addr_ty, index, offset, is_tagged_addr);
+    let mut addr = compute_addr(pos, heap, addr_ty, index, offset);
 
     if spectre_mitigations_enabled {
         let null = pos.ins().iconst(addr_ty, 0);
@@ -382,17 +375,11 @@ fn compute_addr(
     addr_ty: ir::Type,
     index: ir::Value,
     offset: u32,
-    is_tagged_addr: bool,
 ) -> ir::Value {
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
     let heap_base = pos.ins().global_value(addr_ty, heap.base);
-    let base_and_index = if is_tagged_addr {
-        // With mte, this should already have the correct address added in
-        index
-    } else {
-        pos.ins().iadd(heap_base, index)
-    };
+    let base_and_index = pos.ins().iadd(heap_base, index);
     if offset == 0 {
         base_and_index
     } else {
