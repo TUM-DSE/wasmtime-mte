@@ -764,6 +764,43 @@ impl MachInstEmit for Inst {
                     _ => panic!("unsupported addressing mode for stg: {:?}", mem),
                 }
             }
+            &MInst::St2g { rt, ref mem } => {
+                // Based on https://developer.arm.com/documentation/ddi0596/2021-06/Base-Instructions/ST2G--Store-Allocation-Tags-
+                let top11 = 0b1101_1001_101;
+                let rt = allocs.next(rt);
+                match mem {
+                    &AMode::SPPostIndexed { simm9 } => {
+                        let rn = stack_reg();
+                        sink.put4(enc_stg_simm9(top11, simm9, 0b01, rn, rt));
+                    }
+                    &AMode::SPPreIndexed { simm9 } => {
+                        let rn = stack_reg();
+                        sink.put4(enc_stg_simm9(top11, simm9, 0b11, rn, rt));
+                    }
+                    // Convert unsigned offsets to signed offsets
+                    &AMode::Unscaled { rn, simm9 } => {
+                        let rn = allocs.next(rn);
+                        sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
+                    }
+                    &AMode::RegOffset { rn, off, .. } => {
+                        let rn = allocs.next(rn);
+                        if let Some(simm9) = SImm9::maybe_from_i64(off) {
+                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
+                        } else {
+                            panic!("Immediate does not fit into simm9: {}", off);
+                        }
+                    }
+                    &AMode::UnsignedOffset { rn, uimm12 } => {
+                        let rn = allocs.next(rn);
+                        if let Some(simm9) = SImm9::maybe_from_i64(uimm12.value as i64) {
+                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
+                        } else {
+                            panic!("Immediate does not fit into simm9: {}", uimm12.value);
+                        }
+                    }
+                    _ => panic!("unsupported addressing mode for st2g: {:?}", mem),
+                }
+            }
             &Inst::AluRRR {
                 alu_op,
                 size,

@@ -3815,7 +3815,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_st2g",
             r#"
-        Store tag to tag memory
+        Store tag to tag two granules of memory
         "#,
             &formats.binary,
         )
@@ -3823,6 +3823,7 @@ pub(crate) fn define(
             Operand::new("x", iAddr).with_doc("Register holding tag"),
             Operand::new("y", iAddr).with_doc("Address to region"),
         ])
+        .can_store()
         .other_side_effects(),
     );
 }

@@ -2659,7 +2659,6 @@
 
 ;; TODO: in the future, add optimizations that detect stg -> increment of value
 ;;       then we can optimize to use the imm offset
-;;       another optimization: stg, stg -> st2g
 
 
 ;; for now we just lower to some add instruction to check if we can get this to work
@@ -2671,6 +2670,9 @@
 
 (rule (lower (arm64_stg src dst))
       (side_effect (emit_arm64_stg src (amode_stg $I32 dst 0))))
+
+(rule (lower (arm64_st2g src dst))
+      (side_effect (emit_arm64_st2g src (amode_stg $I32 dst 0))))
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))

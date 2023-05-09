@@ -3555,10 +3555,209 @@ fn bitcast_wasm_params<FE: FuncEnvironment + ?Sized>(
     }
 }
 
+/// Assert that `val` is 16 byte aligned, and trap if not
+fn assert_16_byte_aligned(val: Value, builder: &mut FunctionBuilder) {
+    let is_aligned = builder.ins().band_imm(val, 0b1111);
+    builder
+        .ins()
+        .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
+}
+
 /// This helper function iterates over `iter_ptr` for `size` bytes and tags
 /// every 16 bytes of memory using the ARM `stg` instruction with the tag
 /// found in `tagged_ptr`.
 fn tag_memory_region<FE>(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: Value,
+    builder: &mut FunctionBuilder,
+    environ: &mut FE,
+) -> WasmResult<()>
+where
+    FE: FuncEnvironment + ?Sized,
+{
+    tag_memory_region_optimized_v1(iter_ptr, tagged_ptr, size, builder, environ)
+}
+
+/// Optimized implementation of tag_memory_region. Optimizations include:
+/// - Use st2g operation to tag two memory regions at once
+fn tag_memory_region_optimized_v1<FE>(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: Value,
+    builder: &mut FunctionBuilder,
+    environ: &mut FE,
+) -> WasmResult<()>
+where
+    FE: FuncEnvironment + ?Sized,
+{
+    // Pseudo code (high level):
+    //
+    // assert_16_byte_aligned(size)
+    //
+    // for (size; size >= 32; size -= 32, iter_ptr += 32)
+    //    st2g(tagged_ptr, iter_ptr)
+    //
+    // if (size != 0)
+    //     stg(tagged_ptr, iter_ptr)
+
+    // Pseudo code (low level):
+    //
+    // +---st2g_loop_condition_block
+    // | if (size > 32)
+    // |     goto st2g_loop_body_block
+    // | else
+    // |     goto last_stg_condition_block
+    // |
+    // | +---st2g_loop_body_block
+    // | | st2g(tagged_ptr, iter_ptr)
+    // | | size -= 32
+    // | | iter_ptr += 32
+    // | | goto st2g_loop_condition_block
+    // | +---
+    // +---
+    //
+    // +---last_stg_condition_block
+    // | if (size != 0)
+    // |     goto last_stg_body_block
+    // | else
+    // |     goto next_block
+    // +---
+    //
+    // +---last_stg_body_block
+    // | stg(tagged_ptr, iter_ptr)
+    // +---
+    //
+    // +---next_block
+    // +---
+
+    assert_16_byte_aligned(size, builder);
+
+    // === Block definitions
+    // st2g_loop_condition_block(size, iter_ptr)
+    let st2g_loop_condition_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+
+    // st2g_loop_body_block(size, iter_ptr)
+    let st2g_loop_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+
+    // last_stg_condition_block(size, iter_ptr)
+    let last_stg_condition_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+
+    // last_stg_body_block(size, iter_ptr)
+    let last_stg_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+
+    // next_block()
+    let next_block = block_with_params(builder, [], environ)?;
+
+
+    builder.ins().jump(st2g_loop_condition_block, &[size, iter_ptr]);
+
+    // === st2g loop condition block
+    builder.switch_to_block(st2g_loop_condition_block);
+
+    let size = builder.block_params(st2g_loop_condition_block)[0];
+    let iter_ptr = builder.block_params(st2g_loop_condition_block)[1];
+
+    let cond = builder.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, size, 32);
+    canonicalise_brif(
+        builder,
+        cond,
+        st2g_loop_body_block,
+        &[size, iter_ptr],
+        last_stg_condition_block,
+        &[size, iter_ptr],
+    );
+
+    // === st2g loop body block
+    builder.switch_to_block(st2g_loop_body_block);
+
+    let size_counter = builder.block_params(st2g_loop_body_block)[0];
+    let iter_ptr = builder.block_params(st2g_loop_body_block)[1];
+
+    builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
+
+    let size_counter = builder.ins().iadd_imm(size_counter, -32);
+    let offset = builder.ins().iconst(I64, 32);
+    let iter_ptr =
+        builder
+            .ins()
+            .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
+
+    builder.ins().jump(st2g_loop_condition_block, &[size_counter, iter_ptr]);
+
+    builder.seal_block(st2g_loop_body_block);
+    builder.seal_block(st2g_loop_condition_block);
+
+    // === last stg condition block
+    builder.switch_to_block(last_stg_condition_block);
+
+    let size = builder.block_params(last_stg_condition_block)[0];
+    let iter_ptr = builder.block_params(last_stg_condition_block)[1];
+
+    let cond = builder.ins().icmp_imm(IntCC::NotEqual, size, 0);
+    canonicalise_brif(
+        builder,
+        cond,
+        last_stg_body_block,
+        &[size, iter_ptr],
+        next_block,
+        &[],
+    );
+
+    builder.seal_block(last_stg_condition_block);
+
+    // === last stg body block
+    builder.switch_to_block(last_stg_body_block);
+
+    let iter_ptr = builder.block_params(last_stg_body_block)[1];
+
+    builder.ins().arm64_stg(tagged_ptr, iter_ptr);
+
+    builder.ins().jump(next_block, &[]);
+
+    builder.seal_block(last_stg_body_block);
+
+    // === Next block
+    builder.switch_to_block(next_block);
+
+    builder.seal_block(next_block);
+
+    Ok(())
+}
+
+// TODO: implement as well for future performance comparisons
+/*
+fn tag_memory_region_optimized_v2<FE>(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: Value,
+    builder: &mut FunctionBuilder,
+    environ: &mut FE,
+) -> WasmResult<()>
+where
+    FE: FuncEnvironment + ?Sized,
+{
+    // Pseudo code (high level):
+    //
+    // assert_16_byte_aligned(size)
+    //
+    // if (size % 32 == 0)
+    //     for (size; size != 0; size -= 32, iter_ptr += 32):
+    //         st2g(tagged_ptr, iter_ptr)
+    // else
+    //     for (size; size != 0; size -= 16, iter_ptr += 16):
+    //         stg(tagged_ptr, iter_ptr)
+
+    Ok(())
+}
+*/
+
+// TODO: probably remove in the future
+
+/// Unoptimized/naive implementation of tag_memory_region, kept here for
+/// reference until testing (correctness and performance) infrastructure
+/// is in place
+fn _tag_memory_region_naive<FE>(
     iter_ptr: Value,
     tagged_ptr: Value,
     size: Value,
@@ -3575,27 +3774,25 @@ where
 
     // Pseudo code (low level):
     //
-    // loop:
-    //     +---condition_block
-    //     | if (size == 0) goto end
-    //     |
-    //     | +---loop_body_block
-    //     | | stg(tagged_ptr, iter_ptr)
-    //     | | size -= 16
-    //     | | iter_ptr += 16
-    //     | | goto loop
-    //     | +---
-    //     +---
+    // +---condition_block
+    // | if (size != 0)
+    // |     goto loop_body_block
+    // | else
+    // |     goto next_block
+    // |
+    // | +---loop_body_block
+    // | | stg(tagged_ptr, iter_ptr)
+    // | | size -= 16
+    // | | iter_ptr += 16
+    // | | goto condition_block
+    // | +---
+    // +---
     //
     // end:
     // +---next_block
     // +---
 
-    // Assert that `size` is 16 byte aligned, and trap if not
-    let is_aligned = builder.ins().band_imm(size, 0b1111);
-    builder
-        .ins()
-        .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
+    assert_16_byte_aligned(size, builder);
 
     // === Block definitions
     // condition_block(size, iter_ptr)
@@ -3634,7 +3831,6 @@ where
     builder.ins().arm64_stg(tagged_ptr, iter_ptr);
 
     let size_counter = builder.ins().iadd_imm(size_counter, -16);
-    // TODO: moving this const out of the loop might be an optimization possibility
     // iter_ptr += 16, but trap on overflow
     let offset = builder.ins().iconst(I64, 16);
     let iter_ptr =
