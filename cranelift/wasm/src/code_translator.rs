@@ -2372,7 +2372,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             let (_, base_ptr) = unwrap_or_return_unreachable_state!(
                 state,
-                prepare_addr(memarg, 32, builder, state, environ)?
+                prepare_addr(memarg, 16, builder, state, environ)?
             );
 
             // remove existing tag in base_ptr
@@ -2387,6 +2387,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // TODO: add explanation what this instruction does
 
             let size = state.pop1();
+            let index = state.peek1();
 
             let (_, base_ptr) = unwrap_or_return_unreachable_state!(
                 state,
@@ -2397,7 +2398,15 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
 
-            state.push1(tagged_ptr);
+            let tag = builder
+                .ins()
+                .band_imm(tagged_ptr, 0x0F00_0000_0000_0000u64 as i64);
+            let index = builder
+                .ins()
+                .band_imm(index, 0xF0FF_FFFF_FFFF_FFFFu64 as i64);
+            let tagged_index = builder.ins().iadd(tag, index);
+
+            state.push1(tagged_index);
         }
         Operator::SegmentStackFree { memarg } => {
             // TODO: add explanation what this instruction does
