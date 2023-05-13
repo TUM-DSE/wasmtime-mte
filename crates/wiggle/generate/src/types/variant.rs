@@ -11,9 +11,9 @@ pub(super) fn define_variant(
     derive_std_error: bool,
 ) -> TokenStream {
     let ident = names::type_(name);
-    let size = v.mem_size_align().size as u32;
+    let size = v.mem_size_align().size as u64;
     let align = v.mem_size_align().align as usize;
-    let contents_offset = v.payload_offset() as u32;
+    let contents_offset = v.payload_offset() as u64;
 
     let lifetime = quote!('a);
     let tag_ty = super::int_repr_tokens(v.tag_repr);
@@ -152,7 +152,7 @@ pub(super) fn define_variant(
 
         impl<'a> wiggle::GuestType<'a> for #ident #enum_lifetime {
             #[inline]
-            fn guest_size() -> u32 {
+            fn guest_size() -> u64 {
                 #size
             }
 

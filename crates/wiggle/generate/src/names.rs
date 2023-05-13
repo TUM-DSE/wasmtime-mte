@@ -14,8 +14,8 @@ pub fn builtin_type(b: BuiltinType) -> TokenStream {
     match b {
         BuiltinType::U8 { .. } => quote!(u8),
         BuiltinType::U16 => quote!(u16),
-        BuiltinType::U32 { .. } => quote!(u32),
-        BuiltinType::U64 => quote!(u64),
+        BuiltinType::U32 => quote!(u32),
+        BuiltinType::U64 { .. } => quote!(u64),
         BuiltinType::S8 => quote!(i8),
         BuiltinType::S16 => quote!(i16),
         BuiltinType::S32 => quote!(i32),
@@ -157,8 +157,8 @@ fn builtin_name(b: &BuiltinType) -> &'static str {
     match b {
         BuiltinType::U8 { .. } => "u8",
         BuiltinType::U16 => "u16",
-        BuiltinType::U32 { .. } => "u32",
-        BuiltinType::U64 => "u64",
+        BuiltinType::U32 => "u32",
+        BuiltinType::U64 { .. } => "u64",
         BuiltinType::S8 => "i8",
         BuiltinType::S16 => "i16",
         BuiltinType::S32 => "i32",

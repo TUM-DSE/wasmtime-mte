@@ -168,8 +168,8 @@ pub unsafe trait GuestMemory: Send + Sync {
 /// later on.
 fn validate_size_align<'a, T: GuestTypeTransparent<'a>>(
     mem: &'a dyn GuestMemory,
-    offset: u32,
-    len: u32,
+    offset: u64,
+    len: u64,
 ) -> Result<(&[UnsafeCell<T>], Region), GuestError> {
     let base = mem.base();
     let byte_len = len
@@ -196,7 +196,7 @@ fn validate_size_align<'a, T: GuestTypeTransparent<'a>>(
     assert!(mem::align_of::<T>() <= T::guest_align());
     let (start, mid, end) = unsafe { bytes.align_to() };
     if start.len() > 0 || end.len() > 0 {
-        return Err(GuestError::PtrNotAligned(region, T::guest_align() as u32));
+        return Err(GuestError::PtrNotAligned(region, T::guest_align() as u64));
     }
     Ok((mid, region))
 }
@@ -402,7 +402,7 @@ impl<'a, T: ?Sized + Pointee> GuestPtr<'a, T> {
     /// etc of the returned pointer.
     pub fn cast<U>(&self) -> GuestPtr<'a, U>
     where
-        T: Pointee<Pointer = u32>,
+        T: Pointee<Pointer = u64>,
     {
         GuestPtr::new(self.mem, self.pointer)
     }
@@ -460,11 +460,11 @@ impl<'a, T: ?Sized + Pointee> GuestPtr<'a, T> {
     /// This will either return the resulting pointer or `Err` if the pointer
     /// arithmetic calculation would overflow around the end of the address
     /// space.
-    pub fn add(&self, amt: u32) -> Result<GuestPtr<'a, T>, GuestError>
+    pub fn add(&self, amt: u64) -> Result<GuestPtr<'a, T>, GuestError>
     where
-        T: GuestType<'a> + Pointee<Pointer = u32>,
+        T: GuestType<'a> + Pointee<Pointer = u64>,
     {
-        let offset = amt
+        let offset = (amt)
             .checked_mul(T::guest_size())
             .and_then(|o| self.pointer.checked_add(o));
         let offset = match offset {
@@ -476,9 +476,9 @@ impl<'a, T: ?Sized + Pointee> GuestPtr<'a, T> {
 
     /// Returns a `GuestPtr` for an array of `T`s using this pointer as the
     /// base.
-    pub fn as_array(&self, elems: u32) -> GuestPtr<'a, [T]>
+    pub fn as_array(&self, elems: u64) -> GuestPtr<'a, [T]>
     where
-        T: GuestType<'a> + Pointee<Pointer = u32>,
+        T: GuestType<'a> + Pointee<Pointer = u64>,
     {
         GuestPtr::new(self.mem, (self.pointer, elems))
     }
@@ -494,12 +494,12 @@ impl<'a, T> GuestPtr<'a, [T]> {
     /// array.
     ///
     /// This is similar to `<[T]>::as_ptr()`
-    pub fn offset_base(&self) -> u32 {
+    pub fn offset_base(&self) -> u64 {
         self.pointer.0
     }
 
     /// For slices, returns the length of the slice, in elements.
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> u64 {
         self.pointer.1
     }
 
@@ -514,7 +514,7 @@ impl<'a, T> GuestPtr<'a, [T]> {
         T: GuestType<'a>,
     {
         let base = self.as_ptr();
-        (0..self.len()).map(move |i| base.add(i))
+        (0..self.len() as usize).map(move |i| base.add(i as u64))
     }
 
     /// Attempts to create a [`GuestCow<'_, T>`] from this pointer, performing
@@ -655,7 +655,7 @@ impl<'a, T> GuestPtr<'a, [T]> {
         GuestPtr::new(self.mem, self.offset_base())
     }
 
-    pub fn get(&self, index: u32) -> Option<GuestPtr<'a, T>>
+    pub fn get(&self, index: u64) -> Option<GuestPtr<'a, T>>
     where
         T: GuestType<'a>,
     {
@@ -670,7 +670,7 @@ impl<'a, T> GuestPtr<'a, [T]> {
         }
     }
 
-    pub fn get_range(&self, r: std::ops::Range<u32>) -> Option<GuestPtr<'a, [T]>>
+    pub fn get_range(&self, r: std::ops::Range<u64>) -> Option<GuestPtr<'a, [T]>>
     where
         T: GuestType<'a>,
     {
@@ -694,12 +694,12 @@ impl<'a, T> GuestPtr<'a, [T]> {
 impl<'a> GuestPtr<'a, str> {
     /// For strings, returns the relative pointer to the base of the string
     /// allocation.
-    pub fn offset_base(&self) -> u32 {
+    pub fn offset_base(&self) -> u64 {
         self.pointer.0
     }
 
     /// Returns the length, in bytes, of the string.
-    pub fn len(&self) -> u32 {
+    pub fn len(&self) -> u64 {
         self.pointer.1
     }
 
@@ -1141,21 +1141,21 @@ pub trait Pointee: private::Sealed {
 }
 
 impl<T> Pointee for T {
-    type Pointer = u32;
+    type Pointer = u64;
     fn debug(pointer: Self::Pointer, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "*guest {:#x}", pointer)
     }
 }
 
 impl<T> Pointee for [T] {
-    type Pointer = (u32, u32);
+    type Pointer = (u64, u64);
     fn debug(pointer: Self::Pointer, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "*guest {:#x}/{}", pointer.0, pointer.1)
     }
 }
 
 impl Pointee for str {
-    type Pointer = (u32, u32);
+    type Pointer = (u64, u64);
     fn debug(pointer: Self::Pointer, f: &mut fmt::Formatter) -> fmt::Result {
         <[u8]>::debug(pointer, f)
     }

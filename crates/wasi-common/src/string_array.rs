@@ -34,15 +34,15 @@ impl StringArray {
         Ok(())
     }
 
-    pub fn number_elements(&self) -> u32 {
-        self.elems.len() as u32
+    pub fn number_elements(&self) -> u64 {
+        self.elems.len() as u64
     }
 
-    pub fn cumulative_size(&self) -> u32 {
+    pub fn cumulative_size(&self) -> u64 {
         self.elems
             .iter()
             .map(|e| e.as_bytes().len() + 1)
-            .sum::<usize>() as u32
+            .sum::<usize>() as u64
     }
 
     pub fn write_to_guest<'a>(
@@ -55,7 +55,7 @@ impl StringArray {
         let mut cursor = 0;
         for (elem, head) in self.elems.iter().zip(element_heads.iter()) {
             let bytes = elem.as_bytes();
-            let len = bytes.len() as u32;
+            let len = bytes.len() as u64;
             {
                 let elem_buffer = buffer
                     .get_range(cursor..(cursor + len))

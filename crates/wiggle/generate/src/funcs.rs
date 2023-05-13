@@ -220,11 +220,11 @@ impl witx::Bindgen for Rust<'_> {
                 results.push(quote!(#param));
             }
 
-            Instruction::PointerFromI32 { ty } | Instruction::ConstPointerFromI32 { ty } => {
+            Instruction::PointerFromI64 { ty } | Instruction::ConstPointerFromI64 { ty } => {
                 let val = operands.pop().unwrap();
                 let pointee_type = names::type_ref(ty, anon_lifetime());
                 results.push(quote! {
-                    wiggle::GuestPtr::<#pointee_type>::new(memory, #val as u32)
+                    wiggle::GuestPtr::<#pointee_type>::new(memory, #val as u64)
                 });
             }
 
@@ -239,7 +239,7 @@ impl witx::Bindgen for Rust<'_> {
                     }
                 };
                 results.push(quote! {
-                    wiggle::GuestPtr::<#ty>::new(memory, (#ptr as u32, #len as u32));
+                    wiggle::GuestPtr::<#ty>::new(memory, (#ptr as u64, #len as u64));
                 })
             }
 
@@ -368,7 +368,7 @@ impl witx::Bindgen for Rust<'_> {
                 let wrap_err = wrap_err(&format!("write {}", ty.name.as_str()));
                 let pointee_type = names::type_(&ty.name);
                 self.src.extend(quote! {
-                    wiggle::GuestPtr::<#pointee_type>::new(memory, #ptr as u32)
+                    wiggle::GuestPtr::<#pointee_type>::new(memory, #ptr as u64)
                         .write(#val)
                         .map_err(#wrap_err)?;
                 });
@@ -379,7 +379,7 @@ impl witx::Bindgen for Rust<'_> {
                 let wrap_err = wrap_err(&format!("read {}", ty.name.as_str()));
                 let pointee_type = names::type_(&ty.name);
                 results.push(quote! {
-                    wiggle::GuestPtr::<#pointee_type>::new(memory, #ptr as u32)
+                    wiggle::GuestPtr::<#pointee_type>::new(memory, #ptr as u64)
                         .read()
                         .map_err(#wrap_err)?
                 });
@@ -401,7 +401,7 @@ impl witx::Bindgen for Rust<'_> {
 
             // Conversions with matching bit-widths but different signededness
             // use `as` since we're basically just reinterpreting the bits.
-            Instruction::U32FromI32 | Instruction::UsizeFromI32 => {
+            Instruction::U32FromI32 | Instruction::UsizeFromI64 => {
                 let val = operands.pop().unwrap();
                 results.push(quote!(#val as u32));
             }

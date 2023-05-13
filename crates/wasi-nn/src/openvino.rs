@@ -85,7 +85,7 @@ impl BackendGraph for OpenvinoGraph {
 struct OpenvinoExecutionContext(Arc<openvino::CNNNetwork>, openvino::InferRequest);
 
 impl BackendExecutionContext for OpenvinoExecutionContext {
-    fn set_input(&mut self, index: u32, tensor: &Tensor<'_>) -> Result<(), BackendError> {
+    fn set_input(&mut self, index: u64, tensor: &Tensor<'_>) -> Result<(), BackendError> {
         let input_name = self.0.get_input_name(index as usize)?;
 
         // Construct the blob structure.
@@ -117,7 +117,7 @@ impl BackendExecutionContext for OpenvinoExecutionContext {
         Ok(())
     }
 
-    fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError> {
+    fn get_output(&mut self, index: u64, destination: &mut [u8]) -> Result<u64, BackendError> {
         let output_name = self.0.get_output_name(index as usize)?;
         let mut blob = self.1.get_blob(&output_name)?;
         let blob_size = blob.byte_len()?;
@@ -127,7 +127,7 @@ impl BackendExecutionContext for OpenvinoExecutionContext {
 
         // Copy the tensor data into the destination buffer.
         destination[..blob_size].copy_from_slice(blob.buffer()?);
-        Ok(blob_size as u32)
+        Ok(blob_size as u64)
     }
 }
 

@@ -55,7 +55,7 @@ impl<'a> WasiEphemeralNn for WasiNnCtx {
     fn set_input<'b>(
         &mut self,
         exec_context_id: GraphExecutionContext,
-        index: u32,
+        index: u64,
         tensor: &Tensor<'b>,
     ) -> Result<()> {
         if let Some(exec_context) = self.executions.get_mut(exec_context_id) {
@@ -76,10 +76,10 @@ impl<'a> WasiEphemeralNn for WasiNnCtx {
     fn get_output<'b>(
         &mut self,
         exec_context_id: GraphExecutionContext,
-        index: u32,
+        index: u64,
         out_buffer: &GuestPtr<'_, u8>,
-        out_buffer_max_size: u32,
-    ) -> Result<u32> {
+        out_buffer_max_size: u64,
+    ) -> Result<u64> {
         if let Some(exec_context) = self.executions.get_mut(exec_context_id) {
             let mut destination = out_buffer
                 .as_array(out_buffer_max_size)

@@ -1,12 +1,12 @@
 /// Represents a contiguous region in memory.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Region {
-    pub start: u32,
-    pub len: u32,
+    pub start: u64,
+    pub len: u64,
 }
 
 impl Region {
-    pub fn new(start: u32, len: u32) -> Self {
+    pub fn new(start: u64, len: u64) -> Self {
         Self { start, len }
     }
 
@@ -30,7 +30,7 @@ impl Region {
         }
     }
 
-    pub fn extend(&self, times: u32) -> Self {
+    pub fn extend(&self, times: u64) -> Self {
         let len = self.len * times;
         Self {
             start: self.start,

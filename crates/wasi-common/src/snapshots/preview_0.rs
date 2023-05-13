@@ -9,7 +9,7 @@ use crate::snapshots::preview_1::MAX_SHARED_BUFFER_SIZE;
 use crate::{ErrorExt, WasiCtx};
 use cap_std::time::Duration;
 use std::collections::HashSet;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::io::{IoSlice, IoSliceMut};
 use std::ops::Deref;
 use wiggle::GuestPtr;
@@ -565,7 +565,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
             if let Some(iov) = iov {
                 let mut buffer = vec![0; (iov.len() as usize).min(MAX_SHARED_BUFFER_SIZE)];
                 let bytes_read = f.read_vectored(&mut [IoSliceMut::new(&mut buffer)]).await?;
-                iov.get_range(0..bytes_read.try_into()?)
+                iov.get_range(0..bytes_read.into())
                     .expect("it should always be possible to slice the iov smaller")
                     .copy_from_slice(&buffer[0..bytes_read.try_into()?])?;
                 bytes_read
@@ -590,7 +590,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
             f.read_vectored(&mut ioslices).await?
         };
 
-        Ok(types::Size::try_from(bytes_read)?)
+        Ok(types::Size::from(bytes_read))
     }
 
     async fn fd_pread<'a>(
@@ -638,7 +638,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
                 let bytes_read = f
                     .read_vectored_at(&mut [IoSliceMut::new(&mut buffer)], offset)
                     .await?;
-                iov.get_range(0..bytes_read.try_into()?)
+                iov.get_range(0..bytes_read)
                     .expect("it should always be possible to slice the iov smaller")
                     .copy_from_slice(&buffer[0..bytes_read.try_into()?])?;
                 bytes_read
@@ -663,7 +663,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
             f.read_vectored_at(&mut ioslices, offset).await?
         };
 
-        Ok(types::Size::try_from(bytes_read)?)
+        Ok(types::Size::from(bytes_read))
     }
 
     async fn fd_write<'a>(
@@ -689,7 +689,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
             .collect();
         let bytes_written = f.write_vectored(&ioslices).await?;
 
-        Ok(types::Size::try_from(bytes_written)?)
+        Ok(types::Size::from(bytes_written))
     }
 
     async fn fd_pwrite<'a>(
@@ -716,7 +716,7 @@ impl wasi_unstable::WasiUnstable for WasiCtx {
             .collect();
         let bytes_written = f.write_vectored_at(&ioslices, offset).await?;
 
-        Ok(types::Size::try_from(bytes_written)?)
+        Ok(types::Size::from(bytes_written))
     }
 
     async fn fd_prestat_get(&mut self, fd: types::Fd) -> Result<types::Prestat, Error> {

@@ -64,8 +64,8 @@ impl HostMemory {
         }
     }
 
-    pub fn mem_area_strat(align: u32) -> BoxedStrategy<MemArea> {
-        prop::num::u32::ANY
+    pub fn mem_area_strat(align: u64) -> BoxedStrategy<MemArea> {
+        prop::num::u64::ANY
             .prop_filter_map("needs to fit in memory", move |p| {
                 let p_aligned = p - (p % align); // Align according to argument
                 let ptr = p_aligned % 4096; // Put inside memory
@@ -102,7 +102,7 @@ impl HostMemory {
         out
     }
 
-    pub fn byte_slice_strat(size: u32, align: u32, exclude: &MemAreas) -> BoxedStrategy<MemArea> {
+    pub fn byte_slice_strat(size: u64, align: u64, exclude: &MemAreas) -> BoxedStrategy<MemArea> {
         let available: Vec<MemArea> = Self::invert(exclude)
             .iter()
             .flat_map(|a| a.inside(size))
@@ -146,8 +146,8 @@ unsafe impl GuestMemory for HostMemory {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MemArea {
-    pub ptr: u32,
-    pub len: u32,
+    pub ptr: u64,
+    pub len: u64,
 }
 
 impl MemArea {
@@ -199,7 +199,7 @@ impl MemArea {
     }
 
     /// Enumerate all memareas of size `len` inside a given area
-    fn inside(&self, len: u32) -> impl Iterator<Item = MemArea> {
+    fn inside(&self, len: u64) -> impl Iterator<Item = MemArea> {
         let end: i64 = self.len as i64 - len as i64;
         let start = self.ptr;
         (0..end).into_iter().map(move |v| MemArea {
@@ -261,9 +261,9 @@ mod test {
     }
 
     fn set_of_slices_strat(
-        s1: u32,
-        s2: u32,
-        s3: u32,
+        s1: u64,
+        s2: u64,
+        s3: u64,
     ) -> BoxedStrategy<(MemArea, MemArea, MemArea)> {
         HostMemory::byte_slice_strat(s1, 1, &MemAreas::new())
             .prop_flat_map(move |a1| {

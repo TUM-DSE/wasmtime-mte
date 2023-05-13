@@ -6,7 +6,7 @@ use witx::Layout;
 
 pub(super) fn define_handle(name: &witx::Id, h: &witx::HandleDatatype) -> TokenStream {
     let ident = names::type_(name);
-    let size = h.mem_size_align().size as u32;
+    let size = h.mem_size_align().size as u64;
     let align = h.mem_size_align().align as usize;
     quote! {
         #[repr(transparent)]
@@ -55,7 +55,7 @@ pub(super) fn define_handle(name: &witx::Id, h: &witx::HandleDatatype) -> TokenS
 
         impl<'a> wiggle::GuestType<'a> for #ident {
             #[inline]
-            fn guest_size() -> u32 {
+            fn guest_size() -> u64 {
                 #size
             }
 

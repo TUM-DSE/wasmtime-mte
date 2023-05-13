@@ -332,7 +332,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             if let Some(iov) = iov {
                 let mut buffer = vec![0; (iov.len() as usize).min(MAX_SHARED_BUFFER_SIZE)];
                 let bytes_read = f.read_vectored(&mut [IoSliceMut::new(&mut buffer)]).await?;
-                iov.get_range(0..bytes_read.try_into()?)
+                iov.get_range(0..bytes_read)
                     .expect("it should always be possible to slice the iov smaller")
                     .copy_from_slice(&buffer[0..bytes_read.try_into()?])?;
                 bytes_read
@@ -357,7 +357,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             f.read_vectored(&mut ioslices).await?
         };
 
-        Ok(types::Size::try_from(bytes_read)?)
+        Ok(types::Size::from(bytes_read))
     }
 
     async fn fd_pread<'a>(
@@ -405,9 +405,9 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
                 let bytes_read = f
                     .read_vectored_at(&mut [IoSliceMut::new(&mut buffer)], offset)
                     .await?;
-                iov.get_range(0..bytes_read.try_into()?)
+                iov.get_range(0..bytes_read)
                     .expect("it should always be possible to slice the iov smaller")
-                    .copy_from_slice(&buffer[0..bytes_read.try_into()?])?;
+                    .copy_from_slice(&buffer[0..bytes_read as usize])?;
                 bytes_read
             } else {
                 return Ok(0);
@@ -430,7 +430,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             f.read_vectored_at(&mut ioslices, offset).await?
         };
 
-        Ok(types::Size::try_from(bytes_read)?)
+        Ok(types::Size::from(bytes_read))
     }
 
     async fn fd_write<'a>(
@@ -456,7 +456,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             .collect();
         let bytes_written = f.write_vectored(&ioslices).await?;
 
-        Ok(types::Size::try_from(bytes_written)?)
+        Ok(types::Size::from(bytes_written))
     }
 
     async fn fd_pwrite<'a>(
@@ -483,7 +483,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             .collect();
         let bytes_written = f.write_vectored_at(&ioslices, offset).await?;
 
-        Ok(types::Size::try_from(bytes_written)?)
+        Ok(types::Size::from(bytes_written))
     }
 
     async fn fd_prestat_get(&mut self, fd: types::Fd) -> Result<types::Prestat, Error> {
@@ -491,7 +491,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
         let dir_entry: Arc<DirEntry> = table.get(u32::from(fd)).map_err(|_| Error::badf())?;
         if let Some(ref preopen) = dir_entry.preopen_path() {
             let path_str = preopen.to_str().ok_or_else(|| Error::not_supported())?;
-            let pr_name_len = u32::try_from(path_str.as_bytes().len())?;
+            let pr_name_len = u64::try_from(path_str.as_bytes().len())?;
             Ok(types::Prestat::Dir(types::PrestatDir { pr_name_len }))
         } else {
             Err(Error::not_supported().context("file is not a preopen"))
@@ -515,7 +515,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             if path_len < path_max_len as usize {
                 return Err(Error::name_too_long());
             }
-            path.as_array(path_len as u32).copy_from_slice(path_bytes)?;
+            path.as_array(path_len as u64).copy_from_slice(path_bytes)?;
             Ok(())
         } else {
             Err(Error::not_supported())
@@ -799,7 +799,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
         if link_len > buf_len as usize {
             return Err(Error::range());
         }
-        buf.as_array(link_len as u32).copy_from_slice(link_bytes)?;
+        buf.as_array(link_len as u64).copy_from_slice(link_bytes)?;
         Ok(link_len as types::Size)
     }
 
@@ -1101,9 +1101,9 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             // avoid Rust unsafety (i.e., the called function could rely on
             // `&mut [u8]`'s exclusive ownership which is not guaranteed due to
             // potential access from other threads).
-            let mut copied: u32 = 0;
+            let mut copied: u64 = 0;
             while copied < buf.len() {
-                let len = (buf.len() - copied).min(MAX_SHARED_BUFFER_SIZE as u32);
+                let len = (buf.len() - copied).min(MAX_SHARED_BUFFER_SIZE as u64);
                 let mut tmp = vec![0; len as usize];
                 self.random.lock().unwrap().try_fill_bytes(&mut tmp)?;
                 let dest = buf
@@ -1187,7 +1187,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
                 let (bytes_read, ro_flags) = f
                     .sock_recv(&mut [IoSliceMut::new(&mut buffer)], RiFlags::from(ri_flags))
                     .await?;
-                iov.get_range(0..bytes_read.try_into()?)
+                iov.get_range(0..bytes_read)
                     .expect("it should always be possible to slice the iov smaller")
                     .copy_from_slice(&buffer[0..bytes_read.try_into()?])?;
                 (bytes_read, ro_flags)
@@ -1212,7 +1212,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             f.sock_recv(&mut ioslices, RiFlags::from(ri_flags)).await?
         };
 
-        Ok((types::Size::try_from(bytes_read)?, ro_flags.into()))
+        Ok((types::Size::from(bytes_read), ro_flags.into()))
     }
 
     async fn sock_send<'a>(
@@ -1239,7 +1239,7 @@ impl wasi_snapshot_preview1::WasiSnapshotPreview1 for WasiCtx {
             .collect();
         let bytes_written = f.sock_send(&ioslices, SiFlags::empty()).await?;
 
-        Ok(types::Size::try_from(bytes_written)?)
+        Ok(types::Size::from(bytes_written))
     }
 
     async fn sock_shutdown(&mut self, fd: types::Fd, how: types::Sdflags) -> Result<(), Error> {

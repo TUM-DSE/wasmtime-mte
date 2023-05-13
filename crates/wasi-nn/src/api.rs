@@ -25,9 +25,9 @@ pub(crate) trait BackendGraph: Send + Sync {
 /// A [BackendExecutionContext] performs the actual inference; this is the
 /// backing implementation for a [crate::witx::types::GraphExecutionContext].
 pub(crate) trait BackendExecutionContext: Send + Sync {
-    fn set_input(&mut self, index: u32, tensor: &Tensor<'_>) -> Result<(), BackendError>;
+    fn set_input(&mut self, index: u64, tensor: &Tensor<'_>) -> Result<(), BackendError>;
     fn compute(&mut self) -> Result<(), BackendError>;
-    fn get_output(&mut self, index: u32, destination: &mut [u8]) -> Result<u32, BackendError>;
+    fn get_output(&mut self, index: u64, destination: &mut [u8]) -> Result<u64, BackendError>;
 }
 
 /// Errors returned by a backend; [BackendError::BackendAccess] is a catch-all
@@ -39,7 +39,7 @@ pub enum BackendError {
     #[error("Failed while accessing guest module")]
     GuestAccess(#[from] GuestError),
     #[error("The backend expects {0} buffers, passed {1}")]
-    InvalidNumberOfBuilders(u32, u32),
+    InvalidNumberOfBuilders(u64, u64),
     #[error("Not enough memory to copy tensor data of size: {0}")]
     NotEnoughMemory(usize),
 }

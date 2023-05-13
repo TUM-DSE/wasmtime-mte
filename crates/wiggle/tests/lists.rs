@@ -169,7 +169,7 @@ impl PopulateExcusesExcercise {
         // Populate array with valid pointers to Excuse type in memory
         let ptr = host_memory.ptr::<[GuestPtr<'_, types::Excuse>]>((
             self.array_ptr_loc.ptr,
-            self.elements.len() as u32,
+            self.elements.len() as u64,
         ));
         for (ptr, val) in ptr.iter().zip(&self.elements) {
             ptr.expect("should be valid pointer")

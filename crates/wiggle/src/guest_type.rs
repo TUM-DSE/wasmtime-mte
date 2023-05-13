@@ -23,7 +23,7 @@ pub trait GuestErrorType {
 /// validation when reading/writing.
 pub trait GuestType<'a>: Sized {
     /// Returns the size, in bytes, of this type in the guest memory.
-    fn guest_size() -> u32;
+    fn guest_size() -> u64;
 
     /// Returns the required alignment of this type, in bytes, for both guest
     /// and host memory.
@@ -62,7 +62,7 @@ macro_rules! integer_primitives {
     ($([$ty:ident, $ty_atomic:ident],)*) => ($(
         impl<'a> GuestType<'a> for $ty {
             #[inline]
-            fn guest_size() -> u32 { mem::size_of::<Self>() as u32 }
+            fn guest_size() -> u64 { mem::size_of::<Self>() as u64 }
             #[inline]
             fn guest_align() -> usize { mem::align_of::<Self>() }
 
@@ -125,7 +125,7 @@ macro_rules! float_primitives {
     ($([$ty:ident, $ty_unsigned:ident, $ty_atomic:ident],)*) => ($(
         impl<'a> GuestType<'a> for $ty {
             #[inline]
-            fn guest_size() -> u32 { mem::size_of::<Self>() as u32 }
+            fn guest_size() -> u64 { mem::size_of::<Self>() as u64 }
             #[inline]
             fn guest_align() -> usize { mem::align_of::<Self>() }
 
@@ -188,22 +188,22 @@ float_primitives! {
 // Support pointers-to-pointers where pointers are always 32-bits in wasm land
 impl<'a, T> GuestType<'a> for GuestPtr<'a, T> {
     #[inline]
-    fn guest_size() -> u32 {
-        u32::guest_size()
+    fn guest_size() -> u64 {
+        u64::guest_size()
     }
 
     #[inline]
     fn guest_align() -> usize {
-        u32::guest_align()
+        u64::guest_align()
     }
 
     fn read(ptr: &GuestPtr<'a, Self>) -> Result<Self, GuestError> {
-        let offset = ptr.cast::<u32>().read()?;
+        let offset = ptr.cast::<u64>().read()?;
         Ok(GuestPtr::new(ptr.mem(), offset))
     }
 
     fn write(ptr: &GuestPtr<'_, Self>, val: Self) -> Result<(), GuestError> {
-        ptr.cast::<u32>().write(val.offset())
+        ptr.cast::<u64>().write(val.offset())
     }
 }
 
@@ -213,25 +213,25 @@ where
     T: GuestType<'a>,
 {
     #[inline]
-    fn guest_size() -> u32 {
-        u32::guest_size() * 2
+    fn guest_size() -> u64 {
+        u64::guest_size() * 2
     }
 
     #[inline]
     fn guest_align() -> usize {
-        u32::guest_align()
+        u64::guest_align()
     }
 
     fn read(ptr: &GuestPtr<'a, Self>) -> Result<Self, GuestError> {
-        let offset = ptr.cast::<u32>().read()?;
-        let len = ptr.cast::<u32>().add(1)?.read()?;
+        let offset = ptr.cast::<u64>().read()?;
+        let len = ptr.cast::<u64>().add(1)?.read()?;
         Ok(GuestPtr::new(ptr.mem(), offset).as_array(len))
     }
 
     fn write(ptr: &GuestPtr<'_, Self>, val: Self) -> Result<(), GuestError> {
         let (offs, len) = val.offset();
-        let len_ptr = ptr.cast::<u32>().add(1)?;
-        ptr.cast::<u32>().write(offs)?;
+        let len_ptr = ptr.cast::<u64>().add(1)?;
+        ptr.cast::<u64>().write(offs)?;
         len_ptr.write(len)
     }
 }

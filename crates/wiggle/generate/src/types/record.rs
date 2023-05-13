@@ -7,7 +7,7 @@ use witx::Layout;
 
 pub(super) fn define_struct(name: &witx::Id, s: &witx::RecordDatatype) -> TokenStream {
     let ident = names::type_(name);
-    let size = s.mem_size_align().size as u32;
+    let size = s.mem_size_align().size as u64;
     let align = s.mem_size_align().align as usize;
 
     let member_names = s.members.iter().map(|m| names::struct_member(&m.name));
@@ -36,7 +36,7 @@ pub(super) fn define_struct(name: &witx::Id, s: &witx::RecordDatatype) -> TokenS
 
     let member_reads = s.member_layout().into_iter().map(|ml| {
         let name = names::struct_member(&ml.member.name);
-        let offset = ml.offset as u32;
+        let offset = ml.offset as u64;
         let location = quote!(location.cast::<u8>().add(#offset)?.cast());
         match &ml.member.tref {
             witx::TypeRef::Name(nt) => {
@@ -65,7 +65,7 @@ pub(super) fn define_struct(name: &witx::Id, s: &witx::RecordDatatype) -> TokenS
 
     let member_writes = s.member_layout().into_iter().map(|ml| {
         let name = names::struct_member(&ml.member.name);
-        let offset = ml.offset as u32;
+        let offset = ml.offset as u64;
         quote! {
             wiggle::GuestType::write(
                 &location.cast::<u8>().add(#offset)?.cast(),
@@ -88,7 +88,7 @@ pub(super) fn define_struct(name: &witx::Id, s: &witx::RecordDatatype) -> TokenS
 
         impl<'a> wiggle::GuestType<'a> for #ident #struct_lifetime {
             #[inline]
-            fn guest_size() -> u32 {
+            fn guest_size() -> u64 {
                 #size
             }
 

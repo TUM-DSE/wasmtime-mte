@@ -69,7 +69,7 @@ pub(super) fn define_flags(
 
         impl<'a> wiggle::GuestType<'a> for #ident {
             #[inline]
-            fn guest_size() -> u32 {
+            fn guest_size() -> u64 {
                 #repr::guest_size()
             }
 
