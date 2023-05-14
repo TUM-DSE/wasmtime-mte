@@ -2404,7 +2404,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let index = builder
                 .ins()
                 .band_imm(index, 0xF0FF_FFFF_FFFF_FFFFu64 as i64);
-            let tagged_index = builder.ins().iadd(tag, index);
+            let tagged_index = builder.ins().bxor(index, tag);
 
             state.push1(tagged_index);
         }
