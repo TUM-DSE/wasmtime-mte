@@ -730,76 +730,46 @@ impl MachInstEmit for Inst {
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
             }
             &MInst::Stg { rt, ref mem } => {
-                let top11 = 0b11011001_001;
+                const LOG2_TAG_GRANULE: u32 = 4;
+                let top11 = 0b1101_1001_001;
                 let rt = allocs.next(rt);
-                match mem {
-                    &AMode::Unscaled { rn, simm9 } => {
-                        let rn = allocs.next(rn);
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                    }
-                    &AMode::SPPreIndexed { simm9 } => {
-                        let rn = stack_reg();
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b11, rn, rt));
-                    }
-                    &AMode::SPPostIndexed { simm9 } => {
-                        let rn = stack_reg();
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b01, rn, rt));
-                    }
-                    &AMode::RegOffset { rn, off, .. } => {
-                        let rn = allocs.next(rn);
-                        if let Some(simm9) = SImm9::maybe_from_i64(off) {
-                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                        } else {
-                            panic!("Immediate does not fit into simm9: {}", off);
-                        }
-                    }
+                let (offset, op_11_10, rn) = match mem {
+                    &AMode::Unscaled { rn, simm9 } => (simm9.bits() as i64, 0b10, allocs.next(rn)),
+                    &AMode::SPPreIndexed { simm9 } => (simm9.bits() as i64, 0b11, stack_reg()),
+                    &AMode::SPPostIndexed { simm9 } => (simm9.bits() as i64, 0b01, stack_reg()),
+                    &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
                     &AMode::UnsignedOffset { rn, uimm12 } => {
-                        let rn = allocs.next(rn);
-                        if let Some(simm9) = SImm9::maybe_from_i64(uimm12.value as i64) {
-                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                        } else {
-                            panic!("Immediate does not fit into simm9: {}", uimm12.value);
-                        }
+                        (uimm12.bits() as i64, 0b10, allocs.next(rn))
                     }
                     _ => panic!("unsupported addressing mode for stg: {:?}", mem),
-                }
+                };
+                let offset = offset >> LOG2_TAG_GRANULE;
+                let Some(simm9) = SImm9::maybe_from_i64(offset) else {
+                    panic!("stg offset out of range: {}", offset);
+                };
+
+                sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
             }
             &MInst::St2g { rt, ref mem } => {
-                // Based on https://developer.arm.com/documentation/ddi0596/2021-06/Base-Instructions/ST2G--Store-Allocation-Tags-
+                const LOG2_TAG_GRANULE: u32 = 4;
                 let top11 = 0b1101_1001_101;
                 let rt = allocs.next(rt);
-                match mem {
-                    &AMode::SPPostIndexed { simm9 } => {
-                        let rn = stack_reg();
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b01, rn, rt));
-                    }
-                    &AMode::SPPreIndexed { simm9 } => {
-                        let rn = stack_reg();
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b11, rn, rt));
-                    }
-                    // Convert unsigned offsets to signed offsets
-                    &AMode::Unscaled { rn, simm9 } => {
-                        let rn = allocs.next(rn);
-                        sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                    }
-                    &AMode::RegOffset { rn, off, .. } => {
-                        let rn = allocs.next(rn);
-                        if let Some(simm9) = SImm9::maybe_from_i64(off) {
-                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                        } else {
-                            panic!("Immediate does not fit into simm9: {}", off);
-                        }
-                    }
+                let (offset, op_11_10, rn) = match mem {
+                    &AMode::Unscaled { rn, simm9 } => (simm9.bits() as i64, 0b10, allocs.next(rn)),
+                    &AMode::SPPreIndexed { simm9 } => (simm9.bits() as i64, 0b11, stack_reg()),
+                    &AMode::SPPostIndexed { simm9 } => (simm9.bits() as i64, 0b01, stack_reg()),
+                    &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
                     &AMode::UnsignedOffset { rn, uimm12 } => {
-                        let rn = allocs.next(rn);
-                        if let Some(simm9) = SImm9::maybe_from_i64(uimm12.value as i64) {
-                            sink.put4(enc_stg_simm9(top11, simm9, 0b10, rn, rt));
-                        } else {
-                            panic!("Immediate does not fit into simm9: {}", uimm12.value);
-                        }
+                        (uimm12.bits() as i64, 0b10, allocs.next(rn))
                     }
                     _ => panic!("unsupported addressing mode for st2g: {:?}", mem),
-                }
+                };
+                let offset = offset >> LOG2_TAG_GRANULE;
+                let Some(simm9) = SImm9::maybe_from_i64(offset) else {
+                    panic!("stg offset out of range: {}", offset);
+                };
+
+                sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
             }
             &Inst::AluRRR {
                 alu_op,
