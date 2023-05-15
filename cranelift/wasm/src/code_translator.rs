@@ -3788,27 +3788,35 @@ where
     // +---next_block
     // +---
 
+    // Perform compile-time loop unrolling if size is a constant value (known at compile-time)
     if let ValueDef::Result(inst, _) = builder.func.dfg.value_def(size) {
         if let InstructionData::UnaryImm {
             opcode: ir::Opcode::Iconst,
             imm,
         } = builder.func.dfg.insts[inst]
         {
-            // we know the size is constant, generate an unrolled loop
             let mut size = imm.bits();
+
+            // Assert that `size` is 16 byte aligned, and trap if not
             if size % 16 != 0 {
                 return Err(WasmError::User(format!("size must be 16 byte aligned, was {size}")));
             }
 
             let mut iter_ptr = iter_ptr;
-            while size >= 16 {
-                builder.ins().arm64_stg(tagged_ptr, iter_ptr);
-                let c = builder.ins().iconst(I64, 16);
+            while size >= 32 {
+                builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
+
+                // iter_ptr += 32, but trap on overflow
+                let offset = builder.ins().iconst(I64, 32);
                 iter_ptr =
                 builder
                 .ins()
-                .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
-                size -= 16;
+                .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
+                size -= 32;
+            }
+
+            if size != 0 {
+                builder.ins().arm64_stg(tagged_ptr, iter_ptr);
             }
 
             return Ok(());
