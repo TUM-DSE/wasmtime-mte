@@ -5,14 +5,14 @@
   (type (;3;) (func (param i32) (result i32)))
   (type (;4;) (func (param i32 i64) (result i32)))
   (type (;5;) (func (param i32 i64 i32 i64) (result i32)))
-  (type (;6;) (func (param i32)))
-  (type (;7;) (func))
-  (type (;8;) (func (param i64 i64) (result i64)))
-  (type (;9;) (func (param i64)))
-  (type (;10;) (func (param i64) (result i64)))
-  (type (;11;) (func (param i64 i64)))
-  (type (;12;) (func (result i32)))
-  (type (;13;) (func (param i32 i64 i64 i64) (result i32)))
+  (type (;6;) (func (param i32 i64 i64 i64) (result i32)))
+  (type (;7;) (func (param i32)))
+  (type (;8;) (func))
+  (type (;9;) (func (param i64 i64) (result i64)))
+  (type (;10;) (func (param i64)))
+  (type (;11;) (func (param i64) (result i64)))
+  (type (;12;) (func (param i64 i64)))
+  (type (;13;) (func (result i32)))
   (type (;14;) (func (param i64 i64 i64) (result i32)))
   (type (;15;) (func (param i64) (result i32)))
   (type (;16;) (func (param i32 i64 i32) (result i64)))
@@ -31,10 +31,10 @@
   (import "wasi_snapshot_preview1" "fd_close" (func $__imported_wasi_snapshot_preview1_fd_close (;2;) (type 3)))
   (import "wasi_snapshot_preview1" "fd_fdstat_get" (func $__imported_wasi_snapshot_preview1_fd_fdstat_get (;3;) (type 4)))
   (import "wasi_snapshot_preview1" "fd_seek" (func $__imported_wasi_snapshot_preview1_fd_seek (;4;) (type 5)))
-  (import "wasi_snapshot_preview1" "fd_write" (func $__imported_wasi_snapshot_preview1_fd_write (;5;) (type 5)))
-  (import "wasi_snapshot_preview1" "proc_exit" (func $__imported_wasi_snapshot_preview1_proc_exit (;6;) (type 6)))
-  (func $__wasm_call_ctors (;7;) (type 7))
-  (func $_start (;8;) (type 7)
+  (import "wasi_snapshot_preview1" "fd_write" (func $__imported_wasi_snapshot_preview1_fd_write (;5;) (type 6)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func $__imported_wasi_snapshot_preview1_proc_exit (;6;) (type 7)))
+  (func $__wasm_call_ctors (;7;) (type 8))
+  (func $_start (;8;) (type 8)
     (local i32)
     block ;; label = @1
       block ;; label = @2
@@ -59,7 +59,7 @@
     call $__wasi_proc_exit
     unreachable
   )
-  (func $__wasm_memsafety_malloc (;9;) (type 8) (param i64 i64) (result i64)
+  (func $__wasm_memsafety_malloc (;9;) (type 9) (param i64 i64) (result i64)
     (local i64)
     global.get $__stack_pointer
     i64.const 16
@@ -110,7 +110,7 @@
     global.set $__stack_pointer
     local.get 0
   )
-  (func $__wasm_memsafety_free (;10;) (type 9) (param i64)
+  (func $__wasm_memsafety_free (;10;) (type 10) (param i64)
     (local i64 i64 i64)
     global.get $__stack_pointer
     i64.const 16
@@ -240,11 +240,11 @@
     global.set $__stack_pointer
     local.get 0
   )
-  (func $malloc (;12;) (type 10) (param i64) (result i64)
+  (func $malloc (;12;) (type 11) (param i64) (result i64)
     local.get 0
     call $dlmalloc
   )
-  (func $dlmalloc (;13;) (type 10) (param i64) (result i64)
+  (func $dlmalloc (;13;) (type 11) (param i64) (result i64)
     (local i64 i64 i64 i64 i64 i64 i32 i32 i32 i64 i64 i64 i64)
     global.get $__stack_pointer
     i64.const 16
@@ -3475,11 +3475,11 @@
     global.set $__stack_pointer
     local.get 4
   )
-  (func $free (;14;) (type 9) (param i64)
+  (func $free (;14;) (type 10) (param i64)
     local.get 0
     call $dlfree
   )
-  (func $dlfree (;15;) (type 9) (param i64)
+  (func $dlfree (;15;) (type 10) (param i64)
     (local i64 i64 i64 i64 i64 i64 i64 i32 i32 i32)
     block ;; label = @1
       local.get 0
@@ -4332,7 +4332,7 @@
       i64.store offset=3944
     end
   )
-  (func $calloc (;16;) (type 8) (param i64 i64) (result i64)
+  (func $calloc (;16;) (type 9) (param i64 i64) (result i64)
     (local i64 i64)
     global.get $__stack_pointer
     i64.const 16
@@ -4399,7 +4399,7 @@
     global.set $__stack_pointer
     local.get 0
   )
-  (func $dispose_chunk (;17;) (type 11) (param i64 i64)
+  (func $dispose_chunk (;17;) (type 12) (param i64 i64)
     (local i64 i64 i64 i64 i64 i64 i32 i32 i32)
     local.get 0
     local.get 1
@@ -5211,7 +5211,7 @@
       i64.store offset=16
     end
   )
-  (func $internal_memalign (;18;) (type 8) (param i64 i64) (result i64)
+  (func $internal_memalign (;18;) (type 9) (param i64 i64) (result i64)
     (local i64 i64 i64 i64 i64)
     i64.const 32
     local.set 2
@@ -5451,7 +5451,7 @@
     i64.const 16
     i64.add
   )
-  (func $aligned_alloc (;19;) (type 8) (param i64 i64) (result i64)
+  (func $aligned_alloc (;19;) (type 9) (param i64 i64) (result i64)
     block ;; label = @1
       local.get 0
       i64.const 16
@@ -5465,12 +5465,12 @@
     local.get 1
     call $internal_memalign
   )
-  (func $_Exit (;20;) (type 6) (param i32)
+  (func $_Exit (;20;) (type 7) (param i32)
     local.get 0
     call $__wasi_proc_exit
     unreachable
   )
-  (func $__main_void (;21;) (type 12) (result i32)
+  (func $__main_void (;21;) (type 13) (result i32)
     (local i64 i64 i64 i32)
     global.get $__stack_pointer
     i64.const 16
@@ -5588,26 +5588,25 @@
     i32.const 65535
     i32.and
   )
-  (func $__wasi_fd_write (;27;) (type 13) (param i32 i64 i64 i64) (result i32)
+  (func $__wasi_fd_write (;27;) (type 6) (param i32 i64 i64 i64) (result i32)
     local.get 0
     local.get 1
     local.get 2
-    i32.wrap_i64
     local.get 3
     call $__imported_wasi_snapshot_preview1_fd_write
     i32.const 65535
     i32.and
   )
-  (func $__wasi_proc_exit (;28;) (type 6) (param i32)
+  (func $__wasi_proc_exit (;28;) (type 7) (param i32)
     local.get 0
     call $__imported_wasi_snapshot_preview1_proc_exit
     unreachable
   )
-  (func $abort (;29;) (type 7)
+  (func $abort (;29;) (type 8)
     unreachable
     unreachable
   )
-  (func $sbrk (;30;) (type 10) (param i64) (result i64)
+  (func $sbrk (;30;) (type 11) (param i64) (result i64)
     block ;; label = @1
       local.get 0
       i64.const 0
@@ -5652,8 +5651,8 @@
     call $abort
     unreachable
   )
-  (func $dummy (;31;) (type 7))
-  (func $__wasm_call_dtors (;32;) (type 7)
+  (func $dummy (;31;) (type 8))
+  (func $__wasm_call_dtors (;32;) (type 8)
     call $dummy
     call $__stdio_exit
   )
@@ -6045,7 +6044,7 @@
   (func $__ofl_lock (;43;) (type 17) (result i64)
     i64.const 5928
   )
-  (func $__stdio_exit (;44;) (type 7)
+  (func $__stdio_exit (;44;) (type 8)
     (local i64 i64 i64)
     block ;; label = @1
       call $__ofl_lock
@@ -6536,10 +6535,10 @@
     local.get 1
     i64.div_u
   )
-  (func $#func48<dummy> (@name "dummy") (;48;) (type 8) (param i64 i64) (result i64)
+  (func $#func48<dummy> (@name "dummy") (;48;) (type 9) (param i64 i64) (result i64)
     local.get 0
   )
-  (func $__lctrans (;49;) (type 8) (param i64 i64) (result i64)
+  (func $__lctrans (;49;) (type 9) (param i64 i64) (result i64)
     local.get 0
     local.get 1
     call $#func48<dummy>
@@ -11994,7 +11993,7 @@
     i64.add
     global.set $__stack_pointer
   )
-  (func $long_double_not_supported (;59;) (type 7)
+  (func $long_double_not_supported (;59;) (type 8)
     i64.const 1149
     i64.const 3488
     call $fputs
@@ -12828,7 +12827,7 @@
     end
     local.get 0
   )
-  (func $strlen (;63;) (type 10) (param i64) (result i64)
+  (func $strlen (;63;) (type 11) (param i64) (result i64)
     (local i64 i64)
     local.get 0
     local.set 1
@@ -13288,7 +13287,7 @@
     end
     local.get 3
   )
-  (func $strnlen (;65;) (type 8) (param i64 i64) (result i64)
+  (func $strnlen (;65;) (type 9) (param i64 i64) (result i64)
     (local i64)
     local.get 1
     local.get 0
