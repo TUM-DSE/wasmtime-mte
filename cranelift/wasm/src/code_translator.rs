@@ -3572,12 +3572,59 @@ fn tag_memory_region<FE>(
 where
     FE: FuncEnvironment + ?Sized,
 {
-    tag_memory_region_optimized_v1(iter_ptr, tagged_ptr, size, builder, environ)
+    // Perform compile-time loop unrolling if size is a constant value (known at compile-time)
+    if let ValueDef::Result(inst, _) = builder.func.dfg.value_def(size) {
+        if let InstructionData::UnaryImm {
+            opcode: ir::Opcode::Iconst,
+            imm,
+        } = builder.func.dfg.insts[inst]
+        {
+            let size = imm.bits();
+
+            return tag_memory_region_static(iter_ptr, tagged_ptr, size, builder);
+        }
+    }
+
+    tag_memory_region_dynamic(iter_ptr, tagged_ptr, size, builder, environ)
+}
+
+/// Tag a memory region with a known size.
+fn tag_memory_region_static(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: i64,
+    builder: &mut FunctionBuilder,
+) -> WasmResult<()> {
+    // Assert that `size` is 16 byte aligned, and trap if not
+    if size % 16 != 0 {
+        return Err(WasmError::User(format!(
+            "size must be 16 byte aligned, was {size}"
+        )));
+    }
+
+    // First insert an overflow check. This allows us to insert non-trapping instructions later.
+    let c = builder.ins().iconst(I64, size);
+    builder
+    .ins()
+    .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
+
+    let mut i = 0;
+    while size - i >= 32 {
+        let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
+        builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
+        i += 32;
+    }
+    if i < size {
+        let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
+        builder.ins().arm64_stg(tagged_ptr, iter_ptr);
+    }
+
+    Ok(())
 }
 
 /// Optimized implementation of tag_memory_region. Optimizations include:
 /// - Use st2g operation to tag two memory regions at once
-fn tag_memory_region_optimized_v1<FE>(
+fn tag_memory_region_dynamic<FE>(
     iter_ptr: Value,
     tagged_ptr: Value,
     size: Value,
@@ -3712,171 +3759,6 @@ where
     builder.ins().jump(next_block, &[]);
 
     builder.seal_block(last_stg_body_block);
-
-    // === Next block
-    builder.switch_to_block(next_block);
-
-    builder.seal_block(next_block);
-
-    Ok(())
-}
-
-// TODO: implement as well for future performance comparisons
-/*
-fn tag_memory_region_optimized_v2<FE>(
-    iter_ptr: Value,
-    tagged_ptr: Value,
-    size: Value,
-    builder: &mut FunctionBuilder,
-    environ: &mut FE,
-) -> WasmResult<()>
-where
-    FE: FuncEnvironment + ?Sized,
-{
-    // Pseudo code (high level):
-    //
-    // assert_16_byte_aligned(size)
-    //
-    // if (size % 32 == 0)
-    //     for (size; size != 0; size -= 32, iter_ptr += 32):
-    //         st2g(tagged_ptr, iter_ptr)
-    // else
-    //     for (size; size != 0; size -= 16, iter_ptr += 16):
-    //         stg(tagged_ptr, iter_ptr)
-
-    Ok(())
-}
-*/
-
-// TODO: probably remove in the future
-
-/// Unoptimized/naive implementation of tag_memory_region, kept here for
-/// reference until testing (correctness and performance) infrastructure
-/// is in place
-fn _tag_memory_region_naive<FE>(
-    iter_ptr: Value,
-    tagged_ptr: Value,
-    size: Value,
-    builder: &mut FunctionBuilder,
-    environ: &mut FE,
-) -> WasmResult<()>
-where
-    FE: FuncEnvironment + ?Sized,
-{
-    // Pseudo code (high level):
-    //
-    // for (size; size != 0; size -= 16, iter_ptr += 16):
-    //     stg(tagged_ptr, iter_ptr)
-
-    // Pseudo code (low level):
-    //
-    // +---condition_block
-    // | if (size != 0)
-    // |     goto loop_body_block
-    // | else
-    // |     goto next_block
-    // |
-    // | +---loop_body_block
-    // | | stg(tagged_ptr, iter_ptr)
-    // | | size -= 16
-    // | | iter_ptr += 16
-    // | | goto condition_block
-    // | +---
-    // +---
-    //
-    // end:
-    // +---next_block
-    // +---
-
-    // Perform compile-time loop unrolling if size is a constant value (known at compile-time)
-    if let ValueDef::Result(inst, _) = builder.func.dfg.value_def(size) {
-        if let InstructionData::UnaryImm {
-            opcode: ir::Opcode::Iconst,
-            imm,
-        } = builder.func.dfg.insts[inst]
-        {
-            let size = imm.bits();
-
-            // Assert that `size` is 16 byte aligned, and trap if not
-            if size % 16 != 0 {
-                return Err(WasmError::User(format!(
-                    "size must be 16 byte aligned, was {size}"
-                )));
-            }
-
-            // First insert an overflow check. This allows us to insert non-trapping instructions later.
-            let c = builder.ins().iconst(I64, size);
-            builder
-                .ins()
-                .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
-
-            let mut i = 0;
-            while size - i >= 32 {
-                let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
-                builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
-                i += 32;
-            }
-            if i < size {
-                let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
-                builder.ins().arm64_stg(tagged_ptr, iter_ptr);
-            }
-
-            return Ok(());
-        }
-    }
-
-    assert_16_byte_aligned(size, builder);
-
-    // === Block definitions
-    // condition_block(size, iter_ptr)
-    let condition_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
-
-    // loop_body_block(size, iter_ptr)
-    let loop_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
-
-    // next_block
-    let next_block = block_with_params(builder, [], environ)?;
-
-    builder.ins().jump(condition_block, &[size, iter_ptr]);
-
-    // === Condition block
-    builder.switch_to_block(condition_block);
-
-    let size_counter = builder.block_params(condition_block)[0];
-    let iter_ptr = builder.block_params(condition_block)[1];
-
-    let cond = builder.ins().icmp_imm(IntCC::NotEqual, size_counter, 0);
-    canonicalise_brif(
-        builder,
-        cond,
-        loop_body_block,
-        &[size_counter, iter_ptr],
-        next_block,
-        &[],
-    );
-
-    // === Loop body block
-    builder.switch_to_block(loop_body_block);
-
-    let size_counter = builder.block_params(loop_body_block)[0];
-    let iter_ptr = builder.block_params(loop_body_block)[1];
-
-    builder.ins().arm64_stg(tagged_ptr, iter_ptr);
-
-    let size_counter = builder.ins().iadd_imm(size_counter, -16);
-    // iter_ptr += 16, but trap on overflow
-    let offset = builder.ins().iconst(I64, 16);
-    let iter_ptr =
-        builder
-            .ins()
-            .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
-
-    builder
-        .ins()
-        .jump(condition_block, &[size_counter, iter_ptr]);
-
-    builder.seal_block(loop_body_block);
-    builder.seal_block(condition_block);
 
     // === Next block
     builder.switch_to_block(next_block);
