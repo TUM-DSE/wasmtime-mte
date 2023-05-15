@@ -87,7 +87,8 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::immediates::Offset32;
 use cranelift_codegen::ir::types::*;
 use cranelift_codegen::ir::{
-    self, AtomicRmwOp, ConstantData, InstBuilder, JumpTableData, MemFlags, Value, ValueLabel,
+    self, AtomicRmwOp, ConstantData, InstBuilder, InstructionData, JumpTableData, MemFlags, Value,
+    ValueDef, ValueLabel,
 };
 use cranelift_codegen::packed_option::ReservedValue;
 use cranelift_frontend::{FunctionBuilder, Variable};
@@ -96,6 +97,7 @@ use smallvec::SmallVec;
 use std::convert::TryFrom;
 use std::vec::Vec;
 use wasmparser::{FuncValidator, MemArg, Operator, ValType, WasmModuleResources};
+use wasmtime_types::WasmError;
 
 /// Given a `Reachability<T>`, unwrap the inner `T` or, when unreachable, set
 /// `state.reachable = false` and return.
@@ -3785,6 +3787,33 @@ where
     // end:
     // +---next_block
     // +---
+
+    if let ValueDef::Result(inst, _) = builder.func.dfg.value_def(size) {
+        if let InstructionData::UnaryImm {
+            opcode: ir::Opcode::Iconst,
+            imm,
+        } = builder.func.dfg.insts[inst]
+        {
+            // we know the size is constant, generate an unrolled loop
+            let mut size = imm.bits();
+            if size % 16 != 0 {
+                return Err(WasmError::User(format!("size must be 16 byte aligned, was {size}")));
+            }
+
+            let mut iter_ptr = iter_ptr;
+            while size >= 16 {
+                builder.ins().arm64_stg(tagged_ptr, iter_ptr);
+                let c = builder.ins().iconst(I64, 16);
+                iter_ptr =
+                builder
+                .ins()
+                .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
+                size -= 16;
+            }
+
+            return Ok(());
+        }
+    }
 
     assert_16_byte_aligned(size, builder);
 
