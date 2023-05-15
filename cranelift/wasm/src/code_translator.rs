@@ -2387,24 +2387,18 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // TODO: add explanation what this instruction does
 
             let size = state.pop1();
-            let index = state.peek1();
+
+            let index = state.pop1();
+            let tagged_index = builder.ins().arm64_irg(index);
+            // make sure that prepare_addr uses our tagged index
+            state.push1(tagged_index);
 
             let (_, base_ptr) = unwrap_or_return_unreachable_state!(
                 state,
                 prepare_addr(memarg, 16, builder, state, environ)?
             );
 
-            let tagged_ptr = builder.ins().arm64_irg(base_ptr);
-
-            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
-
-            let tag = builder
-                .ins()
-                .band_imm(tagged_ptr, 0x0F00_0000_0000_0000u64 as i64);
-            let index = builder
-                .ins()
-                .band_imm(index, 0xF0FF_FFFF_FFFF_FFFFu64 as i64);
-            let tagged_index = builder.ins().bxor(index, tag);
+            tag_memory_region(base_ptr, base_ptr, size, builder, environ)?;
 
             state.push1(tagged_index);
         }
