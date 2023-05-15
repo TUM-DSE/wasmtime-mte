@@ -409,3 +409,10 @@
 ;; both of them since they cancel out.
 (rule (simplify (fmul ty (fneg ty x) (fneg ty y)))
       (fmul ty x y))
+
+;; optimize irg specific code
+;; v2 = arm64_irg v1
+;; v3 = band v2, 0xf0ff_ffff_ffff_ffff
+;; --> v3 = v1
+(rule (simplify (band ty (arm64_irg ty x) (iconst ty (u64_from_imm64 0xf0ff_ffff_ffff_ffff)))) (subsume x))
+
