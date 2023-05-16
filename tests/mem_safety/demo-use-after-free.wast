@@ -39,11 +39,11 @@
     block ;; label = @1
       block ;; label = @2
         i64.const 0
-        i32.load offset=3872
+        i32.load offset=3920
         br_if 0 (;@2;)
         i64.const 0
         i32.const 1
-        i32.store offset=3872
+        i32.store offset=3920
         call $__wasm_call_ctors
         call $__main_void
         local.set 0
@@ -90,22 +90,37 @@
       local.tee 1
       i64.eqz
       br_if 0 (;@1;)
-      local.get 2
-      local.get 0
-      i64.store offset=8
-      local.get 2
-      local.get 1
-      i64.store
-      i64.const 0
-      i64.load offset=1280
-      i64.const 1078
-      local.get 2
-      call $fprintf
-      drop
       local.get 1
       local.get 0
       segment.stack_new align=1
       local.set 3
+      local.get 2
+      local.get 0
+      i64.store offset=8
+      local.get 2
+      local.get 3
+      i64.store
+      i64.const 0
+      i64.load offset=1328
+      i64.const 1109
+      local.get 2
+      call $fprintf
+      drop
+      i64.const 24
+      call $malloc
+      local.tee 1
+      local.get 0
+      i64.store offset=16
+      local.get 1
+      local.get 3
+      i64.store offset=8
+      local.get 1
+      i64.const 0
+      i64.load offset=3928
+      i64.store
+      i64.const 0
+      local.get 1
+      i64.store offset=3928
     end
     local.get 2
     i64.const 16
@@ -120,60 +135,67 @@
     i64.sub
     local.tee 1
     global.set $__stack_pointer
-    i64.const 3880
+    i64.const 3928
     local.set 2
     block ;; label = @1
-      loop ;; label = @2
+      block ;; label = @2
+        loop ;; label = @3
+          local.get 2
+          local.tee 3
+          i64.load
+          local.tee 2
+          i64.eqz
+          br_if 1 (;@2;)
+          local.get 2
+          i64.load offset=8
+          local.get 0
+          i64.ne
+          br_if 0 (;@3;)
+        end
+        local.get 3
         local.get 2
-        local.tee 3
         i64.load
-        local.tee 2
-        i64.eqz
-        br_if 1 (;@1;)
+        i64.store
         local.get 2
         i64.load offset=8
+        local.set 0
+        local.get 1
+        local.get 2
+        i64.load offset=16
+        i64.store offset=8
+        local.get 1
         local.get 0
-        i64.ne
-        br_if 0 (;@2;)
+        i64.store
+        i64.const 0
+        i64.load offset=1328
+        i64.const 1078
+        local.get 1
+        call $fprintf
+        drop
+        local.get 2
+        i64.load offset=8
+        local.get 2
+        i64.load offset=16
+        segment.free align=1
+        local.get 2
+        i64.load offset=8
+        i64.const -1080863910568919041
+        i64.and
+        call $free
+        local.get 2
+        call $free
+        br 1 (;@1;)
       end
-      local.get 3
-      local.get 2
-      i64.load
-      i64.store
-      local.get 2
-      i64.load offset=8
-      local.get 2
-      i64.load offset=16
-      segment.free align=1
-      local.get 2
-      i64.load offset=8
-      local.set 0
-      local.get 1
-      local.get 2
-      i64.load offset=16
-      i64.store offset=8
-      local.get 1
       local.get 0
-      i64.store
-      i64.const 0
-      i64.load offset=1280
-      i64.const 1078
-      local.get 1
-      call $fprintf
-      drop
+      call $free
     end
-    local.get 2
-    i64.load offset=8
-    call $free
-    local.get 2
-    call $free
     local.get 1
     i64.const 16
     i64.add
     global.set $__stack_pointer
   )
   (func $main (;11;) (type 4) (param i32 i64) (result i32)
-    (local i64 i32 i32 i64)
+    (local i64 i32 i32 i32 i64)
     global.get $__stack_pointer
     i64.const 32
     i64.sub
@@ -182,14 +204,14 @@
     block ;; label = @1
       block ;; label = @2
         local.get 0
-        i32.const 3
+        i32.const 4
         i32.gt_s
         br_if 0 (;@2;)
         local.get 2
         local.get 1
         i64.load
         i64.store
-        i64.const 1107
+        i64.const 1138
         local.get 2
         call $printf
         drop
@@ -209,6 +231,10 @@
       i64.load offset=24
       call $atoi
       local.set 4
+      local.get 1
+      i64.load offset=32
+      call $atoi
+      local.set 5
       i64.const 16
       local.get 0
       i64.extend_i32_s
@@ -221,14 +247,21 @@
       i64.const 2
       i64.shl
       i64.add
-      local.tee 5
+      local.tee 6
       local.get 4
       i32.store
+      block ;; label = @2
+        local.get 5
+        i32.eqz
+        br_if 0 (;@2;)
+        local.get 1
+        call $__wasm_memsafety_free
+      end
       local.get 2
-      local.get 5
+      local.get 6
       i32.load
       i32.store offset=16
-      i64.const 1139
+      i64.const 1181
       local.get 2
       i64.const 16
       i64.add
@@ -258,7 +291,7 @@
     global.set $__stack_pointer
     block ;; label = @1
       i64.const 0
-      i64.load offset=3928
+      i64.load offset=3976
       local.tee 2
       i64.const 0
       i64.ne
@@ -266,12 +299,12 @@
       block ;; label = @2
         block ;; label = @3
           i64.const 0
-          i64.load offset=4824
+          i64.load offset=4872
           local.tee 3
           i64.eqz
           br_if 0 (;@3;)
           i64.const 0
-          i64.load offset=4832
+          i64.load offset=4880
           local.set 4
           br 1 (;@2;)
         end
@@ -279,22 +312,22 @@
         local.set 4
         i64.const 0
         i64.const 65536
-        i64.store offset=4840
+        i64.store offset=4888
         i64.const 0
         i64.const -1
-        i64.store offset=4848
+        i64.store offset=4896
         i64.const 0
         i64.const 65536
-        i64.store offset=4832
+        i64.store offset=4880
         i64.const 0
         i64.const -1
-        i64.store offset=4856
+        i64.store offset=4904
         i64.const 0
         i32.const 0
-        i32.store offset=4864
+        i32.store offset=4912
         i64.const 0
         i32.const 0
-        i32.store offset=4768
+        i32.store offset=4816
         i64.const 0
         local.get 1
         i64.const 8
@@ -304,11 +337,11 @@
         i64.const 1431655768
         i64.xor
         local.tee 3
-        i64.store offset=4824
+        i64.store offset=4872
       end
       i64.const 0
       local.set 2
-      i64.const 71536
+      i64.const 71584
       local.get 4
       i64.add
       i64.const -1
@@ -321,7 +354,7 @@
       i64.const 131072
       i64.eqz
       select
-      i64.const 71536
+      i64.const 71584
       i64.sub
       local.tee 5
       i64.const 129
@@ -331,55 +364,55 @@
       local.set 4
       i64.const 0
       local.get 5
-      i64.store offset=4784
+      i64.store offset=4832
       i64.const 0
-      i64.const 71536
-      i64.store offset=4776
+      i64.const 71584
+      i64.store offset=4824
       i64.const 0
-      i64.const 71536
-      i64.store offset=3912
+      i64.const 71584
+      i64.store offset=3960
       i64.const 0
       local.get 3
-      i64.store offset=3952
+      i64.store offset=4000
       i64.const 0
       i64.const -1
-      i64.store offset=3944
+      i64.store offset=3992
       loop ;; label = @2
         local.get 4
-        i64.const 4000
+        i64.const 4048
         i64.add
         local.get 4
-        i64.const 3976
+        i64.const 4024
         i64.add
         local.tee 3
         i64.store
         local.get 3
         local.get 4
-        i64.const 3960
+        i64.const 4008
         i64.add
         local.tee 6
-        i64.store
-        local.get 4
-        i64.const 3984
-        i64.add
-        local.get 6
-        i64.store
-        local.get 4
-        i64.const 4016
-        i64.add
-        local.get 4
-        i64.const 3992
-        i64.add
-        local.tee 6
-        i64.store
-        local.get 6
-        local.get 3
         i64.store
         local.get 4
         i64.const 4032
         i64.add
+        local.get 6
+        i64.store
         local.get 4
-        i64.const 4008
+        i64.const 4064
+        i64.add
+        local.get 4
+        i64.const 4040
+        i64.add
+        local.tee 6
+        i64.store
+        local.get 6
+        local.get 3
+        i64.store
+        local.get 4
+        i64.const 4080
+        i64.add
+        local.get 4
+        i64.const 4056
         i64.add
         local.tee 3
         i64.store
@@ -387,7 +420,7 @@
         local.get 6
         i64.store
         local.get 4
-        i64.const 4024
+        i64.const 4072
         i64.add
         local.get 3
         i64.store
@@ -399,14 +432,14 @@
         i64.ne
         br_if 0 (;@2;)
       end
-      i64.const 71536
+      i64.const 71584
       i64.const 0
       i64.const -16
-      i64.const 71536
+      i64.const 71584
       i64.sub
       i64.const 15
       i64.and
-      i64.const 71536
+      i64.const 71584
       i64.const 16
       i64.add
       i64.const 15
@@ -428,15 +461,15 @@
       i64.store offset=8
       i64.const 0
       i64.const 0
-      i64.load offset=4856
-      i64.store offset=3936
+      i64.load offset=4904
+      i64.store offset=3984
       i64.const 0
       local.get 4
-      i64.store offset=3904
+      i64.store offset=3952
       i64.const 0
       local.get 2
-      i64.store offset=3928
-      i64.const 71536
+      i64.store offset=3976
+      i64.const 71584
       local.get 3
       i64.add
       i64.const 80
@@ -458,7 +491,7 @@
                         br_if 0 (;@10;)
                         block ;; label = @11
                           i64.const 0
-                          i32.load offset=3888
+                          i32.load offset=3936
                           local.tee 7
                           i64.const 32
                           local.get 0
@@ -497,11 +530,11 @@
                               i64.const 3
                               i64.shl
                               local.tee 3
-                              i64.const 3960
+                              i64.const 4008
                               i64.add
                               local.tee 4
                               local.get 3
-                              i64.const 3976
+                              i64.const 4024
                               i64.add
                               i64.load
                               local.tee 3
@@ -515,7 +548,7 @@
                               local.get 9
                               i32.rotl
                               i32.and
-                              i32.store offset=3888
+                              i32.store offset=3936
                               br 1 (;@12;)
                             end
                             local.get 4
@@ -551,7 +584,7 @@
                         end
                         local.get 5
                         i64.const 0
-                        i64.load offset=3896
+                        i64.load offset=3944
                         local.tee 10
                         i64.le_u
                         br_if 1 (;@9;)
@@ -586,11 +619,11 @@
                               i64.const 3
                               i64.shl
                               local.tee 3
-                              i64.const 3960
+                              i64.const 4008
                               i64.add
                               local.tee 4
                               local.get 3
-                              i64.const 3976
+                              i64.const 4024
                               i64.add
                               i64.load
                               local.tee 3
@@ -605,7 +638,7 @@
                               i32.rotl
                               i32.and
                               local.tee 7
-                              i32.store offset=3888
+                              i32.store offset=3936
                               br 1 (;@12;)
                             end
                             local.get 4
@@ -674,11 +707,11 @@
                             i64.shl
                             i64.const 34359738352
                             i64.and
-                            i64.const 3960
+                            i64.const 4008
                             i64.add
                             local.set 6
                             i64.const 0
-                            i64.load offset=3920
+                            i64.load offset=3968
                             local.set 3
                             block ;; label = @13
                               block ;; label = @14
@@ -696,7 +729,7 @@
                                 local.get 7
                                 local.get 9
                                 i32.or
-                                i32.store offset=3888
+                                i32.store offset=3936
                                 local.get 6
                                 local.set 11
                                 br 1 (;@13;)
@@ -720,14 +753,14 @@
                           end
                           i64.const 0
                           local.get 5
-                          i64.store offset=3920
+                          i64.store offset=3968
                           i64.const 0
                           local.get 0
-                          i64.store offset=3896
+                          i64.store offset=3944
                           br 10 (;@1;)
                         end
                         i64.const 0
-                        i32.load offset=3892
+                        i32.load offset=3940
                         local.tee 8
                         i32.eqz
                         br_if 1 (;@9;)
@@ -740,7 +773,7 @@
                         i64.extend_i32_u
                         i64.const 3
                         i64.shl
-                        i64.const 4488
+                        i64.const 4536
                         i64.add
                         i64.load
                         local.tee 0
@@ -807,7 +840,7 @@
                           i64.load offset=16
                           local.tee 4
                           i64.const 0
-                          i64.load offset=3912
+                          i64.load offset=3960
                           i64.lt_u
                           drop
                           local.get 11
@@ -881,7 +914,7 @@
                       i64.and
                       local.set 5
                       i64.const 0
-                      i32.load offset=3892
+                      i32.load offset=3940
                       local.tee 8
                       i32.eqz
                       br_if 0 (;@9;)
@@ -934,7 +967,7 @@
                               i64.extend_i32_u
                               i64.const 3
                               i64.shl
-                              i64.const 4488
+                              i64.const 4536
                               i64.add
                               i64.load
                               local.tee 6
@@ -1059,7 +1092,7 @@
                             i64.extend_i32_u
                             i64.const 3
                             i64.shl
-                            i64.const 4488
+                            i64.const 4536
                             i64.add
                             i64.load
                             local.set 4
@@ -1117,7 +1150,7 @@
                       br_if 0 (;@9;)
                       local.get 3
                       i64.const 0
-                      i64.load offset=3896
+                      i64.load offset=3944
                       local.get 5
                       i64.sub
                       i64.ge_u
@@ -1137,7 +1170,7 @@
                           i64.load offset=16
                           local.tee 4
                           i64.const 0
-                          i64.load offset=3912
+                          i64.load offset=3960
                           i64.lt_u
                           drop
                           local.get 11
@@ -1215,7 +1248,7 @@
                             i64.extend_i32_u
                             i64.const 3
                             i64.shl
-                            i64.const 4488
+                            i64.const 4536
                             i64.add
                             local.tee 4
                             i64.load
@@ -1234,7 +1267,7 @@
                             local.get 9
                             i32.rotl
                             i32.and
-                            i32.store offset=3892
+                            i32.store offset=3940
                             br 2 (;@10;)
                           end
                           local.get 2
@@ -1337,13 +1370,13 @@
                           i64.shl
                           i64.const 34359738352
                           i64.and
-                          i64.const 3960
+                          i64.const 4008
                           i64.add
                           local.set 4
                           block ;; label = @12
                             block ;; label = @13
                               i64.const 0
-                              i32.load offset=3888
+                              i32.load offset=3936
                               local.tee 9
                               i32.const 1
                               local.get 3
@@ -1358,7 +1391,7 @@
                               local.get 9
                               local.get 8
                               i32.or
-                              i32.store offset=3888
+                              i32.store offset=3936
                               local.get 4
                               local.set 3
                               br 1 (;@12;)
@@ -1433,12 +1466,12 @@
                         i64.extend_i32_u
                         i64.const 3
                         i64.shl
-                        i64.const 4488
+                        i64.const 4536
                         i64.add
                         local.set 6
                         block ;; label = @11
                           i64.const 0
-                          i32.load offset=3892
+                          i32.load offset=3940
                           local.tee 8
                           i32.const 1
                           local.get 9
@@ -1453,7 +1486,7 @@
                           local.get 8
                           local.get 7
                           i32.or
-                          i32.store offset=3892
+                          i32.store offset=3940
                           local.get 11
                           local.get 6
                           i64.store offset=48
@@ -1556,13 +1589,13 @@
                     end
                     block ;; label = @9
                       i64.const 0
-                      i64.load offset=3896
+                      i64.load offset=3944
                       local.tee 4
                       local.get 5
                       i64.lt_u
                       br_if 0 (;@9;)
                       i64.const 0
-                      i64.load offset=3920
+                      i64.load offset=3968
                       local.set 3
                       block ;; label = @10
                         block ;; label = @11
@@ -1614,10 +1647,10 @@
                       end
                       i64.const 0
                       local.get 6
-                      i64.store offset=3896
+                      i64.store offset=3944
                       i64.const 0
                       local.get 0
-                      i64.store offset=3920
+                      i64.store offset=3968
                       local.get 3
                       i64.const 16
                       i64.add
@@ -1626,7 +1659,7 @@
                     end
                     block ;; label = @9
                       i64.const 0
-                      i64.load offset=3904
+                      i64.load offset=3952
                       local.tee 6
                       local.get 5
                       i64.le_u
@@ -1644,10 +1677,10 @@
                       i64.store offset=8
                       i64.const 0
                       local.get 4
-                      i64.store offset=3928
+                      i64.store offset=3976
                       i64.const 0
                       local.get 3
-                      i64.store offset=3904
+                      i64.store offset=3952
                       local.get 2
                       local.get 5
                       i64.const 3
@@ -1662,11 +1695,11 @@
                     block ;; label = @9
                       block ;; label = @10
                         i64.const 0
-                        i64.load offset=4824
+                        i64.load offset=4872
                         i64.eqz
                         br_if 0 (;@10;)
                         i64.const 0
-                        i64.load offset=4840
+                        i64.load offset=4888
                         local.set 3
                         br 1 (;@9;)
                       end
@@ -1674,22 +1707,22 @@
                       local.set 3
                       i64.const 0
                       i64.const 65536
-                      i64.store offset=4840
+                      i64.store offset=4888
                       i64.const 0
                       i64.const -1
-                      i64.store offset=4848
+                      i64.store offset=4896
                       i64.const 0
                       i64.const 65536
-                      i64.store offset=4832
+                      i64.store offset=4880
                       i64.const 0
                       i64.const -1
-                      i64.store offset=4856
+                      i64.store offset=4904
                       i64.const 0
                       i32.const 0
-                      i32.store offset=4864
+                      i32.store offset=4912
                       i64.const 0
                       i32.const 0
-                      i32.store offset=4768
+                      i32.store offset=4816
                       i64.const 0
                       local.get 1
                       i64.const 8
@@ -1698,7 +1731,7 @@
                       i64.and
                       i64.const 1431655768
                       i64.xor
-                      i64.store offset=4824
+                      i64.store offset=4872
                     end
                     i64.const 0
                     local.set 4
@@ -1721,18 +1754,18 @@
                       br_if 0 (;@9;)
                       i64.const 0
                       i32.const 48
-                      i32.store offset=4872
+                      i32.store offset=4920
                       br 8 (;@1;)
                     end
                     block ;; label = @9
                       i64.const 0
-                      i64.load offset=4760
+                      i64.load offset=4808
                       local.tee 4
                       i64.eqz
                       br_if 0 (;@9;)
                       block ;; label = @10
                         i64.const 0
-                        i64.load offset=4744
+                        i64.load offset=4792
                         local.tee 3
                         local.get 11
                         i64.add
@@ -1749,11 +1782,11 @@
                       local.set 4
                       i64.const 0
                       i32.const 48
-                      i32.store offset=4872
+                      i32.store offset=4920
                       br 8 (;@1;)
                     end
                     i64.const 0
-                    i32.load8_u offset=4768
+                    i32.load8_u offset=4816
                     i32.const 4
                     i32.and
                     br_if 3 (;@5;)
@@ -1763,7 +1796,7 @@
                           local.get 2
                           i64.eqz
                           br_if 0 (;@11;)
-                          i64.const 4776
+                          i64.const 4824
                           local.set 4
                           loop ;; label = @12
                             block ;; label = @13
@@ -1799,7 +1832,7 @@
                         local.set 12
                         block ;; label = @11
                           i64.const 0
-                          i64.load offset=4832
+                          i64.load offset=4880
                           local.tee 4
                           i64.const -1
                           i64.add
@@ -1831,12 +1864,12 @@
                         br_if 4 (;@6;)
                         block ;; label = @11
                           i64.const 0
-                          i64.load offset=4760
+                          i64.load offset=4808
                           local.tee 4
                           i64.eqz
                           br_if 0 (;@11;)
                           i64.const 0
-                          i64.load offset=4744
+                          i64.load offset=4792
                           local.tee 3
                           local.get 12
                           i64.add
@@ -1895,7 +1928,7 @@
                         local.get 12
                         i64.sub
                         i64.const 0
-                        i64.load offset=4840
+                        i64.load offset=4888
                         local.tee 3
                         i64.add
                         i64.const 0
@@ -1950,10 +1983,10 @@
               end
               i64.const 0
               i64.const 0
-              i32.load offset=4768
+              i32.load offset=4816
               i32.const 4
               i32.or
-              i32.store offset=4768
+              i32.store offset=4816
             end
             local.get 11
             i64.const 9223372036854775806
@@ -1989,31 +2022,31 @@
           end
           i64.const 0
           i64.const 0
-          i64.load offset=4744
+          i64.load offset=4792
           local.get 12
           i64.add
           local.tee 4
-          i64.store offset=4744
+          i64.store offset=4792
           block ;; label = @4
             local.get 4
             i64.const 0
-            i64.load offset=4752
+            i64.load offset=4800
             i64.le_u
             br_if 0 (;@4;)
             i64.const 0
             local.get 4
-            i64.store offset=4752
+            i64.store offset=4800
           end
           block ;; label = @4
             block ;; label = @5
               block ;; label = @6
                 block ;; label = @7
                   i64.const 0
-                  i64.load offset=3928
+                  i64.load offset=3976
                   local.tee 3
                   i64.eqz
                   br_if 0 (;@7;)
-                  i64.const 4776
+                  i64.const 4824
                   local.set 4
                   loop ;; label = @8
                     local.get 0
@@ -2038,7 +2071,7 @@
                 block ;; label = @7
                   block ;; label = @8
                     i64.const 0
-                    i64.load offset=3912
+                    i64.load offset=3960
                     local.tee 4
                     i64.eqz
                     br_if 0 (;@8;)
@@ -2049,62 +2082,62 @@
                   end
                   i64.const 0
                   local.get 0
-                  i64.store offset=3912
+                  i64.store offset=3960
                 end
                 i64.const 0
                 local.set 4
                 i64.const 0
                 i32.const 0
-                i32.store offset=4800
+                i32.store offset=4848
                 i64.const 0
                 local.get 12
-                i64.store offset=4784
+                i64.store offset=4832
                 i64.const 0
                 local.get 0
-                i64.store offset=4776
+                i64.store offset=4824
                 i64.const 0
                 i64.const -1
-                i64.store offset=3944
+                i64.store offset=3992
                 i64.const 0
                 i64.const 0
-                i64.load offset=4824
-                i64.store offset=3952
+                i64.load offset=4872
+                i64.store offset=4000
                 loop ;; label = @7
                   local.get 4
-                  i64.const 4000
+                  i64.const 4048
                   i64.add
                   local.get 4
-                  i64.const 3976
+                  i64.const 4024
                   i64.add
                   local.tee 3
                   i64.store
                   local.get 3
                   local.get 4
-                  i64.const 3960
+                  i64.const 4008
                   i64.add
                   local.tee 6
-                  i64.store
-                  local.get 4
-                  i64.const 3984
-                  i64.add
-                  local.get 6
-                  i64.store
-                  local.get 4
-                  i64.const 4016
-                  i64.add
-                  local.get 4
-                  i64.const 3992
-                  i64.add
-                  local.tee 6
-                  i64.store
-                  local.get 6
-                  local.get 3
                   i64.store
                   local.get 4
                   i64.const 4032
                   i64.add
+                  local.get 6
+                  i64.store
                   local.get 4
-                  i64.const 4008
+                  i64.const 4064
+                  i64.add
+                  local.get 4
+                  i64.const 4040
+                  i64.add
+                  local.tee 6
+                  i64.store
+                  local.get 6
+                  local.get 3
+                  i64.store
+                  local.get 4
+                  i64.const 4080
+                  i64.add
+                  local.get 4
+                  i64.const 4056
                   i64.add
                   local.tee 3
                   i64.store
@@ -2112,7 +2145,7 @@
                   local.get 6
                   i64.store
                   local.get 4
-                  i64.const 4024
+                  i64.const 4072
                   i64.add
                   local.get 3
                   i64.store
@@ -2153,14 +2186,14 @@
                 i64.store offset=8
                 i64.const 0
                 i64.const 0
-                i64.load offset=4856
-                i64.store offset=3936
+                i64.load offset=4904
+                i64.store offset=3984
                 i64.const 0
                 local.get 4
-                i64.store offset=3904
+                i64.store offset=3952
                 i64.const 0
                 local.get 3
-                i64.store offset=3928
+                i64.store offset=3976
                 local.get 0
                 local.get 6
                 i64.add
@@ -2199,7 +2232,7 @@
               i64.add
               local.tee 0
               i64.const 0
-              i64.load offset=3904
+              i64.load offset=3952
               local.get 12
               i64.add
               local.tee 2
@@ -2216,14 +2249,14 @@
               i64.store offset=8
               i64.const 0
               i64.const 0
-              i64.load offset=4856
-              i64.store offset=3936
+              i64.load offset=4904
+              i64.store offset=3984
               i64.const 0
               local.get 6
-              i64.store offset=3904
+              i64.store offset=3952
               i64.const 0
               local.get 0
-              i64.store offset=3928
+              i64.store offset=3976
               local.get 3
               local.get 2
               i64.add
@@ -2234,13 +2267,13 @@
             block ;; label = @5
               local.get 0
               i64.const 0
-              i64.load offset=3912
+              i64.load offset=3960
               local.tee 11
               i64.ge_u
               br_if 0 (;@5;)
               i64.const 0
               local.get 0
-              i64.store offset=3912
+              i64.store offset=3960
               local.get 0
               local.set 11
             end
@@ -2248,7 +2281,7 @@
             local.get 12
             i64.add
             local.set 6
-            i64.const 4776
+            i64.const 4824
             local.set 4
             block ;; label = @5
               block ;; label = @6
@@ -2279,7 +2312,7 @@
                         i32.eqz
                         br_if 1 (;@9;)
                       end
-                      i64.const 4776
+                      i64.const 4824
                       local.set 4
                       loop ;; label = @10
                         block ;; label = @11
@@ -2362,14 +2395,14 @@
                       br_if 0 (;@9;)
                       i64.const 0
                       local.get 5
-                      i64.store offset=3928
+                      i64.store offset=3976
                       i64.const 0
                       i64.const 0
-                      i64.load offset=3904
+                      i64.load offset=3952
                       local.get 6
                       i64.add
                       local.tee 4
-                      i64.store offset=3904
+                      i64.store offset=3952
                       local.get 5
                       local.get 4
                       i64.const 1
@@ -2380,19 +2413,19 @@
                     block ;; label = @9
                       local.get 12
                       i64.const 0
-                      i64.load offset=3920
+                      i64.load offset=3968
                       i64.ne
                       br_if 0 (;@9;)
                       i64.const 0
                       local.get 5
-                      i64.store offset=3920
+                      i64.store offset=3968
                       i64.const 0
                       i64.const 0
-                      i64.load offset=3896
+                      i64.load offset=3944
                       local.get 6
                       i64.add
                       local.tee 4
-                      i64.store offset=3896
+                      i64.store offset=3944
                       local.get 5
                       local.get 4
                       i64.const 1
@@ -2432,7 +2465,7 @@
                           i64.shl
                           i64.const 34359738352
                           i64.and
-                          i64.const 3960
+                          i64.const 4008
                           i64.add
                           local.tee 11
                           i64.eq
@@ -2446,7 +2479,7 @@
                             br_if 0 (;@12;)
                             i64.const 0
                             i64.const 0
-                            i32.load offset=3888
+                            i32.load offset=3936
                             i32.const -2
                             local.get 4
                             i64.const 3
@@ -2454,7 +2487,7 @@
                             i32.wrap_i64
                             i32.rotl
                             i32.and
-                            i32.store offset=3888
+                            i32.store offset=3936
                             br 2 (;@10;)
                           end
                           local.get 0
@@ -2557,7 +2590,7 @@
                             i64.extend_i32_u
                             i64.const 3
                             i64.shl
-                            i64.const 4488
+                            i64.const 4536
                             i64.add
                             local.tee 4
                             i64.load
@@ -2572,12 +2605,12 @@
                             br_if 1 (;@11;)
                             i64.const 0
                             i64.const 0
-                            i32.load offset=3892
+                            i32.load offset=3940
                             i32.const -2
                             local.get 9
                             i32.rotl
                             i32.and
-                            i32.store offset=3892
+                            i32.store offset=3940
                             br 2 (;@10;)
                           end
                           local.get 13
@@ -2661,13 +2694,13 @@
                       i64.shl
                       i64.const 34359738352
                       i64.and
-                      i64.const 3960
+                      i64.const 4008
                       i64.add
                       local.set 4
                       block ;; label = @10
                         block ;; label = @11
                           i64.const 0
-                          i32.load offset=3888
+                          i32.load offset=3936
                           local.tee 9
                           i32.const 1
                           local.get 6
@@ -2682,7 +2715,7 @@
                           local.get 9
                           local.get 8
                           i32.or
-                          i32.store offset=3888
+                          i32.store offset=3936
                           local.get 4
                           local.set 3
                           br 1 (;@10;)
@@ -2757,12 +2790,12 @@
                     i64.extend_i32_u
                     i64.const 3
                     i64.shl
-                    i64.const 4488
+                    i64.const 4536
                     i64.add
                     local.set 3
                     block ;; label = @9
                       i64.const 0
-                      i32.load offset=3892
+                      i32.load offset=3940
                       local.tee 8
                       i32.const 1
                       local.get 9
@@ -2777,7 +2810,7 @@
                       local.get 8
                       local.get 7
                       i32.or
-                      i32.store offset=3892
+                      i32.store offset=3940
                       local.get 5
                       local.get 3
                       i64.store offset=48
@@ -2916,50 +2949,50 @@
                   i64.store offset=8
                   i64.const 0
                   i64.const 0
-                  i64.load offset=4856
-                  i64.store offset=3936
+                  i64.load offset=4904
+                  i64.store offset=3984
                   i64.const 0
                   local.get 4
-                  i64.store offset=3904
+                  i64.store offset=3952
                   i64.const 0
                   local.get 2
-                  i64.store offset=3928
+                  i64.store offset=3976
                   local.get 11
                   i64.const 40
                   i64.add
                   i64.const 0
-                  i64.load offset=4800
+                  i64.load offset=4848
                   i64.store
                   local.get 11
                   i64.const 32
                   i64.add
                   i64.const 0
-                  i64.load offset=4792
+                  i64.load offset=4840
                   i64.store
                   local.get 11
                   i64.const 24
                   i64.add
                   i64.const 0
-                  i64.load offset=4784
+                  i64.load offset=4832
                   i64.store
                   local.get 11
                   i64.const 0
-                  i64.load offset=4776
+                  i64.load offset=4824
                   i64.store offset=16
                   i64.const 0
                   local.get 11
                   i64.const 16
                   i64.add
-                  i64.store offset=4792
+                  i64.store offset=4840
                   i64.const 0
                   i32.const 0
-                  i32.store offset=4800
+                  i32.store offset=4848
                   i64.const 0
                   local.get 0
-                  i64.store offset=4776
+                  i64.store offset=4824
                   i64.const 0
                   local.get 12
-                  i64.store offset=4784
+                  i64.store offset=4832
                   local.get 11
                   i64.const 56
                   i64.add
@@ -3007,13 +3040,13 @@
                     i64.shl
                     i64.const 34359738352
                     i64.and
-                    i64.const 3960
+                    i64.const 4008
                     i64.add
                     local.set 4
                     block ;; label = @9
                       block ;; label = @10
                         i64.const 0
-                        i32.load offset=3888
+                        i32.load offset=3936
                         local.tee 9
                         i32.const 1
                         local.get 12
@@ -3028,7 +3061,7 @@
                         local.get 9
                         local.get 8
                         i32.or
-                        i32.store offset=3888
+                        i32.store offset=3936
                         local.get 4
                         local.set 6
                         br 1 (;@9;)
@@ -3103,12 +3136,12 @@
                   i64.extend_i32_u
                   i64.const 3
                   i64.shl
-                  i64.const 4488
+                  i64.const 4536
                   i64.add
                   local.set 6
                   block ;; label = @8
                     i64.const 0
-                    i32.load offset=3892
+                    i32.load offset=3940
                     local.tee 8
                     i32.const 1
                     local.get 9
@@ -3123,7 +3156,7 @@
                     local.get 8
                     local.get 7
                     i32.or
-                    i32.store offset=3892
+                    i32.store offset=3940
                     local.get 3
                     local.get 6
                     i64.store offset=48
@@ -3242,13 +3275,13 @@
             i64.store offset=16
           end
           i64.const 0
-          i64.load offset=3904
+          i64.load offset=3952
           local.tee 4
           local.get 5
           i64.le_u
           br_if 0 (;@3;)
           i64.const 0
-          i64.load offset=3928
+          i64.load offset=3976
           local.tee 3
           local.get 5
           i64.add
@@ -3262,10 +3295,10 @@
           i64.store offset=8
           i64.const 0
           local.get 4
-          i64.store offset=3904
+          i64.store offset=3952
           i64.const 0
           local.get 6
-          i64.store offset=3928
+          i64.store offset=3976
           local.get 3
           local.get 5
           i64.const 3
@@ -3281,7 +3314,7 @@
         local.set 4
         i64.const 0
         i32.const 48
-        i32.store offset=4872
+        i32.store offset=4920
         br 1 (;@1;)
       end
       block ;; label = @2
@@ -3297,7 +3330,7 @@
             i64.extend_i32_u
             i64.const 3
             i64.shl
-            i64.const 4488
+            i64.const 4536
             i64.add
             local.tee 4
             i64.load
@@ -3316,7 +3349,7 @@
             local.get 9
             i32.rotl
             i32.and
-            i32.store offset=3892
+            i32.store offset=3940
             br 2 (;@2;)
           end
           local.get 2
@@ -3418,11 +3451,11 @@
           i64.shl
           i64.const 34359738352
           i64.and
-          i64.const 3960
+          i64.const 4008
           i64.add
           local.set 5
           i64.const 0
-          i64.load offset=3920
+          i64.load offset=3968
           local.set 4
           block ;; label = @4
             block ;; label = @5
@@ -3440,7 +3473,7 @@
               local.get 9
               local.get 7
               i32.or
-              i32.store offset=3888
+              i32.store offset=3936
               local.get 5
               local.set 11
               br 1 (;@4;)
@@ -3464,10 +3497,10 @@
         end
         i64.const 0
         local.get 6
-        i64.store offset=3920
+        i64.store offset=3968
         i64.const 0
         local.get 3
-        i64.store offset=3896
+        i64.store offset=3944
       end
       local.get 0
       i64.const 16
@@ -3522,7 +3555,7 @@
         i64.sub
         local.tee 1
         i64.const 0
-        i64.load offset=3912
+        i64.load offset=3960
         local.tee 4
         i64.lt_u
         br_if 1 (;@1;)
@@ -3533,7 +3566,7 @@
         block ;; label = @3
           local.get 1
           i64.const 0
-          i64.load offset=3920
+          i64.load offset=3968
           i64.eq
           br_if 0 (;@3;)
           block ;; label = @4
@@ -3549,7 +3582,7 @@
             i64.shl
             i64.const 34359738352
             i64.and
-            i64.const 3960
+            i64.const 4008
             i64.add
             local.tee 5
             i64.eq
@@ -3563,7 +3596,7 @@
               br_if 0 (;@5;)
               i64.const 0
               i64.const 0
-              i32.load offset=3888
+              i32.load offset=3936
               i32.const -2
               local.get 2
               i64.const 3
@@ -3571,7 +3604,7 @@
               i32.wrap_i64
               i32.rotl
               i32.and
-              i32.store offset=3888
+              i32.store offset=3936
               br 3 (;@2;)
             end
             local.get 6
@@ -3674,7 +3707,7 @@
               i64.extend_i32_u
               i64.const 3
               i64.shl
-              i64.const 4488
+              i64.const 4536
               i64.add
               local.tee 2
               i64.load
@@ -3689,12 +3722,12 @@
               br_if 1 (;@4;)
               i64.const 0
               i64.const 0
-              i32.load offset=3892
+              i32.load offset=3940
               i32.const -2
               local.get 8
               i32.rotl
               i32.and
-              i32.store offset=3892
+              i32.store offset=3940
               br 3 (;@2;)
             end
             local.get 7
@@ -3758,7 +3791,7 @@
         i64.store offset=8
         i64.const 0
         local.get 0
-        i64.store offset=3896
+        i64.store offset=3944
         local.get 1
         local.get 0
         i64.add
@@ -3793,19 +3826,19 @@
           block ;; label = @4
             local.get 3
             i64.const 0
-            i64.load offset=3928
+            i64.load offset=3976
             i64.ne
             br_if 0 (;@4;)
             i64.const 0
             local.get 1
-            i64.store offset=3928
+            i64.store offset=3976
             i64.const 0
             i64.const 0
-            i64.load offset=3904
+            i64.load offset=3952
             local.get 0
             i64.add
             local.tee 0
-            i64.store offset=3904
+            i64.store offset=3952
             local.get 1
             local.get 0
             i64.const 1
@@ -3813,33 +3846,33 @@
             i64.store offset=8
             local.get 1
             i64.const 0
-            i64.load offset=3920
+            i64.load offset=3968
             i64.ne
             br_if 3 (;@1;)
             i64.const 0
             i64.const 0
-            i64.store offset=3896
+            i64.store offset=3944
             i64.const 0
             i64.const 0
-            i64.store offset=3920
+            i64.store offset=3968
             return
           end
           block ;; label = @4
             local.get 3
             i64.const 0
-            i64.load offset=3920
+            i64.load offset=3968
             i64.ne
             br_if 0 (;@4;)
             i64.const 0
             local.get 1
-            i64.store offset=3920
+            i64.store offset=3968
             i64.const 0
             i64.const 0
-            i64.load offset=3896
+            i64.load offset=3944
             local.get 0
             i64.add
             local.tee 0
-            i64.store offset=3896
+            i64.store offset=3944
             local.get 1
             local.get 0
             i64.const 1
@@ -3872,7 +3905,7 @@
               i64.shl
               i64.const 34359738352
               i64.and
-              i64.const 3960
+              i64.const 4008
               i64.add
               local.tee 5
               i64.eq
@@ -3886,7 +3919,7 @@
                 br_if 0 (;@6;)
                 i64.const 0
                 i64.const 0
-                i32.load offset=3888
+                i32.load offset=3936
                 i32.const -2
                 local.get 2
                 i64.const 3
@@ -3894,7 +3927,7 @@
                 i32.wrap_i64
                 i32.rotl
                 i32.and
-                i32.store offset=3888
+                i32.store offset=3936
                 br 2 (;@4;)
               end
               local.get 6
@@ -3924,7 +3957,7 @@
                 i64.load offset=16
                 local.tee 2
                 i64.const 0
-                i64.load offset=3912
+                i64.load offset=3960
                 i64.lt_u
                 drop
                 local.get 6
@@ -3998,7 +4031,7 @@
                 i64.extend_i32_u
                 i64.const 3
                 i64.shl
-                i64.const 4488
+                i64.const 4536
                 i64.add
                 local.tee 2
                 i64.load
@@ -4013,12 +4046,12 @@
                 br_if 1 (;@5;)
                 i64.const 0
                 i64.const 0
-                i32.load offset=3892
+                i32.load offset=3940
                 i32.const -2
                 local.get 8
                 i32.rotl
                 i32.and
-                i32.store offset=3892
+                i32.store offset=3940
                 br 2 (;@4;)
               end
               local.get 7
@@ -4078,12 +4111,12 @@
           i64.store offset=8
           local.get 1
           i64.const 0
-          i64.load offset=3920
+          i64.load offset=3968
           i64.ne
           br_if 1 (;@2;)
           i64.const 0
           local.get 0
-          i64.store offset=3896
+          i64.store offset=3944
           return
         end
         local.get 3
@@ -4112,13 +4145,13 @@
         i64.shl
         i64.const 34359738352
         i64.and
-        i64.const 3960
+        i64.const 4008
         i64.add
         local.set 2
         block ;; label = @3
           block ;; label = @4
             i64.const 0
-            i32.load offset=3888
+            i32.load offset=3936
             local.tee 8
             i32.const 1
             local.get 0
@@ -4133,7 +4166,7 @@
             local.get 8
             local.get 9
             i32.or
-            i32.store offset=3888
+            i32.store offset=3936
             local.get 2
             local.set 0
             br 1 (;@3;)
@@ -4208,13 +4241,13 @@
       i64.extend_i32_u
       i64.const 3
       i64.shl
-      i64.const 4488
+      i64.const 4536
       i64.add
       local.set 4
       block ;; label = @2
         block ;; label = @3
           i64.const 0
-          i32.load offset=3892
+          i32.load offset=3940
           local.tee 9
           i32.const 1
           local.get 8
@@ -4229,7 +4262,7 @@
           local.get 9
           local.get 10
           i32.or
-          i32.store offset=3892
+          i32.store offset=3940
           local.get 1
           local.get 4
           i64.store offset=48
@@ -4327,14 +4360,14 @@
       i64.const 0
       i64.const -1
       i64.const 0
-      i64.load offset=3944
+      i64.load offset=3992
       i64.const -1
       i64.add
       local.tee 1
       local.get 1
       i64.eqz
       select
-      i64.store offset=3944
+      i64.store offset=3992
     end
   )
   (func $calloc (;16;) (type 9) (param i64 i64) (result i64)
@@ -4437,7 +4470,7 @@
             i64.sub
             local.tee 0
             i64.const 0
-            i64.load offset=3920
+            i64.load offset=3968
             i64.eq
             br_if 0 (;@4;)
             block ;; label = @5
@@ -4453,7 +4486,7 @@
               i64.shl
               i64.const 34359738352
               i64.and
-              i64.const 3960
+              i64.const 4008
               i64.add
               local.tee 5
               i64.eq
@@ -4466,7 +4499,7 @@
               br_if 2 (;@3;)
               i64.const 0
               i64.const 0
-              i32.load offset=3888
+              i32.load offset=3936
               i32.const -2
               local.get 3
               i64.const 3
@@ -4474,7 +4507,7 @@
               i32.wrap_i64
               i32.rotl
               i32.and
-              i32.store offset=3888
+              i32.store offset=3936
               br 3 (;@2;)
             end
             local.get 0
@@ -4492,7 +4525,7 @@
                 i64.load offset=16
                 local.tee 3
                 i64.const 0
-                i64.load offset=3912
+                i64.load offset=3960
                 i64.lt_u
                 drop
                 local.get 6
@@ -4566,7 +4599,7 @@
                 i64.extend_i32_u
                 i64.const 3
                 i64.shl
-                i64.const 4488
+                i64.const 4536
                 i64.add
                 local.tee 3
                 i64.load
@@ -4581,12 +4614,12 @@
                 br_if 1 (;@5;)
                 i64.const 0
                 i64.const 0
-                i32.load offset=3892
+                i32.load offset=3940
                 i32.const -2
                 local.get 8
                 i32.rotl
                 i32.and
-                i32.store offset=3892
+                i32.store offset=3940
                 br 4 (;@2;)
               end
               local.get 7
@@ -4650,7 +4683,7 @@
           i64.store offset=8
           i64.const 0
           local.get 1
-          i64.store offset=3896
+          i64.store offset=3944
           local.get 2
           local.get 1
           i64.store
@@ -4685,19 +4718,19 @@
           block ;; label = @4
             local.get 2
             i64.const 0
-            i64.load offset=3928
+            i64.load offset=3976
             i64.ne
             br_if 0 (;@4;)
             i64.const 0
             local.get 0
-            i64.store offset=3928
+            i64.store offset=3976
             i64.const 0
             i64.const 0
-            i64.load offset=3904
+            i64.load offset=3952
             local.get 1
             i64.add
             local.tee 1
-            i64.store offset=3904
+            i64.store offset=3952
             local.get 0
             local.get 1
             i64.const 1
@@ -4705,33 +4738,33 @@
             i64.store offset=8
             local.get 0
             i64.const 0
-            i64.load offset=3920
+            i64.load offset=3968
             i64.ne
             br_if 3 (;@1;)
             i64.const 0
             i64.const 0
-            i64.store offset=3896
+            i64.store offset=3944
             i64.const 0
             i64.const 0
-            i64.store offset=3920
+            i64.store offset=3968
             return
           end
           block ;; label = @4
             local.get 2
             i64.const 0
-            i64.load offset=3920
+            i64.load offset=3968
             i64.ne
             br_if 0 (;@4;)
             i64.const 0
             local.get 0
-            i64.store offset=3920
+            i64.store offset=3968
             i64.const 0
             i64.const 0
-            i64.load offset=3896
+            i64.load offset=3944
             local.get 1
             i64.add
             local.tee 1
-            i64.store offset=3896
+            i64.store offset=3944
             local.get 0
             local.get 1
             i64.const 1
@@ -4764,7 +4797,7 @@
               i64.shl
               i64.const 34359738352
               i64.and
-              i64.const 3960
+              i64.const 4008
               i64.add
               local.tee 5
               i64.eq
@@ -4778,7 +4811,7 @@
                 br_if 0 (;@6;)
                 i64.const 0
                 i64.const 0
-                i32.load offset=3888
+                i32.load offset=3936
                 i32.const -2
                 local.get 3
                 i64.const 3
@@ -4786,7 +4819,7 @@
                 i32.wrap_i64
                 i32.rotl
                 i32.and
-                i32.store offset=3888
+                i32.store offset=3936
                 br 2 (;@4;)
               end
               local.get 6
@@ -4816,7 +4849,7 @@
                 i64.load offset=16
                 local.tee 3
                 i64.const 0
-                i64.load offset=3912
+                i64.load offset=3960
                 i64.lt_u
                 drop
                 local.get 6
@@ -4890,7 +4923,7 @@
                 i64.extend_i32_u
                 i64.const 3
                 i64.shl
-                i64.const 4488
+                i64.const 4536
                 i64.add
                 local.tee 3
                 i64.load
@@ -4905,12 +4938,12 @@
                 br_if 1 (;@5;)
                 i64.const 0
                 i64.const 0
-                i32.load offset=3892
+                i32.load offset=3940
                 i32.const -2
                 local.get 8
                 i32.rotl
                 i32.and
-                i32.store offset=3892
+                i32.store offset=3940
                 br 2 (;@4;)
               end
               local.get 7
@@ -4970,12 +5003,12 @@
           i64.store offset=8
           local.get 0
           i64.const 0
-          i64.load offset=3920
+          i64.load offset=3968
           i64.ne
           br_if 1 (;@2;)
           i64.const 0
           local.get 1
-          i64.store offset=3896
+          i64.store offset=3944
           return
         end
         local.get 2
@@ -5004,13 +5037,13 @@
         i64.shl
         i64.const 34359738352
         i64.and
-        i64.const 3960
+        i64.const 4008
         i64.add
         local.set 3
         block ;; label = @3
           block ;; label = @4
             i64.const 0
-            i32.load offset=3888
+            i32.load offset=3936
             local.tee 8
             i32.const 1
             local.get 1
@@ -5025,7 +5058,7 @@
             local.get 8
             local.get 9
             i32.or
-            i32.store offset=3888
+            i32.store offset=3936
             local.get 3
             local.set 1
             br 1 (;@3;)
@@ -5100,12 +5133,12 @@
       i64.extend_i32_u
       i64.const 3
       i64.shl
-      i64.const 4488
+      i64.const 4536
       i64.add
       local.set 4
       block ;; label = @2
         i64.const 0
-        i32.load offset=3892
+        i32.load offset=3940
         local.tee 9
         i32.const 1
         local.get 8
@@ -5120,7 +5153,7 @@
         local.get 9
         local.get 10
         i32.or
-        i32.store offset=3892
+        i32.store offset=3940
         local.get 0
         local.get 4
         i64.store offset=48
@@ -5261,7 +5294,7 @@
       br_if 0 (;@1;)
       i64.const 0
       i32.const 48
-      i32.store offset=4872
+      i32.store offset=4920
       i64.const 0
       return
     end
@@ -5644,7 +5677,7 @@
         br_if 0 (;@2;)
         i64.const 0
         i32.const 48
-        i32.store offset=4872
+        i32.store offset=4920
         i64.const -1
         return
       end
@@ -5692,7 +5725,7 @@
     local.get 2
     local.get 1
     i64.store offset=8
-    i64.const 3680
+    i64.const 3728
     local.get 0
     local.get 1
     call $vfprintf
@@ -5714,7 +5747,7 @@
     end
     i64.const 0
     local.get 0
-    i32.store offset=4872
+    i32.store offset=4920
     i32.const -1
   )
   (func $__stdio_close (;36;) (type 15) (param i64) (result i32)
@@ -5737,7 +5770,7 @@
         br_if 0 (;@2;)
         i64.const 0
         i32.const 28
-        i32.store offset=4872
+        i32.store offset=4920
         i64.const -1
         local.set 1
         br 1 (;@1;)
@@ -5756,7 +5789,7 @@
         br_if 0 (;@2;)
         i64.const 0
         local.get 2
-        i32.store offset=4872
+        i32.store offset=4920
         i64.const -1
         local.set 1
         br 1 (;@1;)
@@ -5957,7 +5990,7 @@
         i32.const 76
         i32.eq
         select
-        i32.store offset=4872
+        i32.store offset=4920
         i64.const -1
         local.set 1
         br 1 (;@1;)
@@ -6013,7 +6046,7 @@
       end
       i64.const 0
       local.get 0
-      i32.store offset=4872
+      i32.store offset=4920
       i32.const 0
       local.set 0
     end
@@ -6047,7 +6080,7 @@
     call $__stdio_write
   )
   (func $__ofl_lock (;43;) (type 17) (result i64)
-    i64.const 5928
+    i64.const 5976
   )
   (func $__stdio_exit (;44;) (type 8)
     (local i64 i64 i64)
@@ -6104,7 +6137,7 @@
     end
     block ;; label = @1
       i64.const 0
-      i64.load offset=5936
+      i64.load offset=5984
       local.tee 0
       i64.eqz
       br_if 0 (;@1;)
@@ -6145,7 +6178,7 @@
     end
     block ;; label = @1
       i64.const 0
-      i64.load offset=3864
+      i64.load offset=3912
       local.tee 0
       i64.eqz
       br_if 0 (;@1;)
@@ -6186,7 +6219,7 @@
     end
     block ;; label = @1
       i64.const 0
-      i64.load offset=3672
+      i64.load offset=3720
       local.tee 0
       i64.eqz
       br_if 0 (;@1;)
@@ -6552,16 +6585,16 @@
     (local i64)
     block ;; label = @1
       i64.const 0
-      i64.load offset=5992
+      i64.load offset=6040
       local.tee 1
       i64.const 0
       i64.ne
       br_if 0 (;@1;)
-      i64.const 5944
+      i64.const 5992
       local.set 1
       i64.const 0
-      i64.const 5944
-      i64.store offset=5992
+      i64.const 5992
+      i64.store offset=6040
     end
     i32.const 0
     local.get 0
@@ -6572,10 +6605,10 @@
     i64.extend_i32_u
     i64.const 1
     i64.shl
-    i64.const 2848
+    i64.const 2896
     i64.add
     i64.load16_u
-    i64.const 1288
+    i64.const 1336
     i64.add
     local.get 1
     i64.load offset=40
@@ -6603,7 +6636,7 @@
       block ;; label = @2
         block ;; label = @3
           i64.const 0
-          i64.load offset=5944
+          i64.load offset=5992
           i64.const 0
           i64.ne
           br_if 0 (;@3;)
@@ -6616,7 +6649,7 @@
             br_if 0 (;@4;)
             i64.const 0
             i32.const 25
-            i32.store offset=4872
+            i32.store offset=4920
             br 2 (;@2;)
           end
           local.get 0
@@ -6730,7 +6763,7 @@
         end
         i64.const 0
         i32.const 25
-        i32.store offset=4872
+        i32.store offset=4920
       end
       i64.const -1
       local.set 3
@@ -7814,7 +7847,7 @@
                                 i64.const 58
                                 i64.mul
                                 i64.add
-                                i64.const 2943
+                                i64.const 2991
                                 i64.add
                                 i32.load8_u
                                 local.tee 17
@@ -8040,7 +8073,7 @@
                                                           local.get 20
                                                           i64.const 15
                                                           i64.and
-                                                          i64.const 3472
+                                                          i64.const 3520
                                                           i64.add
                                                           i32.load8_u
                                                           local.get 22
@@ -8227,7 +8260,7 @@
                                               local.set 18
                                               br 16 (;@5;)
                                             end
-                                            i64.const 4872
+                                            i64.const 4920
                                             i32.load
                                             call $strerror
                                             local.set 18
@@ -10307,7 +10340,7 @@
                               call $pad
                               br 3 (;@10;)
                             end
-                            i64.const 4872
+                            i64.const 4920
                             i32.const 28
                             i32.store
                             br 10 (;@2;)
@@ -10832,7 +10865,7 @@
                       local.get 20
                       local.get 17
                       i64.extend_i32_s
-                      i64.const 3472
+                      i64.const 3520
                       i64.add
                       i32.load8_u
                       local.get 21
@@ -11618,7 +11651,7 @@
             br 0 (;@4;)
           end
         end
-        i64.const 4872
+        i64.const 4920
         i32.const 61
         i32.store
       end
@@ -11999,8 +12032,8 @@
     global.set $__stack_pointer
   )
   (func $long_double_not_supported (;59;) (type 8)
-    i64.const 1149
-    i64.const 3488
+    i64.const 1191
+    i64.const 3536
     call $fputs
     drop
     call $abort
@@ -13370,10 +13403,10 @@
   )
   (table (;0;) 5 5 funcref)
   (memory (;0;) i64 2)
-  (global $__stack_pointer (;0;) (mut i64) i64.const 71536)
+  (global $__stack_pointer (;0;) (mut i64) i64.const 71584)
   (export "memory" (memory 0))
   (export "_start" (func $_start))
   (elem (;0;) (i32.const 1) func $__stdio_close $__stdio_write $__stdio_seek $__stdout_write)
-  (data $.rodata (;0;) (i64.const 1024) "-+   0X0x\00-0X+0X 0X-0x+0x 0x\00nan\00inf\00NAN\00INF\00.\00(null)\00Tagging memory %p, size %zu\0a\00Usage: %s heapsize index value\0a\00val = %d\0a\00Support for formatting long double values is currently disabled.\0aTo enable it, add -lc-printscan-long-double to the link command.\0a\00\a0\0d\00\00\00\00\00\00Success\00Illegal byte sequence\00Domain error\00Result not representable\00Not a tty\00Permission denied\00Operation not permitted\00No such file or directory\00No such process\00File exists\00Value too large for data type\00No space left on device\00Out of memory\00Resource busy\00Interrupted system call\00Resource temporarily unavailable\00Invalid seek\00Cross-device link\00Read-only file system\00Directory not empty\00Connection reset by peer\00Operation timed out\00Connection refused\00Host is unreachable\00Address in use\00Broken pipe\00I/O error\00No such device or address\00No such device\00Not a directory\00Is a directory\00Text file busy\00Exec format error\00Invalid argument\00Argument list too long\00Symbolic link loop\00Filename too long\00Too many open files in system\00No file descriptors available\00Bad file descriptor\00No child process\00Bad address\00File too large\00Too many links\00No locks available\00Resource deadlock would occur\00State not recoverable\00Previous owner died\00Operation canceled\00Function not implemented\00No message of desired type\00Identifier removed\00Link has been severed\00Protocol error\00Bad message\00Not a socket\00Destination address required\00Message too large\00Protocol wrong type for socket\00Protocol not available\00Protocol not supported\00Not supported\00Address family not supported by protocol\00Address not available\00Network is down\00Network unreachable\00Connection reset by network\00Connection aborted\00No buffer space available\00Socket is connected\00Socket not connected\00Operation already in progress\00Operation in progress\00Stale file handle\00Quota exceeded\00Multihop attempted\00Capabilities insufficient\00\00\00\00\00\00\00\00\00\00\00u\02N\00\d6\01\e2\04\b9\04\18\01\8e\05\ed\02\16\04\f2\00\97\03\01\038\05\af\01\82\01O\03/\04\1e\00\d4\05\a2\00\12\03\1e\03\c2\01\de\03\08\00\ac\05\00\01d\02\f1\01e\054\02\8c\02\cf\02-\03L\04\e3\05\9f\02\f8\04\1c\05\08\05\b1\02K\05\15\02x\00R\02<\03\f1\03\e4\00\c3\03}\04\cc\00\aa\03y\05$\02n\01m\03\22\04\ab\04D\00\fb\01\ae\00\83\03`\00\e5\01\07\04\94\04^\04+\00X\019\01\92\00\c2\05\9b\01C\02F\01\f6\05\00\00\00\00\00\00\19\00\0a\00\19\19\19\00\00\00\00\05\00\00\00\00\00\00\09\00\00\00\00\0b\00\00\00\00\00\00\00\00\19\00\11\0a\19\19\19\03\0a\07\00\01\1b\09\0b\18\00\00\09\06\0b\00\00\0b\00\06\19\00\00\00\19\19\19\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0e\00\00\00\00\00\00\00\00\19\00\0a\0d\19\19\19\00\0d\00\00\02\00\09\0e\00\00\00\09\00\0e\00\00\0e\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\13\00\00\00\00\13\00\00\00\00\09\0c\00\00\00\00\00\0c\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\10\00\00\00\00\00\00\00\00\00\00\00\0f\00\00\00\04\0f\00\00\00\00\09\10\00\00\00\00\00\10\00\00\10\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\12\00\00\00\00\00\00\00\00\00\00\00\11\00\00\00\00\11\00\00\00\00\09\12\00\00\00\00\00\12\00\00\12\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\09\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\14\00\00\00\00\00\00\00\00\00\00\00\17\00\00\00\00\17\00\00\00\00\09\14\00\00\00\00\00\14\00\00\14\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\16\00\00\00\00\00\00\00\00\00\00\00\15\00\00\00\00\15\00\00\00\00\09\16\00\00\00\00\00\16\00\00\16\00\000123456789ABCDEF")
-  (data $.data (;1;) (i64.const 3488) "\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\14\13\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\a0\0d\00\00\00\00\00\00\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00(\13\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\0a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00`\0e\00\00\00\00\00\00")
+  (data $.rodata (;0;) (i64.const 1024) "-+   0X0x\00-0X+0X 0X-0x+0x 0x\00nan\00inf\00NAN\00INF\00.\00(null)\00Untagging memory %p, size %zu\0a\00Tagging memory %p, size %zu\0a\00Usage: %s heapsize index value free_first\0a\00val = %d\0a\00Support for formatting long double values is currently disabled.\0aTo enable it, add -lc-printscan-long-double to the link command.\0a\00\00\00\00\00\00\00\d0\0d\00\00\00\00\00\00Success\00Illegal byte sequence\00Domain error\00Result not representable\00Not a tty\00Permission denied\00Operation not permitted\00No such file or directory\00No such process\00File exists\00Value too large for data type\00No space left on device\00Out of memory\00Resource busy\00Interrupted system call\00Resource temporarily unavailable\00Invalid seek\00Cross-device link\00Read-only file system\00Directory not empty\00Connection reset by peer\00Operation timed out\00Connection refused\00Host is unreachable\00Address in use\00Broken pipe\00I/O error\00No such device or address\00No such device\00Not a directory\00Is a directory\00Text file busy\00Exec format error\00Invalid argument\00Argument list too long\00Symbolic link loop\00Filename too long\00Too many open files in system\00No file descriptors available\00Bad file descriptor\00No child process\00Bad address\00File too large\00Too many links\00No locks available\00Resource deadlock would occur\00State not recoverable\00Previous owner died\00Operation canceled\00Function not implemented\00No message of desired type\00Identifier removed\00Link has been severed\00Protocol error\00Bad message\00Not a socket\00Destination address required\00Message too large\00Protocol wrong type for socket\00Protocol not available\00Protocol not supported\00Not supported\00Address family not supported by protocol\00Address not available\00Network is down\00Network unreachable\00Connection reset by network\00Connection aborted\00No buffer space available\00Socket is connected\00Socket not connected\00Operation already in progress\00Operation in progress\00Stale file handle\00Quota exceeded\00Multihop attempted\00Capabilities insufficient\00\00\00\00\00\00\00\00\00\00\00u\02N\00\d6\01\e2\04\b9\04\18\01\8e\05\ed\02\16\04\f2\00\97\03\01\038\05\af\01\82\01O\03/\04\1e\00\d4\05\a2\00\12\03\1e\03\c2\01\de\03\08\00\ac\05\00\01d\02\f1\01e\054\02\8c\02\cf\02-\03L\04\e3\05\9f\02\f8\04\1c\05\08\05\b1\02K\05\15\02x\00R\02<\03\f1\03\e4\00\c3\03}\04\cc\00\aa\03y\05$\02n\01m\03\22\04\ab\04D\00\fb\01\ae\00\83\03`\00\e5\01\07\04\94\04^\04+\00X\019\01\92\00\c2\05\9b\01C\02F\01\f6\05\00\00\00\00\00\00\19\00\0a\00\19\19\19\00\00\00\00\05\00\00\00\00\00\00\09\00\00\00\00\0b\00\00\00\00\00\00\00\00\19\00\11\0a\19\19\19\03\0a\07\00\01\1b\09\0b\18\00\00\09\06\0b\00\00\0b\00\06\19\00\00\00\19\19\19\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0e\00\00\00\00\00\00\00\00\19\00\0a\0d\19\19\19\00\0d\00\00\02\00\09\0e\00\00\00\09\00\0e\00\00\0e\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\13\00\00\00\00\13\00\00\00\00\09\0c\00\00\00\00\00\0c\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\10\00\00\00\00\00\00\00\00\00\00\00\0f\00\00\00\04\0f\00\00\00\00\09\10\00\00\00\00\00\10\00\00\10\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\12\00\00\00\00\00\00\00\00\00\00\00\11\00\00\00\00\11\00\00\00\00\09\12\00\00\00\00\00\12\00\00\12\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\09\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\14\00\00\00\00\00\00\00\00\00\00\00\17\00\00\00\00\17\00\00\00\00\09\14\00\00\00\00\00\14\00\00\14\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\16\00\00\00\00\00\00\00\00\00\00\00\15\00\00\00\00\15\00\00\00\00\09\16\00\00\00\00\00\16\00\00\16\00\000123456789ABCDEF")
+  (data $.data (;1;) (i64.const 3536) "\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00D\13\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\d0\0d\00\00\00\00\00\00\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00X\13\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\0a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\90\0e\00\00\00\00\00\00")
 )
