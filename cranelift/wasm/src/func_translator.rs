@@ -308,6 +308,7 @@ mod tests {
             isa::TargetFrontendConfig {
                 default_call_conv: isa::CallConv::Fast,
                 pointer_width: PointerWidth::U64,
+                has_mte: false,
             },
             false,
         );
@@ -346,6 +347,7 @@ mod tests {
             isa::TargetFrontendConfig {
                 default_call_conv: isa::CallConv::Fast,
                 pointer_width: PointerWidth::U64,
+                has_mte: false,
             },
             false,
         );
@@ -389,6 +391,7 @@ mod tests {
             isa::TargetFrontendConfig {
                 default_call_conv: isa::CallConv::Fast,
                 pointer_width: PointerWidth::U64,
+                has_mte: false,
             },
             false,
         );
