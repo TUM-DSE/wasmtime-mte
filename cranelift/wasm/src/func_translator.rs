@@ -14,7 +14,7 @@ use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, Block, InstBuilder, ValueLabel};
 use cranelift_codegen::timing;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use wasmparser::{self, BinaryReader, FuncValidator, FunctionBody, WasmModuleResources};
+use wasmparser::{self, BinaryReader, FuncValidator, FunctionBody, Operator, WasmModuleResources};
 
 /// WebAssembly to Cranelift IR function translator.
 ///
@@ -237,14 +237,36 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
     debug_assert_eq!(state.control_stack.len(), 1, "State not initialized");
 
     environ.before_translate_function(builder, state)?;
+
     while !reader.eof() {
         let pos = reader.original_position();
         builder.set_srcloc(cur_srcloc(&reader));
-        let op = reader.read_operator()?;
-        validator.op(pos, &op)?;
-        environ.before_translate_operator(&op, builder, state)?;
-        translate_operator(validator, &op, builder, state, environ)?;
-        environ.after_translate_operator(&op, builder, state)?;
+
+        // Code duplication is necessary because I cannot figure out how to make the borrow checker happy
+        if let Some(replacement) = environ.inst_replacement(pos) {
+            reader.skip(|r| {
+                for _ in 0..replacement.num_drops {
+                    let op = r.read_operator()?;
+                    if !matches!(op, Operator::Drop) {
+                        panic!("expected drop, got {:?}", op);
+                    }
+                }
+                Ok(())
+            })?;
+
+            let mut reader = BinaryReader::new(&replacement.inst);
+            let op = reader.read_operator()?;
+            validator.op(pos, &op)?;
+            environ.before_translate_operator(&op, builder, state)?;
+            translate_operator(validator, &op, builder, state, environ)?;
+            environ.after_translate_operator(&op, builder, state)?;
+        } else {
+            let op = reader.read_operator()?;
+            validator.op(pos, &op)?;
+            environ.before_translate_operator(&op, builder, state)?;
+            translate_operator(validator, &op, builder, state, environ)?;
+            environ.after_translate_operator(&op, builder, state)?;
+        }
     }
     environ.after_translate_function(builder, state)?;
     let pos = reader.original_position();

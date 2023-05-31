@@ -694,7 +694,11 @@ impl<'a, 'data> Translator<'a, 'data> {
             //
             // FIXME(WebAssembly/component-model#14): probably want to specify
             // and parse a `name` section here.
-            Payload::CustomSection { .. } => {}
+            Payload::CustomSection { 0: reader } => {
+                if reader.name() == "memory_safety" {
+                    self.validator.memory_safety_section(&reader)?;
+                }
+            }
 
             // Anything else is either not reachable since we never enable the
             // feature in Wasmtime or we do enable it and it's a bug we don't

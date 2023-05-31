@@ -14,7 +14,7 @@ use cranelift_wasm::{
 };
 use std::convert::TryFrom;
 use std::mem;
-use wasmparser::Operator;
+use wasmparser::{InstReplacement, Operator};
 use wasmtime_environ::{
     BuiltinFunctionIndex, MemoryPlan, MemoryStyle, Module, ModuleTranslation, ModuleTypes, PtrSize,
     TableStyle, Tunables, VMOffsets, WASM_PAGE_SIZE,
@@ -2164,5 +2164,9 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
 
     fn is_x86(&self) -> bool {
         self.isa.triple().architecture == target_lexicon::Architecture::X86_64
+    }
+
+    fn inst_replacement(&self, offset: usize) -> Option<InstReplacement> {
+        self.translation.instr_replacements.get(&offset).cloned()
     }
 }

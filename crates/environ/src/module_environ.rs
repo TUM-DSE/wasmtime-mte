@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use wasmparser::{
     types::Types, CustomSectionReader, DataKind, ElementItems, ElementKind, Encoding, ExternalKind,
-    FuncToValidate, FunctionBody, NameSectionReader, Naming, Operator, Parser, Payload, Type,
-    TypeRef, Validator, ValidatorResources,
+    FuncToValidate, FunctionBody, InstReplacement, NameSectionReader, Naming, Operator, Parser,
+    Payload, Type, TypeRef, Validator, ValidatorResources,
 };
 
 /// Object containing the standalone environment information.
@@ -94,6 +94,9 @@ pub struct ModuleTranslation<'data> {
     /// The type information of the current module made available at the end of the
     /// validation process.
     types: Option<Types>,
+
+    /// Replacement for instructions
+    pub instr_replacements: HashMap<usize, InstReplacement>,
 }
 
 impl<'data> ModuleTranslation<'data> {
@@ -646,6 +649,12 @@ and for re-adding support for interface types you can see this issue:
 "
                     .to_string(),
                 ))
+            }
+
+            Payload::CustomSection(s) if s.name() == "mem-safety" => {
+                self.result
+                    .instr_replacements
+                    .extend(self.validator.memory_safety_section(&s)?);
             }
 
             Payload::CustomSection(s) => {

@@ -21,7 +21,9 @@ use cranelift_entity::PrimaryMap;
 use cranelift_frontend::FunctionBuilder;
 use std::boxed::Box;
 use std::string::ToString;
-use wasmparser::{FuncValidator, FunctionBody, Operator, ValidatorResources, WasmFeatures};
+use wasmparser::{
+    FuncValidator, FunctionBody, InstReplacement, Operator, ValidatorResources, WasmFeatures,
+};
 
 /// The value of a WebAssembly global variable.
 #[derive(Clone, Copy)]
@@ -550,6 +552,12 @@ pub trait FuncEnvironment: TargetEnvironment {
     /// relaxed simd instructions.
     fn is_x86(&self) -> bool {
         false
+    }
+
+    /// Get the instruction replacements for this environment.
+    fn inst_replacement(&self, offset: usize) -> Option<InstReplacement> {
+        drop(offset);
+        None
     }
 }
 
