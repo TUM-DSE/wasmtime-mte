@@ -3791,7 +3791,6 @@ pub(crate) fn define(
         .operands_in(vec![
             Operand::new("p", iAddr).with_doc("Register to set tag in")
         ])
-        .other_side_effects()
         .operands_out(vec![Operand::new("a", iAddr)]),
     );
 
