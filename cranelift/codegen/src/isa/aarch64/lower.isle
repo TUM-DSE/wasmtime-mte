@@ -2676,3 +2676,6 @@
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
+
+(rule (lower (arm64_pacda src))
+      (emit_arm64_pacda src))

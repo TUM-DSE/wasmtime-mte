@@ -2420,6 +2420,14 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             tag_memory_region(base_ptr, stack_ptr, size, builder, environ)?;
         }
+        Operator::I64PointerSign { memarg } => {
+            // TODO: add explanation what this instruction does
+            todo!()
+        }
+        Operator::I64PointerAuth { memarg } => {
+            // TODO: add explanation what this instruction does
+            todo!()
+        }
     };
     Ok(())
 }

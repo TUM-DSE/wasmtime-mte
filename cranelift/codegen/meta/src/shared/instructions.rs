@@ -3784,7 +3784,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_irg",
             r#"
-        Generate random tag
+        Generate random tag.
         "#,
             &formats.unary,
         )
@@ -3799,7 +3799,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_stg",
             r#"
-        Store tag to tag memory
+        Store tag to tag memory.
         "#,
             &formats.binary,
         )
@@ -3815,7 +3815,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_st2g",
             r#"
-        Store tag to tag two granules of memory
+        Store tag to tag two granules of memory.
         "#,
             &formats.binary,
         )
@@ -3825,5 +3825,23 @@ pub(crate) fn define(
         ])
         .can_store()
         .other_side_effects(),
+    );
+
+    ig.push(
+        Inst::new(
+            "arm64_pacda",
+            r#"
+        Compute pointer authentication code for data address.
+        "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            // Operand::new("rd", iAddr).with_doc("Register containing address for which PAC is calculated and inserted"),
+            Operand::new("rn", iAddr).with_doc("Register containing modifier that is used in PAC calculation"),
+        ])
+        // TODO: does pacda need to be able to store to memory? What does it mean to be able to store to memory?
+        // .can_store()
+        // no side effects, since it doesn't manipulate memory or trap
+        .operands_out(vec![Operand::new("rd", iAddr)]),
     );
 }

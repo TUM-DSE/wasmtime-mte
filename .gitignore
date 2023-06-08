@@ -23,6 +23,7 @@ examples/build
 .idea
 
 *.cwasm
+*.s
 
 .direnv
 

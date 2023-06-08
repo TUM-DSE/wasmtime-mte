@@ -899,6 +899,9 @@
        ;; TODO: not all addressing modes are supported; maybe change this?
        (St2g (rt Reg) (mem AMode))
 
+       ;; PACDA
+       (Pacda (rd WritableReg) (rn Reg))
+
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
        (Bti
@@ -1820,6 +1823,11 @@
             (_ Unit (emit (MInst.Irg dst src))))
         dst))
 
+(decl emit_arm64_pacda (Reg) Reg)
+(rule (emit_arm64_pacda src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Pacda dst src))))
+        dst))
 
 ;; Helper for emitting `MInst.Mov` instructions.
 (decl mov (Reg Type) Reg)
