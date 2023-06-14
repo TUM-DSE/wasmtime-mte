@@ -903,8 +903,13 @@
        ;; PACDA
        ;; (Pacda (rd WritableReg) (rn Reg))
 
-       ;; PACDZA
-       (Pacdza (rd WritableReg))
+       ;; PACDZA. Modifies its input register; we
+       ;; model this with a seperate input `rn` and output `rd` virtual
+       ;; register, with a regalloc constraint to tie them together.
+       (Pacdza (rd WritableReg) (rn Reg))
+
+       ;; LDRAA
+       ;; (Ldraa (rd WritableReg))
 
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
@@ -1839,9 +1844,7 @@
 (decl emit_arm64_pacdza (Reg) Reg)
 (rule (emit_arm64_pacdza src)
       (let ((dst WritableReg (temp_writable_reg $I64))
-            ;; TODO: move src to dst (since both use rd) (find more efficient way without inserting mov instruction)
-            (_ Unit (emit (MInst.Mov (operand_size $I64) dst src)))
-            (_ Unit (emit (MInst.Pacdza dst))))
+            (_ Unit (emit (MInst.Pacdza dst src))))
         dst))
 
 ;; Helper for emitting `MInst.Mov` instructions.

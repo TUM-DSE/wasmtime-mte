@@ -3866,7 +3866,7 @@ pub(crate) fn define(
 
     // ig.push(
     //     Inst::new(
-    //         "arm64_auth_pointer",
+    //         "auth_pointer",
     //         r#"
     //     Authenticate and load pointer, trap if authentication fails.
     //     "#,

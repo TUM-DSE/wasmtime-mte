@@ -780,12 +780,15 @@ impl MachInstEmit for Inst {
             //         (bits_31_10 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg()),
             //     );
             // }
-            &MInst::Pacdza { rd } => {
-                let bits_31_10 = 0b1101101011000001001010;
+            &MInst::Pacdza { rd, rn } => {
+                let rn = allocs.next(rn);
                 let rd = allocs.next_writable(rd);
-                let rn = 0b1111;
+                debug_assert_eq!(rn, rd.to_reg());
 
-                sink.put4((bits_31_10 << 10) | (rn << 5) | machreg_to_gpr(rd.to_reg()));
+                let bits_31_10 = 0b1101_1010_1100_0001_0010_10;
+                let bits_9_5 = 0b1111_1;
+
+                sink.put4((bits_31_10 << 10) | (bits_9_5 << 5) | machreg_to_gpr(rd.to_reg()));
             }
             &Inst::AluRRR {
                 alu_op,
