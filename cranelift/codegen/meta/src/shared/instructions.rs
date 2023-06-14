@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-
 use crate::cdsl::instructions::{
     AllInstructions, InstructionBuilder as Inst, InstructionGroupBuilder,
 };
@@ -3804,6 +3803,8 @@ pub(crate) fn define(
             &formats.binary,
         )
         .operands_in(vec![
+            // virtual registers in CLIF
+            // TODO: tagged address
             Operand::new("t", iAddr).with_doc("Register holding tag"),
             Operand::new("p", iAddr).with_doc("Address to region"),
         ])
@@ -3827,21 +3828,55 @@ pub(crate) fn define(
         .other_side_effects(),
     );
 
+    // TODO: give more general names here (auth pointer)
+    // ig.push(
+    //     Inst::new(
+    //         "arm64_pacda",
+    //         r#"
+    //     Compute pointer authentication code for data address.
+    //     "#,
+    //         &formats.binary,
+    //     )
+    //     .operands_in(vec![Operand::new("p", iAddr).with_doc(
+    //         "Register containing modifier that is used in PAC calculation",
+    //     )])
+    //     // TODO: does pacda need to be able to store to memory? What does it mean to be able to store to memory?
+    //     // .can_store()
+    //     // no side effects, since it doesn't manipulate memory or trap
+    //     .operands_out(vec![Operand::new("a", iAddr)]),
+    // );
+
+    // ig.push(
+    //     Inst::new(
+    //         "arm64_ldraa",
+    //         r#"
+    //     Authenticate and load pointer, trap if authentication fails.
+    //     "#,
+    //         &formats.load,
+    //     )
+    //     .operands_in(vec![
+    //         Operand::new("p", iAddr).with_doc("Pointer to load from"),
+    //     ])
+    //     .operands_out(vec![Operand::new("rt", iAddr)])
+    //     // trap if authentication fails
+    //     .other_side_effects(),
+    // );
+
+    // TODO: should it even be called arm64_auth_pointer or just auth_pointer? Maybe just auth_pointer, and for non-arm64 it just inserts NOP
     ig.push(
         Inst::new(
-            "arm64_pacda",
+            "arm64_auth_pointer",
             r#"
-        Compute pointer authentication code for data address.
+        Compute pointer authentication code (PAC) for data address.
         "#,
             &formats.binary,
         )
         .operands_in(vec![
-            // Operand::new("rd", iAddr).with_doc("Register containing address for which PAC is calculated and inserted"),
-            Operand::new("rn", iAddr).with_doc("Register containing modifier that is used in PAC calculation"),
+            Operand::new("p", iAddr).with_doc("Address for which PAC should be generated")
         ])
-        // TODO: does pacda need to be able to store to memory? What does it mean to be able to store to memory?
-        // .can_store()
         // no side effects, since it doesn't manipulate memory or trap
-        .operands_out(vec![Operand::new("rd", iAddr)]),
+        .operands_out(vec![
+            Operand::new("a", iAddr).with_doc("Address with newly generated PAC")
+        ]),
     );
 }

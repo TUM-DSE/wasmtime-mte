@@ -2669,6 +2669,7 @@
 
 
 (rule (lower (arm64_stg src dst))
+      ;; TODO: 64 instead of 32
       (side_effect (emit_arm64_stg src (amode_stg $I32 dst 0))))
 
 (rule (lower (arm64_st2g src dst))
@@ -2677,5 +2678,8 @@
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
 
-(rule (lower (arm64_pacda src))
-      (emit_arm64_pacda src))
+;;(rule (lower (arm64_pacda src))
+;;      (emit_arm64_pacda src))
+
+(rule (lower (arm64_auth_pointer src))
+      (emit_arm64_pacdza src))

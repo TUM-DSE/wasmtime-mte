@@ -899,8 +899,12 @@
        ;; TODO: not all addressing modes are supported; maybe change this?
        (St2g (rt Reg) (mem AMode))
 
+       ;; TODO: try pacdza first, and then pacda
        ;; PACDA
-       (Pacda (rd WritableReg) (rn Reg))
+       ;; (Pacda (rd WritableReg) (rn Reg))
+
+       ;; PACDZA
+       (Pacdza (rd WritableReg))
 
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
@@ -1823,10 +1827,21 @@
             (_ Unit (emit (MInst.Irg dst src))))
         dst))
 
-(decl emit_arm64_pacda (Reg) Reg)
-(rule (emit_arm64_pacda src)
+;;(decl emit_arm64_pacda (Reg) Reg)
+;;(rule (emit_arm64_pacda src)
+;;      (let ((dst WritableReg (temp_writable_reg $I64))
+;;            ;; TODO: move src to dst (since both use rd)
+;;            ;; TODO: how to get modifier (set to zero)
+;;            (_ Unit (emit (MInst.Pacda dst modifier))))
+;;        dst))
+
+;; Helper for emitting `MInst.Pacdza` instructions.
+(decl emit_arm64_pacdza (Reg))
+(rule (emit_arm64_pacdza src)
       (let ((dst WritableReg (temp_writable_reg $I64))
-            (_ Unit (emit (MInst.Pacda dst src))))
+            ;; TODO: move src to dst (since both use rd)
+            (_ Unit (emit (MInst.Mov dst src)))
+            (_ Unit (emit (MInst.Pacdza dst))))
         dst))
 
 ;; Helper for emitting `MInst.Mov` instructions.
