@@ -1836,11 +1836,11 @@
 ;;        dst))
 
 ;; Helper for emitting `MInst.Pacdza` instructions.
-(decl emit_arm64_pacdza (Reg))
+(decl emit_arm64_pacdza (Reg) Reg)
 (rule (emit_arm64_pacdza src)
       (let ((dst WritableReg (temp_writable_reg $I64))
-            ;; TODO: move src to dst (since both use rd)
-            (_ Unit (emit (MInst.Mov dst src)))
+            ;; TODO: move src to dst (since both use rd) (find more efficient way without inserting mov instruction)
+            (_ Unit (emit (MInst.Mov (operand_size $I64) dst src)))
             (_ Unit (emit (MInst.Pacdza dst))))
         dst))
 

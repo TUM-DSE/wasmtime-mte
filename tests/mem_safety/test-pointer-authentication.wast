@@ -12,7 +12,7 @@
     ;; Store pointer $ptr to the memory address pointed to by $x
     (local.get $x) ;; push $x to stack
     (local.get $ptr) ;; push $ptr to stack
-    ;; (i64.pointer_sign) ;; sign_pointer(ptr): signs $ptr with PAC; return signed ptr on stack
+    (i64.pointer_sign) ;; sign_pointer(ptr): signs $ptr with PAC; return signed ptr on stack
     (i64.store) ;; store(x, ptr)
   )
 

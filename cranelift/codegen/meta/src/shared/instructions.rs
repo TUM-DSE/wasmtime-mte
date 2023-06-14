@@ -3846,37 +3846,37 @@ pub(crate) fn define(
     //     .operands_out(vec![Operand::new("a", iAddr)]),
     // );
 
+    ig.push(
+        Inst::new(
+            "sign_pointer",
+            r#"
+        Compute and insert pointer authentication code (PAC) for data address.
+        Alternative, equivalent description: Signs a data address with a PAC.
+        "#,
+            &formats.unary,
+        )
+        .operands_in(vec![
+            Operand::new("p", iAddr).with_doc("Address into which PAC should be inserted")
+        ])
+        // no side effects, since it doesn't manipulate memory or trap
+        .operands_out(vec![
+            Operand::new("a", iAddr).with_doc("Address containing newly generated PAC")
+        ]),
+    );
+
     // ig.push(
     //     Inst::new(
-    //         "arm64_ldraa",
+    //         "arm64_auth_pointer",
     //         r#"
     //     Authenticate and load pointer, trap if authentication fails.
     //     "#,
     //         &formats.load,
     //     )
     //     .operands_in(vec![
-    //         Operand::new("p", iAddr).with_doc("Pointer to load from"),
+    //         Operand::new("p", iAddr).with_doc("Pointer to authenticate and then load from")
     //     ])
-    //     .operands_out(vec![Operand::new("rt", iAddr)])
-    //     // trap if authentication fails
+    //     .operands_out(vec![Operand::new("a", iAddr)])
+    //     // has side-effects, as it will trap if authentication fails
     //     .other_side_effects(),
     // );
-
-    // TODO: should it even be called arm64_auth_pointer or just auth_pointer? Maybe just auth_pointer, and for non-arm64 it just inserts NOP
-    ig.push(
-        Inst::new(
-            "arm64_auth_pointer",
-            r#"
-        Compute pointer authentication code (PAC) for data address.
-        "#,
-            &formats.binary,
-        )
-        .operands_in(vec![
-            Operand::new("p", iAddr).with_doc("Address for which PAC should be generated")
-        ])
-        // no side effects, since it doesn't manipulate memory or trap
-        .operands_out(vec![
-            Operand::new("a", iAddr).with_doc("Address with newly generated PAC")
-        ]),
-    );
 }

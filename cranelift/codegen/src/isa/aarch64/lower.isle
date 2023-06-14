@@ -2681,5 +2681,5 @@
 ;;(rule (lower (arm64_pacda src))
 ;;      (emit_arm64_pacda src))
 
-(rule (lower (arm64_auth_pointer src))
+(rule (lower (sign_pointer src))
       (emit_arm64_pacdza src))

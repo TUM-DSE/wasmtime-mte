@@ -2421,11 +2421,22 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             tag_memory_region(base_ptr, stack_ptr, size, builder, environ)?;
         }
         Operator::I64PointerSign { memarg } => {
-            // TODO: add explanation what this instruction does
-            todo!()
+            // Parameters (saved in state, which is an emulated stack):
+            // - data_address: the pointer that we want to sign with a PAC
+
+            let (_, data_address) = unwrap_or_return_unreachable_state!(
+                state,
+                // TODO: does the 16 mean 16-byte aligned? Does this have to be the case for this?
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+
+            let signed_data_address = builder.ins().sign_pointer(data_address);
+
+            // Return value:
+            // - signed_data_address: the signed pointer that now contains the PAC
+            state.push1(signed_data_address);
         }
         Operator::I64PointerAuth { memarg } => {
-            // TODO: add explanation what this instruction does
             todo!()
         }
     };
@@ -3613,8 +3624,8 @@ fn tag_memory_region_static(
     // First insert an overflow check. This allows us to insert non-trapping instructions later.
     let c = builder.ins().iconst(I64, size);
     builder
-    .ins()
-    .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
+        .ins()
+        .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
 
     let mut i = 0;
     while size - i >= 32 {
@@ -3686,13 +3697,15 @@ where
 
     // === Block definitions
     // st2g_loop_condition_block(size, iter_ptr)
-    let st2g_loop_condition_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+    let st2g_loop_condition_block =
+        block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
 
     // st2g_loop_body_block(size, iter_ptr)
     let st2g_loop_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
 
     // last_stg_condition_block(size, iter_ptr)
-    let last_stg_condition_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+    let last_stg_condition_block =
+        block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
 
     // last_stg_body_block(size, iter_ptr)
     let last_stg_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
@@ -3700,8 +3713,9 @@ where
     // next_block()
     let next_block = block_with_params(builder, [], environ)?;
 
-
-    builder.ins().jump(st2g_loop_condition_block, &[size, iter_ptr]);
+    builder
+        .ins()
+        .jump(st2g_loop_condition_block, &[size, iter_ptr]);
 
     // === st2g loop condition block
     builder.switch_to_block(st2g_loop_condition_block);
@@ -3709,7 +3723,9 @@ where
     let size = builder.block_params(st2g_loop_condition_block)[0];
     let iter_ptr = builder.block_params(st2g_loop_condition_block)[1];
 
-    let cond = builder.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, size, 32);
+    let cond = builder
+        .ins()
+        .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, size, 32);
     canonicalise_brif(
         builder,
         cond,
@@ -3734,7 +3750,9 @@ where
             .ins()
             .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
 
-    builder.ins().jump(st2g_loop_condition_block, &[size_counter, iter_ptr]);
+    builder
+        .ins()
+        .jump(st2g_loop_condition_block, &[size_counter, iter_ptr]);
 
     builder.seal_block(st2g_loop_body_block);
     builder.seal_block(st2g_loop_condition_block);
