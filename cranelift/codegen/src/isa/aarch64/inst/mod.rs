@@ -411,6 +411,11 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             // Make sure rd and rn end up in same physical register (rd)
             collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
         }
+        &Inst::Autdza { rd, rn, .. } => {
+            collector.reg_use(rn);
+            // Make sure rd and rn end up in same physical register (rd)
+            collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
+        }
         &Inst::AluRRR { rd, rn, rm, .. } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1209,7 +1214,14 @@ impl Inst {
                 format!("{}{} {}, {}", mem_str, op, rt, mem)
             }
             &Inst::Pacdza { rd, rn, .. } => {
-                let op = "padza";
+                let op = "pacdza";
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
+
+                format!("{} {} {}", op, rd, rn)
+            }
+            &Inst::Autdza { rd, rn, .. } => {
+                let op = "autza";
                 let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
                 let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
 

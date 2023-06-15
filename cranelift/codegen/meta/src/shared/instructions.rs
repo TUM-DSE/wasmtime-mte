@@ -3828,24 +3828,6 @@ pub(crate) fn define(
         .other_side_effects(),
     );
 
-    // TODO: give more general names here (auth pointer)
-    // ig.push(
-    //     Inst::new(
-    //         "arm64_pacda",
-    //         r#"
-    //     Compute pointer authentication code for data address.
-    //     "#,
-    //         &formats.binary,
-    //     )
-    //     .operands_in(vec![Operand::new("p", iAddr).with_doc(
-    //         "Register containing modifier that is used in PAC calculation",
-    //     )])
-    //     // TODO: does pacda need to be able to store to memory? What does it mean to be able to store to memory?
-    //     // .can_store()
-    //     // no side effects, since it doesn't manipulate memory or trap
-    //     .operands_out(vec![Operand::new("a", iAddr)]),
-    // );
-
     ig.push(
         Inst::new(
             "sign_pointer",
@@ -3855,28 +3837,29 @@ pub(crate) fn define(
         "#,
             &formats.unary,
         )
-        .operands_in(vec![
-            Operand::new("p", iAddr).with_doc("Address into which PAC should be inserted")
-        ])
+        .operands_in(vec![Operand::new("p", iAddr)
+            .with_doc("Data address/pointer into which PAC should be inserted")])
         // no side effects, since it doesn't manipulate memory or trap
-        .operands_out(vec![
-            Operand::new("a", iAddr).with_doc("Address containing newly generated PAC")
-        ]),
+        .operands_out(vec![Operand::new("a", iAddr)
+            .with_doc("Data address/pointer containing newly generated PAC")]),
     );
 
-    // ig.push(
-    //     Inst::new(
-    //         "auth_pointer",
-    //         r#"
-    //     Authenticate and load pointer, trap if authentication fails.
-    //     "#,
-    //         &formats.load,
-    //     )
-    //     .operands_in(vec![
-    //         Operand::new("p", iAddr).with_doc("Pointer to authenticate and then load from")
-    //     ])
-    //     .operands_out(vec![Operand::new("a", iAddr)])
-    //     // has side-effects, as it will trap if authentication fails
-    //     .other_side_effects(),
-    // );
+    ig.push(
+        Inst::new(
+            "auth_pointer",
+            r#"
+        Authenticate pointer using PAC. If authentication fails, upper bits are
+        corrupted so subsequent uses trap, otherwise upper bits are restored.
+        "#,
+            &formats.unary,
+        )
+        .operands_in(vec![
+            Operand::new("p", iAddr).with_doc("Data address/pointer to authenticate")
+        ])
+        .operands_out(vec![
+            Operand::new("a", iAddr).with_doc("Authenticated (restored or corrupted) data address")
+        ]), // TODO: but only traps in later execution
+            // has side-effects, as it will trap if authentication fails
+            // .other_side_effects(),
+    );
 }

@@ -2437,7 +2437,20 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             state.push1(signed_data_address);
         }
         Operator::I64PointerAuth { memarg } => {
-            todo!()
+            // Parameters (saved in state, which is an emulated stack):
+            // - data_address: the pointer that we want to authenticate
+
+            let (_, data_address) = unwrap_or_return_unreachable_state!(
+                state,
+                // TODO: does the 16 mean 16-byte aligned? Does this have to be the case for this?
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+
+            let authenticated_data_address = builder.ins().auth_pointer(data_address);
+
+            // Return value:
+            // - authenticated_data_address: the authenticated pointer (either restored or corrupted)
+            state.push1(authenticated_data_address);
         }
     };
     Ok(())

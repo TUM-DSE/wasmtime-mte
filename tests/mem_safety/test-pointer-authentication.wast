@@ -27,7 +27,7 @@
     (local.get $x) ;; push $x to stack
     (i64.load) ;; load(x): push address pointed to by $x (*x) onto stack
     ;; TODO: think about whether pointer_auth even has to return authenticated pointer, could also simply trap if authentication fails
-    ;; (i64.pointer_auth) ;; auth_pointer(*x): verifies/authenticates PAC; if authenticated, return pointer back on stack, else trap
+    (i64.pointer_auth) ;; auth_pointer(*x): verifies/authenticates PAC; if authenticated, return pointer back on stack, else trap
     (return) ;; 
   )
 )

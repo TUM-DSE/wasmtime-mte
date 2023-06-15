@@ -771,21 +771,22 @@ impl MachInstEmit for Inst {
 
                 sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
             }
-            // &MInst::Pacda { rd, rn } => {
-            //     let bits_31_10 = 0b1101101011000001000010;
-            //     let rd = allocs.next_writable(rd);
-            //     let rn = allocs.next(rn);
-
-            //     sink.put4(
-            //         (bits_31_10 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg()),
-            //     );
-            // }
             &MInst::Pacdza { rd, rn } => {
                 let rn = allocs.next(rn);
                 let rd = allocs.next_writable(rd);
                 debug_assert_eq!(rn, rd.to_reg());
 
                 let bits_31_10 = 0b1101_1010_1100_0001_0010_10;
+                let bits_9_5 = 0b1111_1;
+
+                sink.put4((bits_31_10 << 10) | (bits_9_5 << 5) | machreg_to_gpr(rd.to_reg()));
+            }
+            &MInst::Autdza { rd, rn } => {
+                let rn = allocs.next(rn);
+                let rd = allocs.next_writable(rd);
+                debug_assert_eq!(rn, rd.to_reg());
+
+                let bits_31_10 = 0b1101_1010_1100_0001_0011_10;
                 let bits_9_5 = 0b1111_1;
 
                 sink.put4((bits_31_10 << 10) | (bits_9_5 << 5) | machreg_to_gpr(rd.to_reg()));
