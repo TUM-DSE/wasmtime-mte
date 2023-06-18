@@ -3858,8 +3858,8 @@ pub(crate) fn define(
         ])
         .operands_out(vec![
             Operand::new("a", iAddr).with_doc("Authenticated (restored or corrupted) data address")
-        ]), // TODO: but only traps in later execution
-            // has side-effects, as it will trap if authentication fails
+        ]), // TODO: doesn't trap here, but elsewhere
+            // has no side-effects, as it only traps during later use if authentication failed
             // .other_side_effects(),
     );
 }

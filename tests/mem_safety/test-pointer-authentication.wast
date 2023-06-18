@@ -4,30 +4,29 @@
 
   ;; Equivalent C function:
   ;;
-  ;; void store(int *ptr, int **x) {
-  ;;   *x = ptr;
+  ;; void store_pointer(int *value_ptr, int **dst_ptr) {
+  ;;   *dst_ptr = value_ptr;
   ;; }
   ;;
-  (func (export "store") (param $ptr i64) (param $x i64)
-    ;; Store pointer $ptr to the memory address pointed to by $x
-    (local.get $x) ;; push $x to stack
-    (local.get $ptr) ;; push $ptr to stack
-    (i64.pointer_sign) ;; sign_pointer(ptr): signs $ptr with PAC; return signed ptr on stack
-    (i64.store) ;; store(x, ptr)
+  (func (export "store_pointer") (param $value_ptr i64) (param $dst_ptr i64)
+    ;; Store pointer $value_ptr to the memory address pointed to by $dst_ptr
+    (local.get $dst_ptr) ;; push $dst_ptr to stack
+    (local.get $value_ptr) ;; push $value_ptr to stack
+    (i64.pointer_sign) ;; sign_pointer(value_ptr): signs $value_ptr with PAC; return signed value_ptr on stack
+    (i64.store) ;; store(dst_ptr, value_ptr)
   )
 
   ;; Equivalent C function:
   ;;
-  ;; int *load(int **x) {
+  ;; int *load_pointer(int **x) {
   ;;   return *x;
   ;; }
   ;;
-  (func (export "load") (param $x i64) (result i64)
+  (func (export "load_pointer") (param $x i64) (result i64)
     ;; Load address from memory pointed to by $x
     (local.get $x) ;; push $x to stack
-    (i64.load) ;; load(x): push address pointed to by $x (*x) onto stack
-    ;; TODO: think about whether pointer_auth even has to return authenticated pointer, could also simply trap if authentication fails
     (i64.pointer_auth) ;; auth_pointer(*x): verifies/authenticates PAC; if authenticated, return pointer back on stack, else trap
+    (i64.load) ;; load(x): push address pointed to by $x (*x) onto stack
     (return) ;; 
   )
 )

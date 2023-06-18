@@ -2420,15 +2420,11 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             tag_memory_region(base_ptr, stack_ptr, size, builder, environ)?;
         }
-        Operator::I64PointerSign { memarg } => {
+        Operator::I64PointerSign => {
             // Parameters (saved in state, which is an emulated stack):
             // - data_address: the pointer that we want to sign with a PAC
 
-            let (_, data_address) = unwrap_or_return_unreachable_state!(
-                state,
-                // TODO: does the 16 mean 16-byte aligned? Does this have to be the case for this?
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
+            let data_address = state.pop1();
 
             let signed_data_address = builder.ins().sign_pointer(data_address);
 
@@ -2436,15 +2432,11 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // - signed_data_address: the signed pointer that now contains the PAC
             state.push1(signed_data_address);
         }
-        Operator::I64PointerAuth { memarg } => {
+        Operator::I64PointerAuth => {
             // Parameters (saved in state, which is an emulated stack):
             // - data_address: the pointer that we want to authenticate
 
-            let (_, data_address) = unwrap_or_return_unreachable_state!(
-                state,
-                // TODO: does the 16 mean 16-byte aligned? Does this have to be the case for this?
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
+            let data_address = state.pop1();
 
             let authenticated_data_address = builder.ins().auth_pointer(data_address);
 
