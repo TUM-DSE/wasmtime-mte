@@ -406,12 +406,12 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_use(rt);
             memarg_operands(mem, collector);
         }
-        &Inst::Pacdza { rd, rn, .. } => {
+        &Inst::Pacdza { rd, rn } => {
             collector.reg_use(rn);
             // Make sure rd and rn end up in same physical register (rd)
             collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
         }
-        &Inst::Autdza { rd, rn, .. } => {
+        &Inst::Autdza { rd, rn } => {
             collector.reg_use(rn);
             // Make sure rd and rn end up in same physical register (rd)
             collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
