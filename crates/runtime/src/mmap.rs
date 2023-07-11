@@ -329,12 +329,16 @@ impl Mmap {
         const PR_MTE_TAG_SHIFT: i32 = 3;
 
         unsafe {
+            // We want to exlcude tags 0b0000 (tag for freed memory) and 0b0001 (tag for custom uninitialized memory)
+            // This bit mask represents all included tags
+            let included_tags: u64 = 0b1111_1111_1111_1100;
+
             if libc::prctl(
                 PR_SET_TAGGED_ADDR_CTRL,
                 PR_TAGGED_ADDR_ENABLE
                         | PR_MTE_TCF_SYNC
                         // | PR_MTE_TCF_ASYNC
-                        | (0xfffeu64 << PR_MTE_TAG_SHIFT),
+                        | (included_tags << PR_MTE_TAG_SHIFT),
                 0,
                 0,
                 0,

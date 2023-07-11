@@ -465,6 +465,9 @@ impl FuncTranslationState {
         index: u32,
         environ: &mut FE,
     ) -> WasmResult<Heap> {
+        // TODO: tag the heap here with mte
+
+        // TODO: index has to be tagged with stg (inline assembly)
         let index = MemoryIndex::from_u32(index);
         match self.memory_to_heap.entry(index) {
             Occupied(entry) => Ok(*entry.get()),

@@ -2365,9 +2365,9 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // base_ptr:  pointer to the memory that should be freed by tagging it
             // size:      size of the memory (in bytes) that should be freed
 
-            // MTE tag is stored in bits 56-59
-            let special_free_tag: i64 = 0b0000;
+            let special_free_tag: i64 = 0b0001;
             let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+            // MTE tag is stored in bits 56-59
             let special_free_tag_mask = (special_free_tag << 56) | tag_mask;
 
             let size = state.pop1();
@@ -2585,6 +2585,7 @@ fn prepare_addr<FE>(
 where
     FE: FuncEnvironment + ?Sized,
 {
+    // TODO: if index has tag (meaning something else was allocated there by the user), then replace the default heap tag with this index tag
     let index = state.pop1();
     let heap = state.get_heap(builder.func, memarg.memory, environ)?;
 

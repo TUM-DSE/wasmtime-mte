@@ -55,6 +55,7 @@ where
         &mut builder.cursor(),
     );
 
+    // TODO: this has to be removed, since we specifically **want** the mte bits to stay so we can use mte for bounds checks
     // TODO: need to check if this code works
     // if this a tagged addr, we need to mask out the tag for bounds checks
     let index = if env.target_config().has_mte {
@@ -67,6 +68,9 @@ where
 
     let offset_and_size = offset_plus_size(offset, access_size);
     let spectre_mitigations_enabled = env.heap_access_spectre_mitigation();
+
+    // TODO: remove explizit bounds checks => our mte solution will trap if we access out of bounds of the linear memory
+    // TODO: optimization: at compile time, we don't need inline assembly
 
     // We need to emit code that will trap (or compute an address that will trap
     // when accessed) if

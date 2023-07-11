@@ -8,6 +8,7 @@ use crate::vmcontext::VMMemoryDefinition;
 use crate::{MemoryImage, MemoryImageSlot, Store, WaitResult};
 use anyhow::Error;
 use anyhow::{bail, format_err, Result};
+use std::arch::asm;
 use std::convert::TryFrom;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -121,8 +122,22 @@ pub trait RuntimeLinearMemory: Send + Sync {
             }
         }
 
+        fn tag_memory_region_runtime(base_addr: u64, size_to_tag: u64) {
+            let default_uninitialized_tag = 1;
+            for i in (0..size_to_tag).step_by(32) {
+                unsafe {
+                    asm!("st2g {tag}, {addr}", tag = in(reg) default_uninitialized_tag, addr = in(reg) base_addr+i);
+                }
+            }
+        }
+        // TODO: before growing the memory, we have to untag it (tag with 0, the free tag)
+
+        // TODO: problem: if growing fails, then we shoudln't have untagged entire memory...
         match self.grow_to(new_byte_size) {
-            Ok(_) => Ok(Some((old_byte_size, new_byte_size))),
+            Ok(_) => {
+                // TODO: after growing the memory, we have to tag the entire new memory
+                Ok(Some((old_byte_size, new_byte_size)))
+            }
             Err(e) => {
                 // FIXME: shared memories may not have an associated store to
                 // report the growth failure to but the error should not be
