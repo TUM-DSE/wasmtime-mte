@@ -78,7 +78,7 @@ unsafe extern "system" fn exception_handler(exception_info: *mut EXCEPTION_POINT
         } else if jmp_buf as usize == 1 {
             ExceptionContinueExecution
         } else {
-            info.set_jit_trap(ip, fp, faulting_addr);
+            info.set_jit_trap(ip, fp, faulting_addr.into());
             wasmtime_longjmp(jmp_buf)
         }
     })

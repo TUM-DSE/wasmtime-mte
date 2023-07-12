@@ -1,4 +1,4 @@
-use crate::traphandlers::{tls, wasmtime_longjmp};
+use crate::traphandlers::{tls, wasmtime_longjmp, FaultMetadata};
 use std::cell::RefCell;
 use std::io;
 use std::mem::{self, MaybeUninit};
@@ -105,7 +105,25 @@ unsafe extern "C" fn trap_handler(
             libc::SIGSEGV | libc::SIGBUS => Some((*siginfo).si_addr() as usize),
             _ => None,
         };
-        info.set_jit_trap(pc, fp, faulting_addr);
+
+        // MTE codes taken from:
+        // - https://source.android.com/docs/security/test/memory-safety/mte-reports
+        // - linux/include/uapi/asm-generic/siginfo.h
+        const SEGV_MTESERR: i32 = 9; // synchronous mode
+        const SEGV_MTEAERR: i32 = 8; // asynchronous mode
+
+        // MTE trap handling according to: https://www.kernel.org/doc/html/v5.12/arm64/memory-tagging-extension.html#tag-check-faults
+        let is_mte_fault = match (signum, (*siginfo).si_code) {
+            (libc::SIGSEGV, si_code) if si_code == SEGV_MTESERR || si_code == SEGV_MTEAERR => true,
+            _ => false,
+        };
+
+        let fault_metadata = FaultMetadata {
+            faulting_addr,
+            is_mte_fault,
+        };
+
+        info.set_jit_trap(pc, fp, fault_metadata);
         // On macOS this is a bit special, unfortunately. If we were to
         // `siglongjmp` out of the signal handler that notably does
         // *not* reset the sigaltstack state of our signal handler. This
