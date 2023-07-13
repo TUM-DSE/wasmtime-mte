@@ -2365,10 +2365,12 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // base_ptr:  pointer to the memory that should be freed by tagging it
             // size:      size of the memory (in bytes) that should be freed
 
+            // TODO: get constant from other crate, use that instead
+            // let special_free_tag = MTE_LINEAR_MEMORY_FREE_TAG;
             let special_free_tag: i64 = 0b0001;
             let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
             // MTE tag is stored in bits 56-59
-            let special_free_tag_mask = (special_free_tag << 56) | tag_mask;
+            let special_free_tag_mask = special_free_tag << 56;
 
             let size = state.pop1();
 
@@ -2381,7 +2383,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let base_ptr = builder.ins().band_imm(base_ptr, tag_mask);
 
             // set new special free tag in base_ptr
-            let tagged_ptr: Value = builder.ins().band_imm(base_ptr, special_free_tag_mask);
+            let tagged_ptr: Value = builder.ins().bor_imm(base_ptr, special_free_tag_mask);
 
             tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
         }
