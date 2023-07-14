@@ -55,6 +55,39 @@ where
         &mut builder.cursor(),
     );
 
+    // Pseudo code generation:
+    //
+    // let current_index_addr_tag = index_add & 0x0F00_0000_0000_0000
+    // if (current_index_addr_tag != 0x0000_0000_0000_0000 && current_index_addr_tag != 0x0100_0000_0000_0000) {
+    //   let index_addr = index_addr & 0xF0FF_FFFF_FFFF_FFFF
+    //   let index_addr = index_addr | (MTE_LINEAR_MEMORY_FREE_TAG << 56)
+    // }
+
+    /*
+    const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
+    const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+
+    // MTE tag is stored in bits 56-59
+    let mte_tag_bits_mask_including: i64 = 0x0F00_0000_0000_0000;
+    let mte_tag_bits_mask_excluding: i64 = 0xF0FF_FFFF_FFFF_FFFF;
+    // Get currently set tag of the index
+    // let current_index_tag = ((index & mte_tag_bits_mask_including) >> 56) as u8;
+    let current_index_tag = builder
+        .ins()
+        .band_imm(index_addr, mte_tag_bits_mask_excluding);
+
+    // If currently untagged, tag with the linear memory free tag
+    let index = if current_index_tag == MTE_DEFAULT_FREE_TAG {
+        // Remove existing tag in index
+        let index = index & mte_tag_bits_mask_excluding;
+        // Set linear memory free tag in index
+        index | ((MTE_LINEAR_MEMORY_FREE_TAG as i64) << 56)
+    } else {
+        index
+    };
+    */
+
+    // TODO: is this where i have to insert the func i desribed
     // TODO: this has to be removed, since we specifically **want** the mte bits to stay so we can use mte for bounds checks
     // TODO: need to check if this code works
     // if this a tagged addr, we need to mask out the tag for bounds checks
@@ -69,7 +102,7 @@ where
     let offset_and_size = offset_plus_size(offset, access_size);
     let spectre_mitigations_enabled = env.heap_access_spectre_mitigation();
 
-    // TODO: remove explizit bounds checks => our mte solution will trap if we access out of bounds of the linear memory
+    // TODO: remove explicit bounds checks => our mte solution will trap if we access out of bounds of the linear memory
     // TODO: optimization: at compile time, we don't need inline assembly
 
     // We need to emit code that will trap (or compute an address that will trap
