@@ -242,31 +242,37 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
         let pos = reader.original_position();
         builder.set_srcloc(cur_srcloc(&reader));
 
-        // Code duplication is necessary because I cannot figure out how to make the borrow checker happy
-        if let Some(replacement) = environ.inst_replacement(pos) {
-            reader.skip(|r| {
-                for _ in 0..replacement.num_drops {
-                    let op = r.read_operator()?;
-                    if !matches!(op, Operator::Drop) {
-                        panic!("expected drop, got {:?}", op);
-                    }
-                }
-                Ok(())
-            })?;
-
-            let mut reader = BinaryReader::new(&replacement.inst);
-            let op = reader.read_operator()?;
-            validator.op(pos, &op)?;
-            environ.before_translate_operator(&op, builder, state)?;
-            translate_operator(validator, &op, builder, state, environ)?;
-            environ.after_translate_operator(&op, builder, state)?;
-        } else {
-            let op = reader.read_operator()?;
-            validator.op(pos, &op)?;
-            environ.before_translate_operator(&op, builder, state)?;
-            translate_operator(validator, &op, builder, state, environ)?;
-            environ.after_translate_operator(&op, builder, state)?;
+        // // Code duplication is necessary because I cannot figure out how to make the borrow checker happy
+        // if let Some(replacement) = environ.inst_replacement(inst_index) {
+        //     reader.skip(|r| {
+        //         for _ in 0..replacement.num_drops {
+        //             let op = r.read_operator()?;
+        //             if !matches!(op, Operator::Drop) {
+        //                 panic!("expected drop, got {:?}", op);
+        //             }
+        //         }
+        //         Ok(())
+        //     })?;
+        //
+        //     let mut reader = BinaryReader::new(&replacement.inst);
+        //     let op = reader.read_operator()?;
+        //     validator.op(pos, &op)?;
+        //     environ.before_translate_operator(&op, builder, state)?;
+        //     translate_operator(validator, &op, builder, state, environ)?;
+        //     environ.after_translate_operator(&op, builder, state)?;
+        // } else {
+        // }
+        //
+        let op = reader.read_operator()?;
+        if reader.range().start == 0x1f8 {
+            if let Operator::Drop = op {
+                eprintln!("drop at pos: range: {:x?} 0x{:x} 0x{:x}", reader.range(), pos, reader.range().start + pos);
+            }
         }
+        validator.op(pos, &op)?;
+        environ.before_translate_operator(&op, builder, state)?;
+        translate_operator(validator, &op, builder, state, environ)?;
+        environ.after_translate_operator(&op, builder, state)?;
     }
     environ.after_translate_function(builder, state)?;
     let pos = reader.original_position();

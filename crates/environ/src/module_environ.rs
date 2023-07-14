@@ -187,8 +187,13 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
     ) -> WasmResult<ModuleTranslation<'data>> {
         self.result.wasm = data;
 
+        eprintln!("wasm size: {}", data.len());
+
         for payload in parser.parse_all(data) {
-            self.translate_payload(payload?)?;
+            // let range = payload?.as_section()?.1;
+            // TODO: here we need to count the data
+            let payload = payload?;
+            self.translate_payload(payload)?;
         }
 
         Ok(self.result)
@@ -651,12 +656,11 @@ and for re-adding support for interface types you can see this issue:
                 ))
             }
 
-            Payload::CustomSection(s) if s.name() == "mem-safety" => {
+            Payload::CustomSection(s) if s.name() == "pcsections.mem-safety" => {
                 self.result
                     .instr_replacements
-                    .extend(self.validator.memory_safety_section(&s)?);
+                    .extend(self.validator.memory_safety_section(&s, s.range().start)?);
             }
-
             Payload::CustomSection(s) => {
                 self.register_dwarf_section(&s);
             }

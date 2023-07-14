@@ -5,8 +5,7 @@
         (local $ptr i64)
         (i64.const 0)
         (i64.const 16)
-        drop
-        ;;(segment.stack_new)
+        (segment.stack_new)
         (local.tee $ptr)
         (i32.const 42)
         (i32.store)

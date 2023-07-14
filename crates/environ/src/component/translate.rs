@@ -337,16 +337,18 @@ impl<'a, 'data> Translator<'a, 'data> {
         // translation process. When doing this only a `Translation` is created
         // which is a simple representation of a component.
         let mut remaining = component;
+        let mut offset = 0;
         loop {
             let payload = match self.parser.parse(remaining, true)? {
                 Chunk::Parsed { payload, consumed } => {
                     remaining = &remaining[consumed..];
+                    offset += consumed;
                     payload
                 }
                 Chunk::NeedMoreData(_) => unreachable!(),
             };
 
-            match self.translate_payload(payload, component)? {
+            match self.translate_payload(payload, component, offset)? {
                 Action::KeepGoing => {}
                 Action::Skip(n) => remaining = &remaining[n..],
                 Action::Done => break,
@@ -379,6 +381,7 @@ impl<'a, 'data> Translator<'a, 'data> {
         &mut self,
         payload: Payload<'data>,
         component: &'data [u8],
+        offset: usize,
     ) -> Result<Action> {
         match payload {
             Payload::Version {
@@ -695,8 +698,8 @@ impl<'a, 'data> Translator<'a, 'data> {
             // FIXME(WebAssembly/component-model#14): probably want to specify
             // and parse a `name` section here.
             Payload::CustomSection { 0: reader } => {
-                if reader.name() == "memory_safety" {
-                    self.validator.memory_safety_section(&reader)?;
+                if reader.name() == "pcsections.mem-safety" {
+                    self.validator.memory_safety_section(&reader, offset)?;
                 }
             }
 
