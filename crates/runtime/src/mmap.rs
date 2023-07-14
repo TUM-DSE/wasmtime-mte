@@ -3,6 +3,7 @@
 
 use anyhow::anyhow;
 use anyhow::{Context, Result};
+use rustix::mm;
 use std::arch::asm;
 use std::convert::TryFrom;
 use std::fs::File;
@@ -25,51 +26,7 @@ pub struct Mmap {
     file: Option<Arc<File>>,
 }
 
-// TODO: consider adding own custom mte file that contains this stuff
-pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
-
-fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
-    let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-    // MTE tag is stored in bits 56-59
-    let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
-    // Remove existing tag in base_addr
-    let base_addr = base_addr & mte_tag_bits_mask;
-    // Set custom tag in base_addr
-    let tagged_ptr = base_addr | custom_tag_mask;
-
-    for i in (0..size_to_tag).step_by(32) {
-        // TODO: proper error handling
-        let i: i64 = i.try_into().unwrap();
-        unsafe {
-            // If `st2g` instruction is not supported, it would just be replaced by `nop`
-            asm!("st2g {tag}, {addr}", tag = in(reg) tagged_ptr, addr = in(reg) base_addr+i);
-        }
-    }
-}
-
 impl Mmap {
-    /// Tag the entire memory.
-    pub fn tag_everything(&self) {
-        tag_memory_region(
-            self.ptr.try_into().unwrap(),
-            MTE_LINEAR_MEMORY_FREE_TAG,
-            self.len,
-        );
-    }
-
-    /// Untag the entire memory.
-    pub fn untag_everything(&self) {
-        tag_memory_region(self.ptr.try_into().unwrap(), MTE_DEFAULT_FREE_TAG, self.len);
-    }
-
-    /// Helper for creating a new `Mmap` instance that is tagged directly.
-    pub fn new_tagged(ptr: usize, len: usize, file: Option<Arc<File>>) -> Self {
-        let mmap = Self { ptr, len, file };
-        mmap.tag_everything();
-        mmap
-    }
-
     /// Construct a new empty instance of `Mmap`.
     pub fn new() -> Self {
         // Rust's slices require non-null pointers, even when empty. `Vec`
@@ -122,19 +79,18 @@ impl Mmap {
             };
 
             // TODO:
-            // Ok(Self {
-            //     ptr: ptr as usize,
-            //     len,
-            //     file: Some(Arc::new(file)),
-            // })
-            let mmap = Self {
+            Ok(Self {
                 ptr: ptr as usize,
                 len,
                 file: Some(Arc::new(file)),
-            };
-            mmap.tag_everything();
-            Ok(mmap)
-            // Ok(Self::new_tagged(ptr as usize, len, Some(Arc::new(file))))
+            })
+            // let mmap = Self {
+            //     ptr: ptr as usize,
+            //     len,
+            //     file: Some(Arc::new(file)),
+            // };
+            // mmap.tag_everything();
+            // Ok(mmap)
         }
 
         #[cfg(windows)]
@@ -248,19 +204,18 @@ impl Mmap {
             };
 
             // TODO:
-            // Self {
-            //     ptr: ptr as usize,
-            //     len: mapping_size,
-            //     file: None,
-            // }
-            let mmap = Self {
+            Self {
                 ptr: ptr as usize,
                 len: mapping_size,
                 file: None,
-            };
-            mmap.tag_everything();
-            mmap
-            // Self::new_tagged(ptr as usize, mapping_size, None)
+            }
+            // let mmap = Self {
+            //     ptr: ptr as usize,
+            //     len: mapping_size,
+            //     file: None,
+            // };
+            // mmap.tag_everything();
+            // mmap
         } else {
             // Reserve the mapping size.
             let ptr = unsafe {
@@ -284,7 +239,8 @@ impl Mmap {
                 result.make_accessible(0, accessible_size)?;
             }
 
-            result.tag_everything();
+            // TODO
+            // result.tag_everything();
             result
         })
     }
@@ -349,8 +305,6 @@ impl Mmap {
         })
     }
 
-    // TODO: do i have to add tagging here as well?
-
     /// Make the memory starting at `start` and extending for `len` bytes accessible.
     /// `start` and `len` must be native page-size multiples and describe a range within
     /// `self`'s reserved memory.
@@ -378,8 +332,6 @@ impl Mmap {
 
         Ok(())
     }
-
-    // TODO: do i have to add tagging here as well?
 
     /// Make memory accessible while enabling mte
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
@@ -624,7 +576,8 @@ impl Drop for Mmap {
     #[cfg(not(target_os = "windows"))]
     fn drop(&mut self) {
         if self.len != 0 {
-            self.untag_everything();
+            // TODO
+            // self.untag_everything();
             unsafe { rustix::mm::munmap(self.ptr as *mut std::ffi::c_void, self.len) }
                 .expect("munmap failed");
         }
@@ -650,4 +603,166 @@ impl Drop for Mmap {
 fn _assert() {
     fn _assert_send_sync<T: Send + Sync>() {}
     _assert_send_sync::<Mmap>();
+}
+
+// TODO: consider adding own custom mte file that contains this stuff
+pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
+pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+
+/// Memory tagging is only possible on (a subset of) aarch64 linux
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
+    let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+    // MTE tag is stored in bits 56-59
+    let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
+    // Remove existing tag in base_addr
+    let base_addr = base_addr & mte_tag_bits_mask;
+    // Set custom tag in base_addr
+    let tagged_ptr = base_addr | custom_tag_mask;
+
+    for i in (0..size_to_tag).step_by(32) {
+        // TODO: proper error handling
+        let i: i64 = i.try_into().unwrap();
+        unsafe {
+            // If `st2g` instruction is not supported, it would just be replaced by `nop`
+            asm!("st2g {tag}, {addr}", tag = in(reg) tagged_ptr, addr = in(reg) base_addr+i);
+        }
+    }
+}
+
+/// Memory tagging is only possible on (a subset of) aarch64 linux
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
+
+/// A wrapper around Mmap that is meant to be used as the low-level
+/// implementation of Linear Memory. What it adds compared to Mmap itself is
+/// tagging (and untagging) the entire Linear Memory, in order to avoid bounds
+/// checks at runtime.
+pub struct TaggedMmap {
+    mmap: Mmap,
+}
+
+impl From<Mmap> for TaggedMmap {
+    fn from(mmap: Mmap) -> Self {
+        let tagged_mmap = Self { mmap };
+        tagged_mmap.tag_everything();
+        tagged_mmap
+    }
+}
+
+impl TaggedMmap {
+    /// Tag the entire memory.
+    fn tag_everything(&self) {
+        tag_memory_region(
+            self.mmap.ptr.try_into().unwrap(),
+            MTE_LINEAR_MEMORY_FREE_TAG,
+            self.mmap.len,
+        );
+    }
+
+    /// Untag the entire memory.
+    fn untag_everything(&self) {
+        tag_memory_region(
+            self.mmap.ptr.try_into().unwrap(),
+            MTE_DEFAULT_FREE_TAG,
+            self.mmap.len,
+        );
+    }
+
+    /// Construct a new empty instance of `Mmap`.
+    pub fn new() -> Self {
+        Mmap::new().into()
+    }
+
+    /// Create a new `Mmap` pointing to at least `size` bytes of page-aligned accessible memory.
+    pub fn with_at_least(size: usize) -> Result<Self> {
+        Ok(Mmap::with_at_least(size)?.into())
+    }
+
+    /// Creates a new `Mmap` by opening the file located at `path` and mapping
+    /// it into memory.
+    ///
+    /// The memory is mapped in read-only mode for the entire file. If portions
+    /// of the file need to be modified then the `region` crate can be use to
+    /// alter permissions of each page.
+    ///
+    /// The memory mapping and the length of the file within the mapping are
+    /// returned.
+    pub fn from_file(path: &Path) -> Result<Self> {
+        Ok(Mmap::from_file(path)?.into())
+    }
+
+    /// Create a new `Mmap` pointing to `accessible_size` bytes of page-aligned accessible memory,
+    /// within a reserved mapping of `mapping_size` bytes. `accessible_size` and `mapping_size`
+    /// must be native page-size multiples.
+    pub fn accessible_reserved(accessible_size: usize, mapping_size: usize) -> Result<Self> {
+        Ok(Mmap::accessible_reserved(accessible_size, mapping_size)?.into())
+    }
+
+    /// Make the memory starting at `start` and extending for `len` bytes accessible.
+    /// `start` and `len` must be native page-size multiples and describe a range within
+    /// `self`'s reserved memory.
+    pub fn make_accessible(&mut self, start: usize, len: usize) -> Result<()> {
+        // TODO: do i have to add tagging here as well?
+        // We don't have to tag here, since we already tagged this part before, because this doesn't create/request from OS "new" memory.
+        self.mmap.make_accessible(start, len)
+    }
+
+    /// Return the allocated memory as a slice of u8.
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.mmap.ptr as *const u8, self.mmap.len) }
+    }
+
+    /// Return the allocated memory as a mutable slice of u8.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.mmap.ptr as *mut u8, self.mmap.len) }
+    }
+
+    /// Return the allocated memory as a pointer to u8.
+    pub fn as_ptr(&self) -> *const u8 {
+        self.mmap.ptr as *const u8
+    }
+
+    /// Return the allocated memory as a mutable pointer to u8.
+    pub fn as_mut_ptr(&self) -> *mut u8 {
+        self.mmap.ptr as *mut u8
+    }
+
+    /// Return the length of the allocated memory.
+    pub fn len(&self) -> usize {
+        self.mmap.len
+    }
+
+    /// Return whether any memory has been allocated.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Makes the specified `range` within this `Mmap` to be read/execute.
+    pub unsafe fn make_executable(
+        &self,
+        range: Range<usize>,
+        enable_branch_protection: bool,
+    ) -> Result<()> {
+        // TODO: do we need to change anything here?
+        self.mmap.make_executable(range, enable_branch_protection)
+    }
+
+    /// Makes the specified `range` within this `Mmap` to be readonly.
+    pub unsafe fn make_readonly(&self, range: Range<usize>) -> Result<()> {
+        // TODO: do we need to change anything here?
+        self.mmap.make_readonly(range)
+    }
+
+    /// Returns the underlying file that this mmap is mapping, if present.
+    pub fn original_file(&self) -> Option<&Arc<File>> {
+        self.mmap.file.as_ref()
+    }
+}
+
+impl Drop for TaggedMmap {
+    fn drop(&mut self) {
+        self.untag_everything();
+        // Will automatically call the Mmap drop destructor now.
+    }
 }
