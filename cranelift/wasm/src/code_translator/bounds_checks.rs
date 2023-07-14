@@ -20,12 +20,15 @@
 //! !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 use super::Reachability;
-use crate::{FuncEnvironment, HeapData, HeapStyle};
+use crate::{
+    block_with_params, code_translator::canonicalise_brif, FuncEnvironment, HeapData, HeapStyle,
+};
 use cranelift_codegen::{
     cursor::{Cursor, FuncCursor},
     ir::{self, condcodes::IntCC, InstBuilder, RelSourceLoc},
 };
 use cranelift_frontend::FunctionBuilder;
+use wasmparser::ValType;
 use wasmtime_types::WasmResult;
 use Reachability::*;
 
@@ -55,49 +58,34 @@ where
         &mut builder.cursor(),
     );
 
-    // Pseudo code generation:
-    //
-    // let current_index_addr_tag = index_add & 0x0F00_0000_0000_0000
-    // if (current_index_addr_tag != 0x0000_0000_0000_0000 && current_index_addr_tag != 0x0100_0000_0000_0000) {
-    //   let index_addr = index_addr & 0xF0FF_FFFF_FFFF_FFFF
-    //   let index_addr = index_addr | (MTE_LINEAR_MEMORY_FREE_TAG << 56)
-    // }
+    // When MTE is enabled, we use MTE itself for bounds checking, so we
+    // can skip traditional bounds checking and return early.
+    // This also means an out-of-bounds access will only be recognized
+    // when the address is actually used.
+    if env.target_config().has_mte {
+        return Ok(Reachable(compute_addr(
+            &mut builder.cursor(),
+            heap,
+            env.pointer_type(),
+            index_addr,
+            offset,
+            builder,
+            env,
+        )?));
+    }
 
-    /*
-    const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-    const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+    // TODO: remove, should be unnecessary
 
-    // MTE tag is stored in bits 56-59
-    let mte_tag_bits_mask_including: i64 = 0x0F00_0000_0000_0000;
-    let mte_tag_bits_mask_excluding: i64 = 0xF0FF_FFFF_FFFF_FFFF;
-    // Get currently set tag of the index
-    // let current_index_tag = ((index & mte_tag_bits_mask_including) >> 56) as u8;
-    let current_index_tag = builder
-        .ins()
-        .band_imm(index_addr, mte_tag_bits_mask_excluding);
-
-    // If currently untagged, tag with the linear memory free tag
-    let index = if current_index_tag == MTE_DEFAULT_FREE_TAG {
-        // Remove existing tag in index
-        let index = index & mte_tag_bits_mask_excluding;
-        // Set linear memory free tag in index
-        index | ((MTE_LINEAR_MEMORY_FREE_TAG as i64) << 56)
-    } else {
-        index
-    };
-    */
-
-    // TODO: is this where i have to insert the func i desribed
-    // TODO: this has to be removed, since we specifically **want** the mte bits to stay so we can use mte for bounds checks
     // TODO: need to check if this code works
     // if this a tagged addr, we need to mask out the tag for bounds checks
-    let index = if env.target_config().has_mte {
-        builder
-            .ins()
-            .band_imm(index_addr, 0xF0FF_FFFF_FFFF_FFFFu64 as i64)
-    } else {
-        index_addr
-    };
+    // let index = if env.target_config().has_mte {
+    //     builder
+    //         .ins()
+    //         .band_imm(index_addr, 0xF0FF_FFFF_FFFF_FFFFu64 as i64)
+    // } else {
+    //     index_addr
+    // };
+    let index = index_addr;
 
     let offset_and_size = offset_plus_size(offset, access_size);
     let spectre_mitigations_enabled = env.heap_access_spectre_mitigation();
@@ -144,7 +132,9 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-            ))
+                builder,
+                env,
+            )?)
         }
 
         // 2. Second special case for when we know that there are enough guard
@@ -183,7 +173,9 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-            ))
+                builder,
+                env,
+            )?)
         }
 
         // 3. Third special case for when `offset + access_size <= min_size`.
@@ -207,7 +199,9 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-            ))
+                builder,
+                env,
+            )?)
         }
 
         // 4. General case for dynamic memories:
@@ -236,7 +230,9 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-            ))
+                builder,
+                env,
+            )?)
         }
 
         // ====== Static Memories ======
@@ -302,7 +298,9 @@ where
                 env.pointer_type(),
                 index_addr,
                 offset,
-            ))
+                builder,
+                env,
+            )?)
         }
 
         // 3. General case for static memories.
@@ -332,7 +330,9 @@ where
                 offset,
                 spectre_mitigations_enabled,
                 oob,
-            ))
+                builder,
+                env,
+            )?)
         }
     })
 }
@@ -372,7 +372,7 @@ fn cast_index_to_pointer_ty(
 ///
 /// This function deduplicates explicit bounds checks and Spectre mitigations
 /// that inherently also implement bounds checking.
-fn explicit_check_oob_condition_and_compute_addr(
+fn explicit_check_oob_condition_and_compute_addr<Env>(
     pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
@@ -384,20 +384,25 @@ fn explicit_check_oob_condition_and_compute_addr(
     // bounds (and therefore we should trap) and is zero when the heap access is
     // in bounds (and therefore we can proceed).
     oob_condition: ir::Value,
-) -> ir::Value {
+    builder: &mut FunctionBuilder,
+    env: &mut Env,
+) -> WasmResult<ir::Value>
+where
+    Env: FuncEnvironment + ?Sized,
+{
     if !spectre_mitigations_enabled {
         pos.ins()
             .trapnz(oob_condition, ir::TrapCode::HeapOutOfBounds);
     }
 
-    let mut addr = compute_addr(pos, heap, addr_ty, index, offset);
+    let mut addr = compute_addr(pos, heap, addr_ty, index, offset, builder, env)?;
 
     if spectre_mitigations_enabled {
         let null = pos.ins().iconst(addr_ty, 0);
         addr = pos.ins().select_spectre_guard(oob_condition, null, addr);
     }
 
-    addr
+    Ok(addr)
 }
 
 /// Emit code for the native address computation of a Wasm address,
@@ -406,18 +411,80 @@ fn explicit_check_oob_condition_and_compute_addr(
 /// It is the caller's responsibility to ensure that any necessary bounds and
 /// overflow checks are emitted, and that the resulting address is never used
 /// unless they succeed.
-fn compute_addr(
+fn compute_addr<Env>(
     pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
     index: ir::Value,
     offset: u32,
-) -> ir::Value {
+    builder: &mut FunctionBuilder,
+    env: &mut Env,
+) -> WasmResult<ir::Value>
+where
+    Env: FuncEnvironment + ?Sized,
+{
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
+    // TODO: we could also slightly change the design, and just expect that heap_base was never tagged with 1 before (always has tag 0), and tag here. So if (index_tag == 0) index_tag = 1
+
+    // We expect that the heap base address has already been tagged with the
+    // MTE_LINEAR_MEMORY_FREE_TAG before this point.
+    // If the index has already been tagged (by e.g. segment_* instructions),
+    // then we have to remove the tag stored in the heap base address.
+    // Otherwise, both "addresses" (index technically is not an address, but
+    // we still treat it as such when tagging) would have tags, leading to
+    // arithmetic errors during the addition.
+
+    let tag_bits_inclusive_mask: i64 = 0x0F00_0000_0000_0000;
+    let tag_bits_exclusive_mask: i64 = 0xF0FF_FFFF_FFFF_FFFF;
+
     let heap_base = pos.ins().global_value(addr_ty, heap.base);
+
+    // Pseudo code:
+    //
+    // let heap_base = if (index_tag != 0) {
+    //     // Remove tag from heap_base
+    //     let heap_base = heap_base & tag_bits_exclusive;
+    // } else {
+    //     heap_base
+    // }
+    // ...
+
+    let index_is_tagged_block = block_with_params(builder, [], env)?;
+    // Parameters: [heap_base]
+    let common_block = block_with_params(builder, [ValType::I64], env)?;
+
+    // Check if index is tagged
+    let index_tag = pos.ins().band_imm(index, tag_bits_inclusive_mask);
+    let cond = builder
+        .ins()
+        .icmp_imm(IntCC::NotEqual, index_tag, 0x0000_0000_0000_0000);
+    canonicalise_brif(
+        builder,
+        cond,
+        index_is_tagged_block,
+        &[],
+        common_block,
+        &[heap_base],
+    );
+
+    // === Index is tagged block
+    builder.switch_to_block(index_is_tagged_block);
+
+    // Remove the tag stored in heap base.
+    let heap_base = pos.ins().band_imm(index, tag_bits_exclusive_mask);
+
+    builder.ins().jump(common_block, &[heap_base]);
+
+    builder.seal_block(index_is_tagged_block);
+
+    // === Common block
+    builder.switch_to_block(common_block);
+
+    let heap_base = builder.block_params(common_block)[0];
+
     let base_and_index = pos.ins().iadd(heap_base, index);
-    if offset == 0 {
+    let base_and_index = if offset == 0 {
         base_and_index
     } else {
         // NB: The addition of the offset immediate must happen *before* the
@@ -425,7 +492,11 @@ fn compute_addr(
         // potentially are letting speculative execution read the whole first
         // 4GiB of memory.
         pos.ins().iadd_imm(base_and_index, offset as i64)
-    }
+    };
+
+    builder.seal_block(common_block);
+
+    Ok(base_and_index)
 }
 
 #[inline]

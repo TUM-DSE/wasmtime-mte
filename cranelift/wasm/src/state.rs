@@ -465,6 +465,7 @@ impl FuncTranslationState {
         index: u32,
         environ: &mut FE,
     ) -> WasmResult<Heap> {
+        // TODO: heap is the index we want to tag
         const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
         const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 

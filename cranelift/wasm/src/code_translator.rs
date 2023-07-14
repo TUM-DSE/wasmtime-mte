@@ -2587,6 +2587,7 @@ fn prepare_addr<FE>(
 where
     FE: FuncEnvironment + ?Sized,
 {
+    // TODO: work here should not be necessary, since we do this in bounds_checks.rs in compute_addr
     // TODO: if index has tag (meaning something else was allocated there by the user), then replace the default heap tag with this index tag
     let index = state.pop1();
     let heap = state.get_heap(builder.func, memarg.memory, environ)?;

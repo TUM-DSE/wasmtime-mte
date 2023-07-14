@@ -123,21 +123,21 @@ pub trait RuntimeLinearMemory: Send + Sync {
         }
 
         // TODO: before growing the memory, we have to untag it (tag with 0, the free tag)
-        fn tag_memory_region_runtime(base_addr: i64, custom_tag: i64, size_to_tag: i64) {
-            let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-            // MTE tag is stored in bits 56-59
-            let custom_tag_mask = custom_tag << 56;
-            // Remove existing tag in base_addr
-            let base_addr = base_addr & mte_tag_bits_mask;
-            // Set custom tag in base_addr
-            let tagged_ptr = base_addr | custom_tag_mask;
+        // fn tag_memory_region_runtime(base_addr: i64, custom_tag: i64, size_to_tag: i64) {
+        //     let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+        //     // MTE tag is stored in bits 56-59
+        //     let custom_tag_mask = custom_tag << 56;
+        //     // Remove existing tag in base_addr
+        //     let base_addr = base_addr & mte_tag_bits_mask;
+        //     // Set custom tag in base_addr
+        //     let tagged_ptr = base_addr | custom_tag_mask;
 
-            for i in (0..size_to_tag).step_by(32) {
-                unsafe {
-                    asm!("st2g {tag}, {addr}", tag = in(reg) tagged_ptr, addr = in(reg) base_addr+i);
-                }
-            }
-        }
+        //     for i in (0..size_to_tag).step_by(32) {
+        //         unsafe {
+        //             asm!("st2g {tag}, {addr}", tag = in(reg) tagged_ptr, addr = in(reg) base_addr+i);
+        //         }
+        //     }
+        // }
         // tag_memory_region_runtime(base_addr, 0b0001, new_byte_size.try_into()?);
 
         // TODO: problem: if growing fails, then we shoudln't have untagged entire memory in the first place

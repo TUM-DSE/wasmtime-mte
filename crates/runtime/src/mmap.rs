@@ -49,7 +49,8 @@ fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
 }
 
 impl Mmap {
-    fn tag_entire_linear_memory(&self) {
+    /// Tag the entire memory.
+    pub fn tag_everything(&self) {
         tag_memory_region(
             self.ptr.try_into().unwrap(),
             MTE_LINEAR_MEMORY_FREE_TAG,
@@ -57,13 +58,15 @@ impl Mmap {
         );
     }
 
-    fn untag_entire_linear_memory(&self) {
+    /// Untag the entire memory.
+    pub fn untag_everything(&self) {
         tag_memory_region(self.ptr.try_into().unwrap(), MTE_DEFAULT_FREE_TAG, self.len);
     }
 
-    fn new_tagged(ptr: usize, len: usize, file: Option<Arc<File>>) -> Self {
+    /// Helper for creating a new `Mmap` instance that is tagged directly.
+    pub fn new_tagged(ptr: usize, len: usize, file: Option<Arc<File>>) -> Self {
         let mmap = Self { ptr, len, file };
-        mmap.tag_entire_linear_memory();
+        mmap.tag_everything();
         mmap
     }
 
@@ -129,7 +132,7 @@ impl Mmap {
                 len,
                 file: Some(Arc::new(file)),
             };
-            mmap.tag_entire_linear_memory();
+            mmap.tag_everything();
             Ok(mmap)
             // Ok(Self::new_tagged(ptr as usize, len, Some(Arc::new(file))))
         }
@@ -255,7 +258,7 @@ impl Mmap {
                 len: mapping_size,
                 file: None,
             };
-            mmap.tag_entire_linear_memory();
+            mmap.tag_everything();
             mmap
             // Self::new_tagged(ptr as usize, mapping_size, None)
         } else {
@@ -281,7 +284,7 @@ impl Mmap {
                 result.make_accessible(0, accessible_size)?;
             }
 
-            result.tag_entire_linear_memory();
+            result.tag_everything();
             result
         })
     }
@@ -621,7 +624,7 @@ impl Drop for Mmap {
     #[cfg(not(target_os = "windows"))]
     fn drop(&mut self) {
         if self.len != 0 {
-            self.untag_entire_linear_memory();
+            self.untag_everything();
             unsafe { rustix::mm::munmap(self.ptr as *mut std::ffi::c_void, self.len) }
                 .expect("munmap failed");
         }
