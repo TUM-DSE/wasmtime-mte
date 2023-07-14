@@ -425,6 +425,7 @@ where
 {
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
+    // TODO: in case we use alternate design: we have to tag the heap_base here everytime, by following approach from todo below
     // TODO: we could also slightly change the design, and just expect that heap_base was never tagged with 1 before (always has tag 0), and tag here. So if (index_tag == 0) index_tag = 1
 
     // We expect that the heap base address has already been tagged with the

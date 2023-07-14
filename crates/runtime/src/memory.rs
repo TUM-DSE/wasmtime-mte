@@ -2,13 +2,12 @@
 //!
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
-use crate::mmap::Mmap;
+use crate::mmap::{Mmap, TaggedMmap};
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
 use crate::{MemoryImage, MemoryImageSlot, Store, WaitResult};
 use anyhow::Error;
 use anyhow::{bail, format_err, Result};
-use std::arch::asm;
 use std::convert::TryFrom;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -188,7 +187,9 @@ pub trait RuntimeLinearMemory: Send + Sync {
 #[derive(Debug)]
 pub struct MmapMemory {
     // The underlying allocation.
-    mmap: Mmap,
+    // TODO
+    // mmap: Mmap,
+    mmap: TaggedMmap,
 
     // The number of bytes that are accessible in `mmap` and available for
     // reading and writing.
@@ -255,7 +256,7 @@ impl MmapMemory {
             .and_then(|i| i.checked_add(extra_to_reserve_on_growth))
             .and_then(|i| i.checked_add(offset_guard_bytes))
             .ok_or_else(|| format_err!("cannot allocate {} with guard regions", minimum))?;
-        let mut mmap = Mmap::accessible_reserved(0, request_bytes)?;
+        let mut mmap = TaggedMmap::accessible_reserved(0, request_bytes)?;
 
         if minimum > 0 {
             mmap.make_accessible(pre_guard_bytes, minimum)?;
@@ -315,7 +316,7 @@ impl RuntimeLinearMemory for MmapMemory {
                 .and_then(|s| s.checked_add(self.offset_guard_size))
                 .ok_or_else(|| format_err!("overflow calculating size of memory allocation"))?;
 
-            let mut new_mmap = Mmap::accessible_reserved(0, request_bytes)?;
+            let mut new_mmap = TaggedMmap::accessible_reserved(0, request_bytes)?;
             new_mmap.make_accessible(self.pre_guard_size, new_size)?;
 
             new_mmap.as_mut_slice()[self.pre_guard_size..][..self.accessible]

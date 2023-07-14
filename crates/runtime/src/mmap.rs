@@ -638,6 +638,11 @@ fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
 /// implementation of Linear Memory. What it adds compared to Mmap itself is
 /// tagging (and untagging) the entire Linear Memory, in order to avoid bounds
 /// checks at runtime.
+/// Crucially, this does not tag the pointer/index that points into the linear
+/// memory, since we don't want to cause arithmetic exceptions in the
+/// forwarded method calls to the Mmap. Therefore, we expect that the `Mmap.ptr`
+/// is tagged anytime it is used/computed in `bounds_checks::compute_addr`.
+#[derive(Debug)]
 pub struct TaggedMmap {
     mmap: Mmap,
 }
