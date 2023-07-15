@@ -64,7 +64,7 @@ where
     // when the address is actually used.
     if env.target_config().has_mte {
         return Ok(Reachable(compute_addr(
-            &mut builder.cursor(),
+            // &mut builder.cursor(),
             heap,
             env.pointer_type(),
             index_addr,
@@ -125,7 +125,7 @@ where
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThanOrEqual, index, bound);
             Reachable(explicit_check_oob_condition_and_compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -166,7 +166,7 @@ where
             let bound = builder.ins().global_value(env.pointer_type(), bound_gv);
             let oob = builder.ins().icmp(IntCC::UnsignedGreaterThan, index, bound);
             Reachable(explicit_check_oob_condition_and_compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -192,7 +192,7 @@ where
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThan, index, adjusted_bound);
             Reachable(explicit_check_oob_condition_and_compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -223,7 +223,7 @@ where
                 .ins()
                 .icmp(IntCC::UnsignedGreaterThan, adjusted_index, bound);
             Reachable(explicit_check_oob_condition_and_compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -293,7 +293,7 @@ where
                     <= u64::from(bound) + u64::from(heap.offset_guard_size) - offset_and_size =>
         {
             Reachable(compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -323,7 +323,7 @@ where
                     .ins()
                     .icmp_imm(IntCC::UnsignedGreaterThan, index, adjusted_bound as i64);
             Reachable(explicit_check_oob_condition_and_compute_addr(
-                &mut builder.cursor(),
+                // &mut builder.cursor(),
                 heap,
                 env.pointer_type(),
                 index_addr,
@@ -373,7 +373,7 @@ fn cast_index_to_pointer_ty(
 /// This function deduplicates explicit bounds checks and Spectre mitigations
 /// that inherently also implement bounds checking.
 fn explicit_check_oob_condition_and_compute_addr<Env>(
-    pos: &mut FuncCursor,
+    // pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
     index: ir::Value,
@@ -391,15 +391,22 @@ where
     Env: FuncEnvironment + ?Sized,
 {
     if !spectre_mitigations_enabled {
-        pos.ins()
+        // pos.ins()
+        builder
+            .ins()
             .trapnz(oob_condition, ir::TrapCode::HeapOutOfBounds);
     }
 
-    let mut addr = compute_addr(pos, heap, addr_ty, index, offset, builder, env)?;
+    // let mut addr = compute_addr(pos, heap, addr_ty, index, offset, builder, env)?;
+    let mut addr = compute_addr(heap, addr_ty, index, offset, builder, env)?;
 
     if spectre_mitigations_enabled {
-        let null = pos.ins().iconst(addr_ty, 0);
-        addr = pos.ins().select_spectre_guard(oob_condition, null, addr);
+        // let null = pos.ins().iconst(addr_ty, 0);
+        // addr = pos.ins().select_spectre_guard(oob_condition, null, addr);
+        let null = builder.ins().iconst(addr_ty, 0);
+        addr = builder
+            .ins()
+            .select_spectre_guard(oob_condition, null, addr);
     }
 
     Ok(addr)
@@ -412,7 +419,7 @@ where
 /// overflow checks are emitted, and that the resulting address is never used
 /// unless they succeed.
 fn compute_addr<Env>(
-    pos: &mut FuncCursor,
+    // pos: &mut FuncCursor,
     heap: &HeapData,
     addr_ty: ir::Type,
     index: ir::Value,
@@ -423,6 +430,7 @@ fn compute_addr<Env>(
 where
     Env: FuncEnvironment + ?Sized,
 {
+    let pos = builder.cursor();
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
     // TODO: in case we use alternate design: we have to tag the heap_base here everytime, by following approach from todo below
@@ -437,18 +445,20 @@ where
     // arithmetic errors during the addition.
 
     let tag_bits_inclusive_mask: i64 = 0x0F00_0000_0000_0000;
-    let tag_bits_exclusive_mask: i64 = 0xF0FF_FFFF_FFFF_FFFF;
+    let tag_bits_exclusive_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
 
     pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-    pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 
-    let heap_base = pos.ins().global_value(addr_ty, heap.base);
+    // TODO:
+    // let heap_base = pos.ins().global_value(addr_ty, heap.base);
+    let heap_base = builder.ins().global_value(addr_ty, heap.base);
 
+    // TODO: optimize
     // Tag heap_base address with MTE_LINEAR_MEMORY_FREE_TAG
-    let heap_base = pos.ins().band_imm(index, tag_bits_exclusive_mask);
-    let heap_base = pos
+    let heap_base = builder.ins().band_imm(heap_base, tag_bits_exclusive_mask);
+    let heap_base = builder
         .ins()
-        .bor_imm(index, (MTE_LINEAR_MEMORY_FREE_TAG << 56) as i64);
+        .bor_imm(heap_base, (MTE_LINEAR_MEMORY_FREE_TAG as i64) << 56);
 
     // Pseudo code:
     //
@@ -465,7 +475,7 @@ where
     let common_block = block_with_params(builder, [ValType::I64], env)?;
 
     // Check if index is tagged
-    let index_tag = pos.ins().band_imm(index, tag_bits_inclusive_mask);
+    let index_tag = builder.ins().band_imm(index, tag_bits_inclusive_mask);
     let cond = builder
         .ins()
         .icmp_imm(IntCC::NotEqual, index_tag, 0x0000_0000_0000_0000);
@@ -482,7 +492,7 @@ where
     builder.switch_to_block(index_is_tagged_block);
 
     // Remove the tag stored in heap base.
-    let heap_base = pos.ins().band_imm(index, tag_bits_exclusive_mask);
+    let heap_base = builder.ins().band_imm(index, tag_bits_exclusive_mask);
 
     builder.ins().jump(common_block, &[heap_base]);
 
@@ -493,7 +503,7 @@ where
 
     let heap_base = builder.block_params(common_block)[0];
 
-    let base_and_index = pos.ins().iadd(heap_base, index);
+    let base_and_index = builder.ins().iadd(heap_base, index);
     let base_and_index = if offset == 0 {
         base_and_index
     } else {
@@ -501,7 +511,7 @@ where
         // `select_spectre_guard`, if any. If it happens after, then we
         // potentially are letting speculative execution read the whole first
         // 4GiB of memory.
-        pos.ins().iadd_imm(base_and_index, offset as i64)
+        builder.ins().iadd_imm(base_and_index, offset as i64)
     };
 
     builder.seal_block(common_block);
