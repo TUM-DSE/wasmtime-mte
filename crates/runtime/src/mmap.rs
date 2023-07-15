@@ -3,7 +3,6 @@
 
 use anyhow::anyhow;
 use anyhow::{Context, Result};
-use rustix::mm;
 use std::arch::asm;
 use std::convert::TryFrom;
 use std::fs::File;
@@ -609,11 +608,10 @@ fn _assert() {
 pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
 pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 
-/// Memory tagging is only possible on (a subset of) aarch64 linux
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
-    let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
     // MTE tag is stored in bits 56-59
+    let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
     let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
     // Remove existing tag in base_addr
     let base_addr = base_addr & mte_tag_bits_mask;
@@ -630,7 +628,6 @@ fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
     }
 }
 
-/// Memory tagging is only possible on (a subset of) aarch64 linux
 #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
 fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
 
@@ -649,29 +646,45 @@ pub struct TaggedMmap {
 
 impl From<Mmap> for TaggedMmap {
     fn from(mmap: Mmap) -> Self {
-        let tagged_mmap = Self { mmap };
-        tagged_mmap.tag_everything();
-        tagged_mmap
+        Self { mmap }
     }
 }
 
 impl TaggedMmap {
+    // // #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    // fn tag_memory_address(&mut self, base_addr: i64, custom_tag: u8, size_to_tag: usize) {
+    //     // MTE tag is stored in bits 56-59
+    //     let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+    //     let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
+    //     // Remove existing tag in base_addr
+    //     let base_addr = base_addr & mte_tag_bits_mask;
+    //     // Set custom tag in base_addr
+    //     let tagged_ptr = base_addr | custom_tag_mask;
+    // }
+
+    fn tag_region_with_tag(&self, tag: u8, start: usize, len: usize) {
+        tag_memory_region((self.mmap.ptr + start).try_into().unwrap(), tag, len);
+        // TODO: tag ptr as well
+    }
+
+    fn tag_region(&self, start: usize, len: usize) {
+        self.tag_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, start, len);
+    }
+
     /// Tag the entire memory.
     fn tag_everything(&self) {
-        tag_memory_region(
-            self.mmap.ptr.try_into().unwrap(),
-            MTE_LINEAR_MEMORY_FREE_TAG,
-            self.mmap.len,
-        );
+        self.tag_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, 0, self.mmap.len);
     }
 
     /// Untag the entire memory.
     fn untag_everything(&self) {
-        tag_memory_region(
-            self.mmap.ptr.try_into().unwrap(),
-            MTE_DEFAULT_FREE_TAG,
-            self.mmap.len,
-        );
+        self.tag_region_with_tag(MTE_DEFAULT_FREE_TAG, 0, self.mmap.len);
+    }
+
+    fn convert_and_tag(mmap: Mmap) -> Self {
+        let tagged_mmap = Self { mmap };
+        tagged_mmap.tag_everything();
+        tagged_mmap
     }
 
     /// Construct a new empty instance of `Mmap`.
@@ -701,7 +714,9 @@ impl TaggedMmap {
     /// within a reserved mapping of `mapping_size` bytes. `accessible_size` and `mapping_size`
     /// must be native page-size multiples.
     pub fn accessible_reserved(accessible_size: usize, mapping_size: usize) -> Result<Self> {
-        Ok(Mmap::accessible_reserved(accessible_size, mapping_size)?.into())
+        let tagged_mmap: Self = Mmap::accessible_reserved(accessible_size, mapping_size)?.into();
+        tagged_mmap.tag_everything();
+        Ok(tagged_mmap)
     }
 
     /// Make the memory starting at `start` and extending for `len` bytes accessible.
@@ -710,7 +725,9 @@ impl TaggedMmap {
     pub fn make_accessible(&mut self, start: usize, len: usize) -> Result<()> {
         // TODO: do i have to add tagging here as well?
         // We don't have to tag here, since we already tagged this part before, because this doesn't create/request from OS "new" memory.
-        self.mmap.make_accessible(start, len)
+        self.mmap.make_accessible(start, len)?;
+        self.tag_region(start, len);
+        Ok(())
     }
 
     /// Return the allocated memory as a slice of u8.

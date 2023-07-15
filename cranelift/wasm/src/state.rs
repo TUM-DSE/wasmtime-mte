@@ -465,31 +465,6 @@ impl FuncTranslationState {
         index: u32,
         environ: &mut FE,
     ) -> WasmResult<Heap> {
-        // TODO: heap is the index we want to tag
-        const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-        const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
-
-        // TODO: index has to be tagged with irg (inline assembly)
-        // Get currently set tag of the index
-        // MTE tag is stored in bits 56-59
-        // TODO: we can't save/read mte bits from a 32 bit index/pointer
-        let index: i64 = index.into();
-        let mte_tag_bits_mask_including: i64 = 0x0F00_0000_0000_0000;
-        let mte_tag_bits_mask_excluding: i64 = 0xF0FF_FFFF_FFFF_FFFF;
-        let current_index_tag = ((index & mte_tag_bits_mask_including) >> 56) as u8;
-
-        // If currently untagged, tag with the linear memory free tag
-        let index = if current_index_tag == MTE_DEFAULT_FREE_TAG {
-            // Remove existing tag in index
-            let index = index & mte_tag_bits_mask_excluding;
-            // Set linear memory free tag in index
-            index | ((MTE_LINEAR_MEMORY_FREE_TAG as i64) << 56)
-        } else {
-            index
-        };
-        // TODO: this will always panic
-        let index: u32 = index.try_into().unwrap();
-
         let index = MemoryIndex::from_u32(index);
         match self.memory_to_heap.entry(index) {
             Occupied(entry) => Ok(*entry.get()),

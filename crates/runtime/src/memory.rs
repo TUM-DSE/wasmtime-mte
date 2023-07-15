@@ -187,8 +187,7 @@ pub trait RuntimeLinearMemory: Send + Sync {
 #[derive(Debug)]
 pub struct MmapMemory {
     // The underlying allocation.
-    // TODO
-    // mmap: Mmap,
+    // TODO:
     mmap: TaggedMmap,
 
     // The number of bytes that are accessible in `mmap` and available for

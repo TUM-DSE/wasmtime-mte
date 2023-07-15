@@ -439,7 +439,16 @@ where
     let tag_bits_inclusive_mask: i64 = 0x0F00_0000_0000_0000;
     let tag_bits_exclusive_mask: i64 = 0xF0FF_FFFF_FFFF_FFFF;
 
+    pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
+    pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+
     let heap_base = pos.ins().global_value(addr_ty, heap.base);
+
+    // Tag heap_base address with MTE_LINEAR_MEMORY_FREE_TAG
+    let heap_base = pos.ins().band_imm(index, tag_bits_exclusive_mask);
+    let heap_base = pos
+        .ins()
+        .bor_imm(index, (MTE_LINEAR_MEMORY_FREE_TAG << 56) as i64);
 
     // Pseudo code:
     //
