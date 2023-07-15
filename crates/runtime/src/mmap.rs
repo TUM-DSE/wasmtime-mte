@@ -605,11 +605,13 @@ fn _assert() {
 }
 
 // TODO: consider adding own custom mte file that contains this stuff
-pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-pub const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
+const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
+    const LOG2_TAG_GRANULE: u32 = 4;
+
     // MTE tag is stored in bits 56-59
     let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
     let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
@@ -621,9 +623,11 @@ fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
     for i in (0..size_to_tag).step_by(32) {
         // TODO: proper error handling
         let i: i64 = i.try_into().unwrap();
+        let offset = i >> LOG2_TAG_GRANULE;
+        let addr = base_addr + offset;
         unsafe {
             // If `st2g` instruction is not supported, it would just be replaced by `nop`
-            asm!("st2g {tag}, {addr}", tag = in(reg) tagged_ptr, addr = in(reg) base_addr+i);
+            asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
         }
     }
 }
@@ -681,35 +685,6 @@ impl TaggedMmap {
         self.tag_region_with_tag(MTE_DEFAULT_FREE_TAG, 0, self.mmap.len);
     }
 
-    fn convert_and_tag(mmap: Mmap) -> Self {
-        let tagged_mmap = Self { mmap };
-        tagged_mmap.tag_everything();
-        tagged_mmap
-    }
-
-    /// Construct a new empty instance of `Mmap`.
-    pub fn new() -> Self {
-        Mmap::new().into()
-    }
-
-    /// Create a new `Mmap` pointing to at least `size` bytes of page-aligned accessible memory.
-    pub fn with_at_least(size: usize) -> Result<Self> {
-        Ok(Mmap::with_at_least(size)?.into())
-    }
-
-    /// Creates a new `Mmap` by opening the file located at `path` and mapping
-    /// it into memory.
-    ///
-    /// The memory is mapped in read-only mode for the entire file. If portions
-    /// of the file need to be modified then the `region` crate can be use to
-    /// alter permissions of each page.
-    ///
-    /// The memory mapping and the length of the file within the mapping are
-    /// returned.
-    pub fn from_file(path: &Path) -> Result<Self> {
-        Ok(Mmap::from_file(path)?.into())
-    }
-
     /// Create a new `Mmap` pointing to `accessible_size` bytes of page-aligned accessible memory,
     /// within a reserved mapping of `mapping_size` bytes. `accessible_size` and `mapping_size`
     /// must be native page-size multiples.
@@ -740,11 +715,6 @@ impl TaggedMmap {
         unsafe { slice::from_raw_parts_mut(self.mmap.ptr as *mut u8, self.mmap.len) }
     }
 
-    /// Return the allocated memory as a pointer to u8.
-    pub fn as_ptr(&self) -> *const u8 {
-        self.mmap.ptr as *const u8
-    }
-
     /// Return the allocated memory as a mutable pointer to u8.
     pub fn as_mut_ptr(&self) -> *mut u8 {
         self.mmap.ptr as *mut u8
@@ -753,32 +723,6 @@ impl TaggedMmap {
     /// Return the length of the allocated memory.
     pub fn len(&self) -> usize {
         self.mmap.len
-    }
-
-    /// Return whether any memory has been allocated.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Makes the specified `range` within this `Mmap` to be read/execute.
-    pub unsafe fn make_executable(
-        &self,
-        range: Range<usize>,
-        enable_branch_protection: bool,
-    ) -> Result<()> {
-        // TODO: do we need to change anything here?
-        self.mmap.make_executable(range, enable_branch_protection)
-    }
-
-    /// Makes the specified `range` within this `Mmap` to be readonly.
-    pub unsafe fn make_readonly(&self, range: Range<usize>) -> Result<()> {
-        // TODO: do we need to change anything here?
-        self.mmap.make_readonly(range)
-    }
-
-    /// Returns the underlying file that this mmap is mapping, if present.
-    pub fn original_file(&self) -> Option<&Arc<File>> {
-        self.mmap.file.as_ref()
     }
 }
 

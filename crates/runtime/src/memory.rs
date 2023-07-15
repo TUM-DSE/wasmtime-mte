@@ -2,7 +2,7 @@
 //!
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
-use crate::mmap::{Mmap, TaggedMmap};
+use crate::mmap::TaggedMmap;
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
 use crate::{MemoryImage, MemoryImageSlot, Store, WaitResult};
