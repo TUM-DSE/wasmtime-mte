@@ -449,6 +449,8 @@ where
 
     pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
 
+    println!("Tagging memory address.");
+
     // TODO:
     // let heap_base = pos.ins().global_value(addr_ty, heap.base);
     let heap_base = builder.ins().global_value(addr_ty, heap.base);

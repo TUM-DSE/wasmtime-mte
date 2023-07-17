@@ -205,15 +205,7 @@ serde_json = "1.0.80"
 glob = "0.3.0"
 
 [features]
-default = [
-  "jitdump",
-  "wasmtime/wat",
-  "wasmtime/parallel-compilation",
-  "vtune",
-  "wasi-nn",
-  "wasi-threads",
-  "pooling-allocator",
-]
+default = ["jitdump", "wasmtime/wat", "wasmtime/parallel-compilation", "vtune", "wasi-nn", "wasi-threads", "pooling-allocator"]
 jitdump = ["wasmtime/jitdump"]
 vtune = ["wasmtime/vtune"]
 wasi-crypto = ["dep:wasmtime-wasi-crypto"]
@@ -222,11 +214,7 @@ wasi-threads = ["dep:wasmtime-wasi-threads"]
 pooling-allocator = ["wasmtime/pooling-allocator", "wasmtime-cli-flags/pooling-allocator"]
 all-arch = ["wasmtime/all-arch"]
 posix-signals-on-macos = ["wasmtime/posix-signals-on-macos"]
-component-model = [
-  "wasmtime/component-model",
-  "wasmtime-wast/component-model",
-  "wasmtime-cli-flags/component-model"
-]
+component-model = ["wasmtime/component-model", "wasmtime-wast/component-model", "wasmtime-cli-flags/component-model"]
 winch = ["wasmtime/winch"]
 
 # Stub feature that does nothing, for Cargo-features compatibility: the new

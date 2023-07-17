@@ -4,6 +4,7 @@
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use std::arch::asm;
+use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::ops::Range;
@@ -32,7 +33,6 @@ impl Mmap {
         // contains code to create a non-null dangling pointer value when
         // constructed empty, so we reuse that here.
         let empty = Vec::<u8>::new();
-        // TODO: consider adding tagging memory region here
         Self {
             ptr: empty.as_ptr() as usize,
             len: 0,
@@ -77,19 +77,11 @@ impl Mmap {
                 .context(format!("mmap failed to allocate {:#x} bytes", len))?
             };
 
-            // TODO:
             Ok(Self {
                 ptr: ptr as usize,
                 len,
                 file: Some(Arc::new(file)),
             })
-            // let mmap = Self {
-            //     ptr: ptr as usize,
-            //     len,
-            //     file: Some(Arc::new(file)),
-            // };
-            // mmap.tag_everything();
-            // Ok(mmap)
         }
 
         #[cfg(windows)]
@@ -202,19 +194,11 @@ impl Mmap {
                 .context(format!("mmap failed to allocate {:#x} bytes", mapping_size))?
             };
 
-            // TODO:
             Self {
                 ptr: ptr as usize,
                 len: mapping_size,
                 file: None,
             }
-            // let mmap = Self {
-            //     ptr: ptr as usize,
-            //     len: mapping_size,
-            //     file: None,
-            // };
-            // mmap.tag_everything();
-            // mmap
         } else {
             // Reserve the mapping size.
             let ptr = unsafe {
@@ -238,8 +222,6 @@ impl Mmap {
                 result.make_accessible(0, accessible_size)?;
             }
 
-            // TODO
-            // result.tag_everything();
             result
         })
     }
@@ -575,8 +557,6 @@ impl Drop for Mmap {
     #[cfg(not(target_os = "windows"))]
     fn drop(&mut self) {
         if self.len != 0 {
-            // TODO
-            // self.untag_everything();
             unsafe { rustix::mm::munmap(self.ptr as *mut std::ffi::c_void, self.len) }
                 .expect("munmap failed");
         }
@@ -609,8 +589,15 @@ const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
 const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
-    const LOG2_TAG_GRANULE: u32 = 4;
+#[target_feature(enable = "mte")]
+unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
+    // TODO: check if i break the pointer
+    // println!("base_addr before removing tag: {:#x}", base_addr);
+    println!(
+        "Executing st2g loop to tag base_ptr {:#x} with custom_tag {} for a size of {} bytes",
+        base_addr, custom_tag, size_to_tag
+    );
+    assert_eq!(base_addr & 0xFF, 0, "base_addr should be 32-byte aligned");
 
     // MTE tag is stored in bits 56-59
     let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
@@ -618,22 +605,47 @@ fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
     // Remove existing tag in base_addr
     let base_addr = base_addr & mte_tag_bits_mask;
     // Set custom tag in base_addr
+    // TODO: only put tag into tagged_ptr
+    // TODO: get tagged_ptr that already includes offset
     let tagged_ptr = base_addr | custom_tag_mask;
 
     for i in (0..size_to_tag).step_by(32) {
         // TODO: proper error handling
         let i: i64 = i.try_into().unwrap();
-        let offset = i >> LOG2_TAG_GRANULE;
-        let addr = base_addr + offset;
-        unsafe {
-            // If `st2g` instruction is not supported, it would just be replaced by `nop`
-            asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
-        }
+        let addr = base_addr + i;
+
+        assert_eq!(base_addr & 0xF, 0, "addr should be 16-byte aligned");
+        assert_eq!(tagged_ptr & 0xF, 0, "tagged_ptr should be 16-byte aligned");
+
+        // If `st2g` instruction is not supported, it would just be replaced by `nop`
+        // TODO: potential issue: tagged_ptr or addr isn't properly aligned (to 16 bytes)?
+        // println!(
+        //     "executing st2g with tag: {:#x} and addr: {:#x}",
+        //     tagged_ptr, addr
+        // );
+        asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
     }
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
-fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
+unsafe fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
+
+#[derive(Debug)]
+struct AccessibleMemoryRegion {
+    start: usize,
+    end: usize,
+    len: usize,
+}
+
+impl AccessibleMemoryRegion {
+    fn new(start: usize, len: usize) -> Self {
+        Self {
+            start,
+            end: start + len,
+            len,
+        }
+    }
+}
 
 /// A wrapper around Mmap that is meant to be used as the low-level
 /// implementation of Linear Memory. What it adds compared to Mmap itself is
@@ -646,11 +658,16 @@ fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
 #[derive(Debug)]
 pub struct TaggedMmap {
     mmap: Mmap,
+    // TODO: if regions overlap, we might be tagging addresses multiple times
+    accessible_regions: Vec<AccessibleMemoryRegion>,
 }
 
 impl From<Mmap> for TaggedMmap {
     fn from(mmap: Mmap) -> Self {
-        Self { mmap }
+        Self {
+            mmap,
+            accessible_regions: vec![],
+        }
     }
 }
 
@@ -666,31 +683,58 @@ impl TaggedMmap {
     //     let tagged_ptr = base_addr | custom_tag_mask;
     // }
 
-    fn tag_region_with_tag(&self, tag: u8, start: usize, len: usize) {
-        tag_memory_region((self.mmap.ptr + start).try_into().unwrap(), tag, len);
+    fn add_accessible_region(&mut self, region: AccessibleMemoryRegion) {
+        self.accessible_regions.push(region);
+    }
+
+    fn tag_accessible_region_with_tag(&self, tag: u8, region: &AccessibleMemoryRegion) {
+        println!(
+            "Tagging memory region from start {} and length {} with tag {}; the length of the underlying mmap is: {}",
+            region.start, region.len, tag, self.mmap.len
+        );
+        unsafe {
+            tag_memory_region(
+                (self.mmap.ptr + region.start).try_into().unwrap(),
+                tag,
+                region.len,
+            );
+        }
         // TODO: tag ptr as well
     }
 
-    fn tag_region(&self, start: usize, len: usize) {
-        self.tag_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, start, len);
+    fn tag_accessible_region(&self, accessible_region: &AccessibleMemoryRegion) {
+        self.tag_accessible_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, accessible_region);
     }
 
     /// Tag the entire memory.
-    fn tag_everything(&self) {
-        self.tag_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, 0, self.mmap.len);
+    fn tag_all_accessible_regions(&self) {
+        for accessible_region in &self.accessible_regions {
+            self.tag_accessible_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, accessible_region);
+        }
     }
 
     /// Untag the entire memory.
-    fn untag_everything(&self) {
-        self.tag_region_with_tag(MTE_DEFAULT_FREE_TAG, 0, self.mmap.len);
+    fn untag_all_accessible_regions(&self) {
+        for accessible_region in &self.accessible_regions {
+            self.tag_accessible_region_with_tag(MTE_DEFAULT_FREE_TAG, accessible_region);
+        }
     }
 
     /// Create a new `Mmap` pointing to `accessible_size` bytes of page-aligned accessible memory,
     /// within a reserved mapping of `mapping_size` bytes. `accessible_size` and `mapping_size`
     /// must be native page-size multiples.
     pub fn accessible_reserved(accessible_size: usize, mapping_size: usize) -> Result<Self> {
-        let tagged_mmap: Self = Mmap::accessible_reserved(accessible_size, mapping_size)?.into();
-        tagged_mmap.tag_everything();
+        let mut tagged_mmap: Self =
+            Mmap::accessible_reserved(accessible_size, mapping_size)?.into();
+
+        println!(
+            "accessible_reserved was called with accessible_size={} and mapping_size={}",
+            accessible_size, mapping_size
+        );
+
+        let accessible_region = AccessibleMemoryRegion::new(0, accessible_size);
+        tagged_mmap.tag_accessible_region(&accessible_region);
+        tagged_mmap.add_accessible_region(accessible_region);
         Ok(tagged_mmap)
     }
 
@@ -701,7 +745,15 @@ impl TaggedMmap {
         // TODO: do i have to add tagging here as well?
         // We don't have to tag here, since we already tagged this part before, because this doesn't create/request from OS "new" memory.
         self.mmap.make_accessible(start, len)?;
-        self.tag_region(start, len);
+
+        println!(
+            "make_accessible was called with start={} and len={}",
+            start, len
+        );
+
+        let accessible_region = AccessibleMemoryRegion::new(start, len);
+        self.tag_accessible_region(&accessible_region);
+        self.add_accessible_region(accessible_region);
         Ok(())
     }
 
@@ -728,7 +780,8 @@ impl TaggedMmap {
 
 impl Drop for TaggedMmap {
     fn drop(&mut self) {
-        self.untag_everything();
+        println!("untagging everything");
+        self.untag_all_accessible_regions();
         // Will automatically call the Mmap drop destructor now.
     }
 }
