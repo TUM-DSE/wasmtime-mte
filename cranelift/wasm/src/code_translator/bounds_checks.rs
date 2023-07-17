@@ -63,6 +63,7 @@ where
     // This also means an out-of-bounds access will only be recognized
     // when the address is actually used.
     if env.target_config().has_mte {
+        println!("Entering compute_addr on mte");
         return Ok(Reachable(compute_addr(
             // &mut builder.cursor(),
             heap,
@@ -73,6 +74,7 @@ where
             env,
         )?));
     }
+    println!("bounds checking without MTE");
 
     // TODO: remove, should be unnecessary
 
