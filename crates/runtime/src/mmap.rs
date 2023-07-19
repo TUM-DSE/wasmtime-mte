@@ -4,7 +4,6 @@
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use std::arch::asm;
-use std::backtrace::Backtrace;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::ops::Range;
@@ -12,6 +11,8 @@ use std::path::Path;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
+
+const PROT_MTE: u32 = 0x20;
 
 /// A simple struct consisting of a page-aligned pointer to page-aligned
 /// and initially-zeroed memory and a length.
@@ -69,7 +70,9 @@ impl Mmap {
                 rustix::mm::mmap(
                     ptr::null_mut(),
                     len,
+                    // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
                     rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
+                    // | rustix::mm::ProtFlags::from_bits_unchecked(PROT_MTE),
                     rustix::mm::MapFlags::PRIVATE,
                     &file,
                     0,
@@ -188,7 +191,10 @@ impl Mmap {
                 rustix::mm::mmap_anonymous(
                     ptr::null_mut(),
                     mapping_size,
-                    rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
+                    // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
+                    rustix::mm::ProtFlags::READ
+                        | rustix::mm::ProtFlags::WRITE
+                        | rustix::mm::ProtFlags::from_bits_unchecked(PROT_MTE),
                     rustix::mm::MapFlags::PRIVATE,
                 )
                 .context(format!("mmap failed to allocate {:#x} bytes", mapping_size))?
@@ -205,7 +211,9 @@ impl Mmap {
                 rustix::mm::mmap_anonymous(
                     ptr::null_mut(),
                     mapping_size,
-                    rustix::mm::ProtFlags::empty(),
+                    // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
+                    rustix::mm::ProtFlags::empty()
+                        | rustix::mm::ProtFlags::from_bits_unchecked(PROT_MTE),
                     rustix::mm::MapFlags::PRIVATE,
                 )
                 .context(format!("mmap failed to allocate {:#x} bytes", mapping_size))?
@@ -219,6 +227,7 @@ impl Mmap {
 
             if accessible_size != 0 {
                 // Commit the accessible size.
+                println!("Make accessible was called from inside accessible reserved");
                 result.make_accessible(0, accessible_size)?;
             }
 
@@ -300,6 +309,7 @@ impl Mmap {
         assert!(start <= self.len - len);
 
         if !self.make_accessible_with_mte(start, len)? {
+            println!("making mte accessible failed");
             // Commit the accessible size.
             let ptr = self.ptr as *mut u8;
             unsafe {
@@ -493,7 +503,9 @@ impl Mmap {
         {
             use rustix::mm::{mprotect, MprotectFlags};
 
+            // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
             let flags = MprotectFlags::READ | MprotectFlags::EXEC;
+            // | MprotectFlags::from_bits_unchecked(PROT_MTE);
             let flags = if enable_branch_protection {
                 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
                 if std::arch::is_aarch64_feature_detected!("bti") {
@@ -541,7 +553,14 @@ impl Mmap {
         #[cfg(not(windows))]
         {
             use rustix::mm::{mprotect, MprotectFlags};
-            mprotect(base, len, MprotectFlags::READ)?;
+            // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
+            mprotect(
+                base,
+                len,
+                // TODO: would fail on non-mte setup this way. we can't use feature detected mte, because we want to compile from non-mte machines
+                MprotectFlags::READ,
+                // | MprotectFlags::from_bits_unchecked(PROT_MTE),
+            )?;
         }
 
         Ok(())
@@ -610,6 +629,9 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
     let tagged_ptr = base_addr | custom_tag_mask;
 
     for i in (0..size_to_tag).step_by(32) {
+        if i == 1 {
+            println!("executing second loop iteration of st2g, indicating that it didn't fail for the first");
+        }
         // TODO: proper error handling
         let i: i64 = i.try_into().unwrap();
         let addr = base_addr + i;
@@ -732,6 +754,7 @@ impl TaggedMmap {
             accessible_size, mapping_size
         );
 
+        // TODO: think about pre-guard-size, so not starting at 0 possibly
         let accessible_region = AccessibleMemoryRegion::new(0, accessible_size);
         tagged_mmap.tag_accessible_region(&accessible_region);
         tagged_mmap.add_accessible_region(accessible_region);

@@ -258,6 +258,7 @@ impl MmapMemory {
         let mut mmap = TaggedMmap::accessible_reserved(0, request_bytes)?;
 
         if minimum > 0 {
+            println!("make accessible was called from within new");
             mmap.make_accessible(pre_guard_bytes, minimum)?;
         }
 
@@ -316,6 +317,7 @@ impl RuntimeLinearMemory for MmapMemory {
                 .ok_or_else(|| format_err!("overflow calculating size of memory allocation"))?;
 
             let mut new_mmap = TaggedMmap::accessible_reserved(0, request_bytes)?;
+            println!("Make accessible was called on new_mmap directly after accessible reserved in grow_to; here the memory has to get larger");
             new_mmap.make_accessible(self.pre_guard_size, new_size)?;
 
             new_mmap.as_mut_slice()[self.pre_guard_size..][..self.accessible]
@@ -341,6 +343,7 @@ impl RuntimeLinearMemory for MmapMemory {
             // initial allocation to grow into before the heap is moved in
             // memory.
             assert!(new_size > self.accessible);
+            println!("Make accessible was called on new_mmap directly after accessible reserved in grow_to; new_size > accessible");
             self.mmap.make_accessible(
                 self.pre_guard_size + self.accessible,
                 new_size - self.accessible,
@@ -492,6 +495,7 @@ impl SharedMemory {
     /// Construct a new [`SharedMemory`].
     pub fn new(plan: MemoryPlan) -> Result<Self> {
         let (minimum_bytes, maximum_bytes) = Memory::limit_new(&plan, None)?;
+        println!("we are using a shared memory instance");
         let mmap_memory = MmapMemory::new(&plan, minimum_bytes, maximum_bytes, None)?;
         Self::wrap(&plan, Box::new(mmap_memory), plan.memory)
     }
