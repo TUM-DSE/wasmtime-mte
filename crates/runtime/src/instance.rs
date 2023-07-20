@@ -712,16 +712,12 @@ impl Instance {
     }
 
     fn validate_inbounds(&self, max: usize, ptr: u64, len: u64) -> Result<usize, Trap> {
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        #[cfg(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte"))]
         fn strip_mte_tag(ptr: u64) -> u64 {
-            if std::arch::is_aarch64_feature_detected!("mte") {
-                ptr & 0xF0FF_FFFF_FFFF_FFFF
-            } else {
-                ptr
-            }
+            ptr & 0xF0FF_FFFF_FFFF_FFFF
         }
 
-        #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+        #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte")))]
         fn strip_mte_tag(ptr: u64) -> u64 {
             ptr
         }

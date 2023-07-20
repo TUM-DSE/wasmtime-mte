@@ -16,7 +16,8 @@ tags
 target
 .z3-trace
 foo
-.cargo
+.cargo/*
+!.cargo/config.toml
 publish
 vendor
 examples/build
