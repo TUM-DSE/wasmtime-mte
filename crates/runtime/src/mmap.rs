@@ -612,6 +612,7 @@ const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
     // TODO: check if i break the pointer
     // println!("base_addr before removing tag: {:#x}", base_addr);
+
     println!(
         "Executing st2g loop to tag base_ptr {:#x} with custom_tag {} for a size of {} bytes",
         base_addr, custom_tag, size_to_tag
@@ -647,6 +648,11 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
         // );
         asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
     }
+
+    println!(
+        "Finished executing st2g loop to tag base_ptr {:#x} with custom_tag {} for a size of {} bytes",
+        base_addr, custom_tag, size_to_tag
+    );
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]

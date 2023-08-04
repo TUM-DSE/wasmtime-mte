@@ -724,6 +724,10 @@ impl Instance {
 
         let oob = || Trap::MemoryOutOfBounds;
 
+        println!(
+            "Validating in bounds, max={}, ptr={}, len={}",
+            max, ptr, len
+        );
         let end = strip_mte_tag(ptr)
             .checked_add(len)
             .and_then(|i| usize::try_from(i).ok())

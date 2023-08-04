@@ -951,6 +951,23 @@ fn validate_atomic_addr(
     access_size: u64,
     access_alignment: u64,
 ) -> Result<*mut u8, Trap> {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte"))]
+    fn strip_mte_tag(ptr: u64) -> u64 {
+        ptr & 0xF0FF_FFFF_FFFF_FFFF
+    }
+
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte")))]
+    fn strip_mte_tag(ptr: u64) -> u64 {
+        ptr
+    }
+
+    println!(
+        "Validating atomic addr={}, access_size={}, access_alignment={}",
+        addr, access_size, access_alignment
+    );
+
+    let addr = strip_mte_tag(addr);
+
     debug_assert!(access_alignment.is_power_of_two());
     if !(addr % access_alignment == 0) {
         return Err(Trap::HeapMisaligned);
