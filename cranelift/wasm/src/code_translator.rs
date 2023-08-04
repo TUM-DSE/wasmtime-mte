@@ -3815,7 +3815,7 @@ where
     // Pseudo code (low level):
     //
     // +---st2g_loop_condition_block
-    // | if (size > 32)
+    // | if (size >= 32)
     // |     goto st2g_loop_body_block
     // | else
     // |     goto last_stg_condition_block
