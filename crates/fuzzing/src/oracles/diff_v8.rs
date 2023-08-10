@@ -141,6 +141,9 @@ impl DiffEngine for V8Engine {
                     "divide result unrepresentable",
                 ])
             }
+            Trap::MemoryTaggingExtensionFault => {
+                return verify_v8(&["got memory tagging extension (mte) fault"])
+            }
             other => log::debug!("unknown code {:?}", other),
         }
 

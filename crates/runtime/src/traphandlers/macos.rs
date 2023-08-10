@@ -434,7 +434,7 @@ unsafe extern "C" fn unwind(
         } else {
             None
         };
-        state.set_jit_trap(wasm_pc, wasm_fp, faulting_addr);
+        state.set_jit_trap(wasm_pc, wasm_fp, faulting_addr.into());
         state.jmp_buf.get()
     });
     debug_assert!(!jmp_buf.is_null());

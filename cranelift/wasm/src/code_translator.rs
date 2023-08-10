@@ -3583,6 +3583,8 @@ fn assert_16_byte_aligned(val: Value, builder: &mut FunctionBuilder) {
         .trapnz(is_aligned, ir::TrapCode::HeapMisaligned);
 }
 
+// TODO: mention EL0 instruction `stgm` somewhere, which we couldn't use unfortunately
+
 /// This helper function iterates over `iter_ptr` for `size` bytes and tags
 /// every 16 bytes of memory using the ARM `stg` instruction with the tag
 /// found in `tagged_ptr`.
@@ -3603,22 +3605,116 @@ where
             imm,
         } = builder.func.dfg.insts[inst]
         {
-            let size = imm.bits();
+            let size_static = imm.bits() as u64;
 
-            return tag_memory_region_static(iter_ptr, tagged_ptr, size, builder);
+            return tag_memory_region_static(
+                iter_ptr,
+                tagged_ptr,
+                size_static,
+                size,
+                builder,
+                environ,
+            );
         }
     }
 
     tag_memory_region_dynamic(iter_ptr, tagged_ptr, size, builder, environ)
 }
 
-/// Tag a memory region with a known size.
-fn tag_memory_region_static(
+/// Tag a memory region which has a static size known at compile-time.
+/// Iterate through `iter_ptr`, which will be set dynamically at runtime,
+/// starting at offset 0.
+/// Optimizations include:
+/// - Use st2g operation to tag two memory regions at once
+fn tag_memory_region_static_without_loop_unrolling_threshhold(
     iter_ptr: Value,
     tagged_ptr: Value,
-    size: i64,
+    size: u64,
     builder: &mut FunctionBuilder,
-) -> WasmResult<()> {
+) {
+    let mut i = 0;
+    while size - i >= 32 {
+        let cur_ptr = builder.ins().iadd_imm(iter_ptr, i as i64);
+        builder.ins().arm64_st2g(tagged_ptr, cur_ptr);
+        i += 32;
+    }
+    if i < size {
+        let cur_ptr = builder.ins().iadd_imm(iter_ptr, i as i64);
+        builder.ins().arm64_stg(tagged_ptr, cur_ptr);
+    }
+}
+
+/// Tag a memory region which has a static size known at compile-time.
+/// Optimizations include:
+/// - Use st2g operation to tag two memory regions at once
+/// - Only unroll loops until a certain threshhold, since very large sizes
+///   increase number of generated instructions and increase cache misses
+fn tag_memory_region_static<FE>(
+    iter_ptr: Value,
+    tagged_ptr: Value,
+    size: u64,
+    size_dynamic: Value,
+    builder: &mut FunctionBuilder,
+    environ: &mut FE,
+) -> WasmResult<()>
+where
+    FE: FuncEnvironment + ?Sized,
+{
+    // Runtime code that is generated:
+    //
+    // (compile-time) num_required_st2g_loops = floor(size / LOOP_UNROLL_BYTES_THRESHHOLD)
+    // (compile-time) num_required_last_stg = (size % LOOP_UNROLL_BYTES_THRESHHOLD) / 16
+    //
+    // (compile-time) if num_required_st2g_loops <= 1
+    // (compile-time)     generate WITHOUT_LOOP_UNROLLING_THRESHHOLD
+    // (compile-time) else
+    // (compile-time)     generate WITH_LOOP_UNROLLING_THRESHHOLD
+    //
+    // WITHOUT_LOOP_UNROLLING_THRESHHOLD:
+    // +---less_than_threshhold
+    // | st2g(tagged_ptr, iter_ptr + 0)          \
+    // | st2g(tagged_ptr, iter_ptr + 32)          | repeat `n` times, i.e. while (remaining_bits >= 32) holds
+    // | ...                                      |
+    // | st2g(tagged_ptr, iter_ptr + (n-1) * 32) /
+    // |
+    // | stg(tagged_ptr, iter_ptr + n * 32)  | generate only if required
+    // +---
+    //
+    // WITH_LOOP_UNROLLING_THRESHHOLD:
+    // end_ptr = iter_ptr + size
+    // +---st2g_loop_condition_block(iter_ptr)
+    // | if (iter_ptr < end_ptr)
+    // |     goto st2g_loop_body_block(iter_ptr)
+    // | else
+    // |     goto last_stgs_block
+    // |
+    // | +---st2g_loop_body_block(iter_ptr, st2g_loop_counter)
+    // | | st2g(tagged_ptr, iter_ptr + 0)          \
+    // | | st2g(tagged_ptr, iter_ptr + 32)          | repeat `n`=LOOP_UNROLL_BYTES_THRESHHOLD times
+    // | | ...                                      |
+    // | | st2g(tagged_ptr, iter_ptr + (n-1) * 32) /
+    // | |
+    // | | iter_ptr += LOOP_UNROLL_BYTES_THRESHHOLD
+    // | | goto st2g_loop_condition_block(iter_ptr)
+    // | +---
+    // +---
+    //
+    // +---last_stgs_block(iter_ptr)
+    // | st2g(tagged_ptr, iter_ptr + 0)          \
+    // | st2g(tagged_ptr, iter_ptr + 32)          | repeat `n` times, i.e. while (remaining_bits >= 32) holds
+    // | ...                                      |
+    // | st2g(tagged_ptr, iter_ptr + (n-1) * 32) /
+    // |
+    // | stg(tagged_ptr, iter_ptr + n * 32)  | generate only if required
+    // +---
+
+    // If the number of bytes to be tagged is larger than this threshhold,
+    // insert a loop that tags using `st2g` chunks.
+    // Threshhold should be a multiple of 32, so each `st2g` chunk can be
+    // exactly divided into only 32-byte tagging `st2g` instructions
+    // This constant was adapted from clang.
+    const LOOP_UNROLL_BYTES_THRESHHOLD: u32 = 160;
+
     // Assert that `size` is 16 byte aligned, and trap if not
     if size % 16 != 0 {
         return Err(WasmError::User(format!(
@@ -3626,27 +3722,98 @@ fn tag_memory_region_static(
         )));
     }
 
-    // First insert an overflow check. This allows us to insert non-trapping instructions later.
-    let c = builder.ins().iconst(I64, size);
-    builder
-        .ins()
-        .uadd_overflow_trap(iter_ptr, c, ir::TrapCode::HeapOutOfBounds);
+    // TODO: maybe optimize by adding `size` statically as immediate
+    // Trap if (iter_ptr + size) overflows, so we can use non-trapping instructions later
+    let end_ptr =
+        builder
+            .ins()
+            .uadd_overflow_trap(iter_ptr, size_dynamic, ir::TrapCode::HeapOutOfBounds);
 
-    let mut i = 0;
-    while size - i >= 32 {
-        let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
-        builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
-        i += 32;
-    }
-    if i < size {
-        let iter_ptr = builder.ins().iadd_imm(iter_ptr, i);
-        builder.ins().arm64_stg(tagged_ptr, iter_ptr);
+    // In Rust, for u64: (a / b) == floor(a / b), which we make use of here
+    let num_required_st2g_loops: u64 = size / u64::from(LOOP_UNROLL_BYTES_THRESHHOLD);
+
+    if num_required_st2g_loops <= 1 {
+        // WITHOUT_LOOP_UNROLLING_THRESHHOLD
+
+        tag_memory_region_static_without_loop_unrolling_threshhold(
+            iter_ptr, tagged_ptr, size, builder,
+        );
+    } else {
+        // WITH_LOOP_UNROLLING_THRESHHOLD
+
+        // === Block definitions
+        // st2g_loop_condition_block(iter_ptr)
+        let st2g_loop_condition_block = block_with_params(builder, [ValType::I64], environ)?;
+
+        // st2g_loop_body_block(iter_ptr)
+        let st2g_loop_body_block = block_with_params(builder, [ValType::I64], environ)?;
+
+        // last_stgs_block(iter_ptr)
+        let last_stgs_block = block_with_params(builder, [ValType::I64], environ)?;
+
+        builder.ins().jump(st2g_loop_condition_block, &[iter_ptr]);
+
+        // === st2g_loop_condition_block(iter_ptr)
+        builder.switch_to_block(st2g_loop_condition_block);
+
+        let iter_ptr = builder.block_params(st2g_loop_condition_block)[0];
+
+        // TODO: the only potential optimization concern is that we now have to use a normal `icmp` over an `icmp_imm`, maybe this is slower?
+        let cond = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThan, iter_ptr, end_ptr);
+
+        canonicalise_brif(
+            builder,
+            cond,
+            st2g_loop_body_block,
+            &[iter_ptr],
+            last_stgs_block,
+            &[iter_ptr],
+        );
+
+        // === st2g_loop_body_block(iter_ptr)
+        builder.switch_to_block(st2g_loop_body_block);
+
+        let iter_ptr = builder.block_params(st2g_loop_body_block)[0];
+
+        for i in 0..(LOOP_UNROLL_BYTES_THRESHHOLD / 32) {
+            let cur_ptr = builder.ins().iadd_imm(iter_ptr, i64::from(i * 32));
+            builder.ins().arm64_st2g(tagged_ptr, cur_ptr);
+        }
+
+        let iter_ptr = builder
+            .ins()
+            .iadd_imm(iter_ptr, i64::from(LOOP_UNROLL_BYTES_THRESHHOLD));
+
+        builder.ins().jump(st2g_loop_condition_block, &[iter_ptr]);
+
+        builder.seal_block(st2g_loop_body_block);
+        builder.seal_block(st2g_loop_condition_block);
+
+        // === last_stgs_block(iter_ptr)
+        builder.switch_to_block(last_stgs_block);
+
+        let iter_ptr = builder.block_params(last_stgs_block)[0];
+
+        let remaining_offset = num_required_st2g_loops * u64::from(LOOP_UNROLL_BYTES_THRESHHOLD);
+        let remaining_size = size - remaining_offset;
+
+        tag_memory_region_static_without_loop_unrolling_threshhold(
+            iter_ptr,
+            tagged_ptr,
+            remaining_size,
+            builder,
+        );
+
+        builder.seal_block(last_stgs_block);
     }
 
     Ok(())
 }
 
-/// Optimized implementation of tag_memory_region. Optimizations include:
+/// Tag a memory region which has a dynamic size unknown at compile-time.
+/// Optimizations include:
 /// - Use st2g operation to tag two memory regions at once
 fn tag_memory_region_dynamic<FE>(
     iter_ptr: Value,
@@ -3661,6 +3828,7 @@ where
     // Pseudo code (high level):
     //
     // assert_16_byte_aligned(size)
+    // assert_no_overflow(iter_ptr + size)
     //
     // for (size; size >= 32; size -= 32, iter_ptr += 32)
     //    st2g(tagged_ptr, iter_ptr)
@@ -3699,6 +3867,11 @@ where
     // +---
 
     assert_16_byte_aligned(size, builder);
+
+    // Trap if (iter_ptr + size) overflows, so we can use non-trapping instructions later
+    builder
+        .ins()
+        .uadd_overflow_trap(iter_ptr, size, ir::TrapCode::HeapOutOfBounds);
 
     // === Block definitions
     // st2g_loop_condition_block(size, iter_ptr)
@@ -3749,11 +3922,7 @@ where
     builder.ins().arm64_st2g(tagged_ptr, iter_ptr);
 
     let size_counter = builder.ins().iadd_imm(size_counter, -32);
-    let offset = builder.ins().iconst(I64, 32);
-    let iter_ptr =
-        builder
-            .ins()
-            .uadd_overflow_trap(iter_ptr, offset, ir::TrapCode::HeapOutOfBounds);
+    let iter_ptr = builder.ins().iadd_imm(iter_ptr, 32);
 
     builder
         .ins()

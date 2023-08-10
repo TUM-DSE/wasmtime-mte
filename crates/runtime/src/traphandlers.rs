@@ -164,7 +164,7 @@ pub enum TrapReason {
         /// explicitly jump to a `ud2` instruction. This is only available for
         /// fault-based traps which are one of the main ways, but not the only
         /// way, to run wasm.
-        faulting_addr: Option<usize>,
+        fault_metadata: FaultMetadata,
     },
 
     /// A trap raised from a wasm libcall
@@ -401,6 +401,36 @@ enum UnwindReason {
     Trap(TrapReason),
 }
 
+/// If a trap was a memory-related trap such as SIGSEGV then this
+/// field will contain the address of the inaccessible data.
+///
+/// Note that wasm loads/stores are not guaranteed to fill in this
+/// information. Dynamically-bounds-checked memories, for example, will
+/// not access an invalid address but may instead load from NULL or may
+/// explicitly jump to a `ud2` instruction. This is only available for
+/// fault-based traps which are one of the main ways, but not the only
+/// way, to run wasm.
+///
+/// Furthermore, the metadata contains whether a fault originates from
+/// a Memory Tagging Extension (MTE) trap.
+#[derive(Debug)]
+pub struct FaultMetadata {
+    pub faulting_addr: Option<usize>,
+    pub is_mte_fault: bool,
+}
+
+/// Hacky fix so previous code using just faulting_addr still works with a
+/// simple `.into()`. We assume the fault is only due to MTE if we
+/// determined that through parsing explicitly.
+impl From<Option<usize>> for FaultMetadata {
+    fn from(faulting_addr: Option<usize>) -> Self {
+        Self {
+            faulting_addr,
+            is_mte_fault: false,
+        }
+    }
+}
+
 impl CallThreadState {
     fn with(
         mut self,
@@ -486,13 +516,13 @@ impl CallThreadState {
         self.jmp_buf.replace(ptr::null())
     }
 
-    fn set_jit_trap(&self, pc: *const u8, fp: usize, faulting_addr: Option<usize>) {
+    fn set_jit_trap(&self, pc: *const u8, fp: usize, fault_metadata: FaultMetadata) {
         let backtrace = self.capture_backtrace(Some((pc as usize, fp)));
         unsafe {
             (*self.unwind.get()).as_mut_ptr().write((
                 UnwindReason::Trap(TrapReason::Jit {
                     pc: pc as usize,
-                    faulting_addr,
+                    fault_metadata,
                 }),
                 backtrace,
             ));

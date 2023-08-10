@@ -49,6 +49,9 @@ pub enum TrapCode {
     /// This trap is resumable.
     Interrupt,
 
+    /// An AArch64-specific Memory Tagging Extension (MTE) runtime trap.
+    MemoryTaggingExtensionFault,
+
     /// A user-defined trap code.
     User(u16),
 }
@@ -67,6 +70,7 @@ impl TrapCode {
             TrapCode::IntegerDivisionByZero,
             TrapCode::BadConversionToInteger,
             TrapCode::UnreachableCodeReached,
+            TrapCode::MemoryTaggingExtensionFault,
             TrapCode::Interrupt,
         ]
     }
@@ -85,6 +89,7 @@ impl Display for TrapCode {
             IntegerOverflow => "int_ovf",
             IntegerDivisionByZero => "int_divz",
             BadConversionToInteger => "bad_toint",
+            MemoryTaggingExtensionFault => "mte_fault",
             UnreachableCodeReached => "unreachable",
             Interrupt => "interrupt",
             User(x) => return write!(f, "user{}", x),
@@ -109,6 +114,7 @@ impl FromStr for TrapCode {
             "int_divz" => Ok(IntegerDivisionByZero),
             "bad_toint" => Ok(BadConversionToInteger),
             "unreachable" => Ok(UnreachableCodeReached),
+            "mte_fault" => Ok(MemoryTaggingExtensionFault),
             "interrupt" => Ok(Interrupt),
             _ if s.starts_with("user") => s[4..].parse().map(User).map_err(|_| ()),
             _ => Err(()),
