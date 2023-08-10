@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-
 use crate::cdsl::instructions::{
     AllInstructions, InstructionBuilder as Inst, InstructionGroupBuilder,
 };
@@ -3784,7 +3783,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_irg",
             r#"
-        Generate random tag
+        Generate random tag.
         "#,
             &formats.unary,
         )
@@ -3798,11 +3797,13 @@ pub(crate) fn define(
         Inst::new(
             "arm64_stg",
             r#"
-        Store tag to tag memory
+        Store tag to tag memory.
         "#,
             &formats.binary,
         )
         .operands_in(vec![
+            // virtual registers in CLIF
+            // TODO: tagged address
             Operand::new("t", iAddr).with_doc("Register holding tag"),
             Operand::new("p", iAddr).with_doc("Address to region"),
         ])
@@ -3814,7 +3815,7 @@ pub(crate) fn define(
         Inst::new(
             "arm64_st2g",
             r#"
-        Store tag to tag two granules of memory
+        Store tag to tag two granules of memory.
         "#,
             &formats.binary,
         )
@@ -3824,5 +3825,40 @@ pub(crate) fn define(
         ])
         .can_store()
         .other_side_effects(),
+    );
+
+    ig.push(
+        Inst::new(
+            "sign_pointer",
+            r#"
+        Compute and insert pointer authentication code (PAC) for data address.
+        Alternative, equivalent description: Signs a data address with a PAC.
+        "#,
+            &formats.unary,
+        )
+        .operands_in(vec![Operand::new("p", iAddr)
+            .with_doc("Data address/pointer into which PAC should be inserted")])
+        // no side effects, since it doesn't manipulate memory or trap
+        .operands_out(vec![Operand::new("a", iAddr)
+            .with_doc("Data address/pointer containing newly generated PAC")]),
+    );
+
+    ig.push(
+        Inst::new(
+            "auth_pointer",
+            r#"
+        Authenticate pointer using PAC. If authentication fails, upper bits are
+        corrupted so subsequent uses trap, otherwise upper bits are restored.
+        "#,
+            &formats.unary,
+        )
+        .operands_in(vec![
+            Operand::new("p", iAddr).with_doc("Data address/pointer to authenticate")
+        ])
+        .operands_out(vec![
+            Operand::new("a", iAddr).with_doc("Authenticated (restored or corrupted) data address")
+        ]), // TODO: doesn't trap here, but elsewhere
+            // has no side-effects, as it only traps during later use if authentication failed
+            // .other_side_effects(),
     );
 }

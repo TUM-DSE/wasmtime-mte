@@ -766,10 +766,30 @@ impl MachInstEmit for Inst {
                 };
                 let offset = offset >> LOG2_TAG_GRANULE;
                 let Some(simm9) = SImm9::maybe_from_i64(offset) else {
-                    panic!("stg offset out of range: {}", offset);
+                    panic!("st2g offset out of range: {}", offset);
                 };
 
                 sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
+            }
+            &MInst::Pacdza { rd, rn } => {
+                let rn = allocs.next(rn);
+                let rd = allocs.next_writable(rd);
+                debug_assert_eq!(rn, rd.to_reg());
+
+                let bits_31_10 = 0b1101_1010_1100_0001_0010_10;
+                let bits_9_5 = 0b1111_1;
+
+                sink.put4((bits_31_10 << 10) | (bits_9_5 << 5) | machreg_to_gpr(rd.to_reg()));
+            }
+            &MInst::Autdza { rd, rn } => {
+                let rn = allocs.next(rn);
+                let rd = allocs.next_writable(rd);
+                debug_assert_eq!(rn, rd.to_reg());
+
+                let bits_31_10 = 0b1101_1010_1100_0001_0011_10;
+                let bits_9_5 = 0b1111_1;
+
+                sink.put4((bits_31_10 << 10) | (bits_9_5 << 5) | machreg_to_gpr(rd.to_reg()));
             }
             &Inst::AluRRR {
                 alu_op,

@@ -406,6 +406,16 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_use(rt);
             memarg_operands(mem, collector);
         }
+        &Inst::Pacdza { rd, rn } => {
+            collector.reg_use(rn);
+            // Make sure rd and rn end up in same physical register (rd)
+            collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
+        }
+        &Inst::Autdza { rd, rn } => {
+            collector.reg_use(rn);
+            // Make sure rd and rn end up in same physical register (rd)
+            collector.reg_reuse_def(rd, 0); // `rn` == `rd`.
+        }
         &Inst::AluRRR { rd, rn, rm, .. } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1202,6 +1212,20 @@ impl Inst {
                 let mem = mem.pretty_print_default();
 
                 format!("{}{} {}, {}", mem_str, op, rt, mem)
+            }
+            &Inst::Pacdza { rd, rn, .. } => {
+                let op = "pacdza";
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
+
+                format!("{} {} {}", op, rd, rn)
+            }
+            &Inst::Autdza { rd, rn, .. } => {
+                let op = "autza";
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
+
+                format!("{} {} {}", op, rd, rn)
             }
             &Inst::Nop0 => "nop-zero-len".to_string(),
             &Inst::Nop4 => "nop".to_string(),
