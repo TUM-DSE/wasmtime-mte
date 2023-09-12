@@ -6,7 +6,10 @@
 use crate::environ::{FuncEnvironment, GlobalVariable};
 use crate::{FuncIndex, GlobalIndex, Heap, MemoryIndex, TableIndex, TypeIndex, WasmResult};
 use crate::{HashMap, Occupied, Vacant};
-use cranelift_codegen::ir::{self, Block, Inst, Value};
+use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
+use cranelift_entity::EntityRef;
+use cranelift_frontend::{FunctionBuilder, Variable};
 use std::vec::Vec;
 
 /// Information about the presence of an associated `else` for an `if`, or the
@@ -241,6 +244,60 @@ pub struct FuncTranslationState {
     // `FuncEnvironment::make_direct_func()`.
     // Stores both the function reference and the number of WebAssembly arguments
     functions: HashMap<FuncIndex, (ir::FuncRef, usize)>,
+
+    // In each (C) function, stack arrays are allocated contiguously. We want
+    // to deterministically guarantee that no two consecutive stack allocations
+    // share the same MTE tag. Therefore, we generate an initial MTE tag
+    // randomly, and, consequently, increment that value (and apply modulo of
+    // course) and use that as the tag.
+    // We store the whole tagged index, which includes the MTE tag in its upper
+    // bits, instead of just the MTE tag.
+    latest_tagged_index: Option<Value>,
+}
+
+const MTE_NON_TAG_BITS_MASK: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+const MTE_TAG_BITS_MASK: i64 = 0xF << 56;
+const MTE_TAG_ONE: i64 = 0x1 << 56;
+
+impl FuncTranslationState {
+    /// Tag the index with an MTE tag. If an initial tag has already been
+    /// generated, increment and use that, otherwise generate a new random tag
+    /// with IRG. Returns tagged index.
+    pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
+        let tagged_index = match self.latest_tagged_index.take() {
+            None => {
+                // Generate random tag with IRG
+                let tagged_index = builder.ins().arm64_irg(index);
+
+                let var = Variable::new(0);
+                builder.declare_var(var, I64);
+                // let var = builder.def_var(b, val)
+                // builder.use_var(var)
+
+                tagged_index
+            }
+            Some(tagged_index) => {
+                // Extract random tag
+                let latest_tag = builder.ins().band_imm(tagged_index, MTE_TAG_BITS_MASK);
+
+                // Increment saved, and wrap around if 16-byte overflow would occur.
+                // (tagged_index + MTE_TAG_ONE) & MTE_TAG_BITS_MASK
+                let incremented_tag = builder.ins().iadd_imm(latest_tag, MTE_TAG_ONE);
+                let incremented_tag = builder.ins().band_imm(incremented_tag, MTE_TAG_BITS_MASK);
+
+                // Remove previous tag from index.
+                let index_tag_removed = builder.ins().band_imm(index, MTE_NON_TAG_BITS_MASK);
+
+                // Tag index.
+                let tagged_index = builder.ins().bor(index_tag_removed, incremented_tag);
+
+                tagged_index
+            }
+        };
+
+        self.latest_tagged_index = Some(tagged_index);
+        tagged_index
+    }
 }
 
 // Public methods that are exposed to non-`cranelift_wasm` API consumers.
@@ -264,6 +321,7 @@ impl FuncTranslationState {
             tables: HashMap::new(),
             signatures: HashMap::new(),
             functions: HashMap::new(),
+            latest_tagged_index: None,
         }
     }
 
