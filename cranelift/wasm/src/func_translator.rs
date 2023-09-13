@@ -5,9 +5,10 @@
 //! WebAssembly module and the runtime environment.
 
 use core::convert::TryInto;
-use log::debug;
+use log::{debug, error};
 
 use wasmparser::{self, BinaryReader, FunctionBody, FuncValidator, WasmModuleResources};
+use wasmparser::Operator::Drop;
 
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, Block, InstBuilder, ValueLabel};
@@ -246,29 +247,37 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
         let pos = reader.original_position();
         builder.set_srcloc(cur_srcloc(&reader));
 
-        // Code duplication is necessary here because in the first branch, op lives only as long
-        // as &replacement.inst
+        // // Code duplication is necessary here because in the first branch, op lives only as long
+        // // as &replacement.inst
+        // if let Some(replacement) = environ.inst_replacement(pos) {
+        //     reader.skip(|r| {
+        //         let skipped_bytes = r.read_bytes(replacement.skip_bytes as usize)?;
+        //         eprintln!("Replacing {} bytes ({:x?}) with {:x?}", skipped_bytes.len(), skipped_bytes, &replacement.inst);
+        //         Ok(())
+        //     })?;
+        //     let mut reader = BinaryReader::new(&replacement.inst);
+        //     let op = reader.read_operator()?;
+        //
+        //     validator.op(pos, &op)?;
+        //     environ.before_translate_operator(&op, builder, state)?;
+        //     translate_operator(validator, &op, builder, state, environ)?;
+        //     environ.after_translate_operator(&op, builder, state)?;
+        // } else {
         if let Some(replacement) = environ.inst_replacement(pos) {
-            reader.skip(|r| {
-                let skipped_bytes = r.read_bytes(replacement.skip_bytes as usize)?;
-                debug!("Replacing {} bytes ({:x?}) with {:x?}", skipped_bytes.len(), skipped_bytes, &replacement.inst);
-                Ok(())
-            })?;
-            let mut reader = BinaryReader::new(&replacement.inst);
-            let op = reader.read_operator()?;
-
-            validator.op(pos, &op)?;
-            environ.before_translate_operator(&op, builder, state)?;
-            translate_operator(validator, &op, builder, state, environ)?;
-            environ.after_translate_operator(&op, builder, state)?;
-        } else {
-            let op = reader.read_operator()?;
-
-            validator.op(pos, &op)?;
-            environ.before_translate_operator(&op, builder, state)?;
-            translate_operator(validator, &op, builder, state, environ)?;
-            environ.after_translate_operator(&op, builder, state)?;
+            eprintln!("Replacement found at 0x{pos:x}: {:x?}", replacement);
         }
+
+            let op = reader.read_operator()?;
+
+            if let Drop = op {
+                eprintln!("Drop encountered at 0x{:x}", pos);
+            }
+
+            validator.op(pos, &op)?;
+            environ.before_translate_operator(&op, builder, state)?;
+            translate_operator(validator, &op, builder, state, environ)?;
+            environ.after_translate_operator(&op, builder, state)?;
+        // }
     }
     environ.after_translate_function(builder, state)?;
     let pos = reader.original_position();
