@@ -310,6 +310,12 @@ impl<'a> Iterator for Values<'a> {
 ///
 /// Values are either block parameters or instruction results.
 impl DataFlowGraph {
+    /// Insert a value.
+    pub fn insert_value(&mut self, ty: Type, val: Value) -> Value {
+        let data = ValueData::Alias { ty, original: val };
+        self.make_value(data.into())
+    }
+
     /// Allocate an extended value entry.
     fn make_value(&mut self, data: ValueData) -> Value {
         self.values.push(data.into())

@@ -2364,6 +2364,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let size = state.pop1();
             let index = state.pop1();
 
+            println!("Calling state.tag_index({})", index);
             let tagged_index = state.tag_index(index, builder);
 
             // make sure that prepare_addr uses our tagged index

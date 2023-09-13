@@ -8,8 +8,7 @@ use crate::{FuncIndex, GlobalIndex, Heap, MemoryIndex, TableIndex, TypeIndex, Wa
 use crate::{HashMap, Occupied, Vacant};
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
-use cranelift_entity::EntityRef;
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_frontend::FunctionBuilder;
 use std::vec::Vec;
 
 /// Information about the presence of an associated `else` for an `if`, or the
@@ -269,10 +268,8 @@ impl FuncTranslationState {
                 // Generate random tag with IRG
                 let tagged_index = builder.ins().arm64_irg(index);
 
-                let var = Variable::new(0);
-                builder.declare_var(var, I64);
-                // let var = builder.def_var(b, val)
-                // builder.use_var(var)
+                // Insert value into value storage (since values need to be typed).
+                // let tagged_index = builder.func.dfg.insert_value(I64, tagged_index);
 
                 tagged_index
             }
