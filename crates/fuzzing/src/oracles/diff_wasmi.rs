@@ -96,6 +96,7 @@ impl DiffEngine for WasmiEngine {
 /// Converts `wasmi` trap code to `wasmtime` trap code.
 fn wasmi_to_wasmtime_trap_code(trap: wasmi::core::TrapCode) -> Trap {
     use wasmi::core::TrapCode;
+    println!("got a memory access out of bounds that was converted to a memory out of bounds");
     match trap {
         TrapCode::Unreachable => Trap::UnreachableCodeReached,
         TrapCode::MemoryAccessOutOfBounds => Trap::MemoryOutOfBounds,

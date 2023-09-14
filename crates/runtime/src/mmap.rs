@@ -607,16 +607,27 @@ fn _assert() {
 const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
 const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 
+// TODO: just for debugging
+fn to_hex(value: i64) -> String {
+    let hex_str = format!("{:x}", value);
+    let mut result = String::default();
+
+    for (i, digit) in hex_str.chars().rev().enumerate() {
+        if i != 0 && i % 4 == 0 {
+            result.push('_');
+        }
+        result.push(digit);
+    }
+
+    String::from("0x") + result.chars().rev().collect::<String>().as_ref()
+}
+
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 #[target_feature(enable = "mte")]
 unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
     // TODO: check if i break the pointer
     // println!("base_addr before removing tag: {:#x}", base_addr);
 
-    println!(
-        "Executing st2g loop to tag base_ptr {:#x} with custom_tag {} for a size of {} bytes",
-        base_addr, custom_tag, size_to_tag
-    );
     assert_eq!(base_addr & 0xFF, 0, "base_addr should be 32-byte aligned");
 
     // MTE tag is stored in bits 56-59
@@ -629,30 +640,52 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
     // TODO: get tagged_ptr that already includes offset
     let tagged_ptr = base_addr | custom_tag_mask;
 
+    println!(
+        "st2g: base_ptr: {}, tagged_ptr: {}, custom_tag: {}, size : {} bytes",
+        to_hex(base_addr),
+        to_hex(tagged_ptr),
+        custom_tag,
+        size_to_tag
+    );
+
     for i in (0..size_to_tag).step_by(32) {
-        if i == 1 {
-            println!("executing second loop iteration of st2g, indicating that it didn't fail for the first");
-        }
+        // if i == 32 {
+        //     println!("executing second loop iteration of st2g, indicating that it didn't fail for the first");
+        // }
         // TODO: proper error handling
         let i: i64 = i.try_into().unwrap();
+        // TODO: what quantity are we adding here? in terms of bytes?
         let addr = base_addr + i;
 
+        // TODO: turn into debug_assert to save runtime performance
         assert_eq!(base_addr & 0xF, 0, "addr should be 16-byte aligned");
         assert_eq!(tagged_ptr & 0xF, 0, "tagged_ptr should be 16-byte aligned");
 
-        // If `st2g` instruction is not supported, it would just be replaced by `nop`
-        // TODO: potential issue: tagged_ptr or addr isn't properly aligned (to 16 bytes)?
+        // let ptr: *const i64 = addr as *const i64;
+        // let value_before = *ptr;
         // println!(
-        //     "executing st2g with tag: {:#x} and addr: {:#x}",
+        //     "before st2g, should be able to load because both are tagged with 0: {}",
+        //     value_before
+        // );
+
+        // println!(
+        //     "executing st2g with tagged_ptr: {:#x} and addr: {:#x}",
         //     tagged_ptr, addr
         // );
+
+        // TODO: potential issue: tagged_ptr or addr isn't properly aligned (to 16 bytes)?
+        // If `st2g` instruction is not supported, it would just be replaced by `nop`
         asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
+
+        // let ptr: *const i64 = addr as *const i64;
+        // let value_before = *ptr;
+        // println!(
+        //     "after st2g, load should fail, because memory region was tagged with tagged_ptr, bu we try to access with pointer without tag: {}",
+        //     value_before
+        // );
     }
 
-    println!(
-        "Finished executing st2g loop to tag base_ptr {:#x} with custom_tag {} for a size of {} bytes",
-        base_addr, custom_tag, size_to_tag
-    );
+    println!("Finished st2g loop",);
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]

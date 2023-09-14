@@ -3704,10 +3704,14 @@ where
 
     // TODO: maybe optimize by adding `size` statically as immediate
     // Trap if (iter_ptr + size) overflows, so we can use non-trapping instructions later
-    let end_ptr =
-        builder
-            .ins()
-            .uadd_overflow_trap(iter_ptr, size_dynamic, ir::TrapCode::HeapOutOfBounds);
+    let end_ptr = builder
+        .ins()
+        // .uadd_overflow_trap(iter_ptr, size_dynamic, ir::TrapCode::HeapOutOfBounds);
+        .uadd_overflow_trap(
+            iter_ptr,
+            size_dynamic,
+            ir::TrapCode::HeapOutOfBoundsMemoryTaggingExtensionFault,
+        );
 
     // In Rust, for u64: (a / b) == floor(a / b), which we make use of here
     let num_required_st2g_loops: u64 = size / u64::from(LOOP_UNROLL_BYTES_THRESHHOLD);

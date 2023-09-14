@@ -90,6 +90,9 @@ pub enum Trap {
 
     /// An AArch64-specific Memory Tagging Extension (MTE) runtime trap.
     MemoryTaggingExtensionFault,
+
+    /// An out-of-bounds action on the linear memory/heap, which is identified by the Memory Tagging Extension.
+    HeapOutOfBoundsMemoryTaggingExtensionFault,
     // if adding a variant here be sure to update the `check!` macro below
 }
 
@@ -113,6 +116,9 @@ impl fmt::Display for Trap {
             OutOfFuel => "all fuel consumed by WebAssembly",
             AtomicWaitNonSharedMemory => "atomic wait on non-shared memory",
             MemoryTaggingExtensionFault => "got memory tagging extension (mte) fault",
+            HeapOutOfBoundsMemoryTaggingExtensionFault => {
+                "out of bounds memory access, identified by memory tagging extension (mte)"
+            }
         };
         write!(f, "wasm trap: {desc}")
     }

@@ -374,6 +374,7 @@ fn initialize_memories(instance: &mut Instance, module: &Module) -> Result<()> {
         },
     );
     if !ok {
+        println!("memory out of bounds in initialize memories");
         return Err(Trap::MemoryOutOfBounds.into());
     }
 

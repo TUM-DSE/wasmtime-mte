@@ -52,6 +52,9 @@ pub enum TrapCode {
     /// An AArch64-specific Memory Tagging Extension (MTE) runtime trap.
     MemoryTaggingExtensionFault,
 
+    /// An out-of-bounds action on the linear memory/heap, which is identified by the Memory Tagging Extension.
+    HeapOutOfBoundsMemoryTaggingExtensionFault,
+
     /// A user-defined trap code.
     User(u16),
 }
@@ -71,6 +74,7 @@ impl TrapCode {
             TrapCode::BadConversionToInteger,
             TrapCode::UnreachableCodeReached,
             TrapCode::MemoryTaggingExtensionFault,
+            TrapCode::HeapOutOfBoundsMemoryTaggingExtensionFault,
             TrapCode::Interrupt,
         ]
     }
@@ -90,6 +94,7 @@ impl Display for TrapCode {
             IntegerDivisionByZero => "int_divz",
             BadConversionToInteger => "bad_toint",
             MemoryTaggingExtensionFault => "mte_fault",
+            HeapOutOfBoundsMemoryTaggingExtensionFault => "heap_oob_mte_fault",
             UnreachableCodeReached => "unreachable",
             Interrupt => "interrupt",
             User(x) => return write!(f, "user{}", x),
@@ -115,6 +120,7 @@ impl FromStr for TrapCode {
             "bad_toint" => Ok(BadConversionToInteger),
             "unreachable" => Ok(UnreachableCodeReached),
             "mte_fault" => Ok(MemoryTaggingExtensionFault),
+            "heap_oob_mte_fault" => Ok(HeapOutOfBoundsMemoryTaggingExtensionFault),
             "interrupt" => Ok(Interrupt),
             _ if s.starts_with("user") => s[4..].parse().map(User).map_err(|_| ()),
             _ => Err(()),

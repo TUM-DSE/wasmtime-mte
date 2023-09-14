@@ -1030,6 +1030,9 @@ fn mach_trap_to_trap(trap: &MachTrap) -> TrapInformation {
             ir::TrapCode::Interrupt => Trap::Interrupt,
             ir::TrapCode::User(ALWAYS_TRAP_CODE) => Trap::AlwaysTrapAdapter,
             ir::TrapCode::MemoryTaggingExtensionFault => Trap::MemoryTaggingExtensionFault,
+            ir::TrapCode::HeapOutOfBoundsMemoryTaggingExtensionFault => {
+                Trap::MemoryTaggingExtensionFault
+            }
 
             // these should never be emitted by wasmtime-cranelift
             ir::TrapCode::User(_) => unreachable!(),
