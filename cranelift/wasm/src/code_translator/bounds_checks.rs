@@ -58,6 +58,8 @@ where
         &mut builder.cursor(),
     );
 
+    // TODO: optimize by removing runtime has_mte check, make comp time instead
+
     // When MTE is enabled, we use MTE itself for bounds checking, so we
     // can skip traditional bounds checking and return early.
     // This also means an out-of-bounds access will only be recognized

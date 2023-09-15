@@ -660,6 +660,8 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
         // TODO: turn into debug_assert to save runtime performance
         assert_eq!(base_addr & 0xF, 0, "addr should be 16-byte aligned");
         assert_eq!(tagged_ptr & 0xF, 0, "tagged_ptr should be 16-byte aligned");
+        assert_eq!(base_addr & 0xFF, 0, "addr should be 32-byte aligned");
+        assert_eq!(tagged_ptr & 0xFF, 0, "tagged_ptr should be 32-byte aligned");
 
         // let ptr: *const i64 = addr as *const i64;
         // let value_before = *ptr;
@@ -760,7 +762,7 @@ impl TaggedMmap {
                 region.len,
             );
         }
-        // TODO: tag ptr as well
+        // TODO: tag ptr as well, but this is a design decision
     }
 
     fn tag_accessible_region(&self, accessible_region: &AccessibleMemoryRegion) {

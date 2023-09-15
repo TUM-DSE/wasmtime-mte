@@ -118,8 +118,12 @@ unsafe extern "C" fn trap_handler(
             _ => false,
         };
 
-        if let (true, Some(faulting_addr)) = (is_mte_fault, faulting_addr) {
-            println!("Got mte fault with mem address: {:#x}", faulting_addr);
+        println!("Maybe the segfault comes from here?");
+        if is_mte_fault {
+            println!("Got mte fault");
+        }
+        if let Some(faulting_addr) = faulting_addr {
+            println!("Got faulting address: {:#x}", faulting_addr);
         }
 
         let fault_metadata = FaultMetadata {
