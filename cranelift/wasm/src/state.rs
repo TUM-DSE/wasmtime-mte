@@ -265,6 +265,7 @@ impl FuncTranslationState {
     pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
         let tagged_index = match self.latest_tagged_index.take() {
             None => {
+                println!("called irg");
                 // Generate random tag with IRG
                 let tagged_index = builder.ins().arm64_irg(index);
 
