@@ -313,13 +313,9 @@ impl Mmap {
     }
 
     /// Make memory accessible while enabling mte
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte"))]
     fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<bool> {
         use std::io;
-
-        if !std::arch::is_aarch64_feature_detected!("mte") {
-            return Ok(false);
-        }
 
         const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
         const PR_TAGGED_ADDR_ENABLE: u64 = 1 << 0;
@@ -379,7 +375,7 @@ impl Mmap {
     }
 
     /// We don't support MTE on non arm64 linux
-    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte")))]
     fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<bool> {
         Ok(false)
     }
