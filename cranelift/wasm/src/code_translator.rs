@@ -2349,6 +2349,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 op
             ));
         }
+        // TODO: now we really actually do need SegmentStackNew and SegmentNew, since we employ deterministic tagging for (consecutive) stack arrays
         Operator::SegmentNew => {
             // builder
             // .ins()
@@ -2357,41 +2358,16 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // builder.ins().arm64_irg()
             todo!("not yet implemented: segment.new")
         }
-        Operator::SegmentFree { memarg } => {
-            // This instruction iterates over the base_ptr (for size bytes) and
-            // tags every 16 bytes of memory with a special free tag.
-
-            // Parameters (saved in state):
-            // base_ptr:  pointer to the memory that should be freed by tagging it
-            // size:      size of the memory (in bytes) that should be freed
-
-            // MTE tag is stored in bits 56-59
-            let special_free_tag: i64 = 0b0000;
-            let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-            let special_free_tag_mask = (special_free_tag << 56) | tag_mask;
-
-            let size = state.pop1();
-
-            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
-
-            // remove existing tag in base_ptr
-            let base_ptr = builder.ins().band_imm(base_ptr, tag_mask);
-
-            // set new special free tag in base_ptr
-            let tagged_ptr: Value = builder.ins().band_imm(base_ptr, special_free_tag_mask);
-
-            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
-        }
         Operator::SegmentStackNew { memarg } => {
             // TODO: add explanation what this instruction does
 
             let size = state.pop1();
-
             let index = state.pop1();
-            let tagged_index = builder.ins().arm64_irg(index);
+
+            println!("Calling state.tag_index({})", index);
+            let tagged_index = state.tag_index(index, builder);
+            // let tagged_index = builder.ins().arm64_irg(index);
+
             // make sure that prepare_addr uses our tagged index
             state.push1(tagged_index);
 
@@ -2403,6 +2379,35 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             tag_memory_region(base_ptr, base_ptr, size, builder, environ)?;
 
             state.push1(tagged_index);
+        }
+        Operator::SegmentFree { memarg } => {
+            // This instruction iterates over the base_ptr (for size bytes) and
+            // tags every 16 bytes of memory with a special free tag.
+
+            // Parameters (saved in state):
+            // base_ptr:  pointer to the memory that should be freed by tagging it
+            // size:      size of the memory (in bytes) that should be freed
+
+            // MTE tag is stored in bits 56-59
+            let special_free_tag = 0b0000;
+            let special_free_tag_mask: i64 = special_free_tag << 56;
+            let non_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+
+            let size = state.pop1();
+
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+
+            // remove existing tag in base_ptr
+            let base_ptr = builder.ins().band_imm(base_ptr, non_tag_bits_mask);
+
+            // TODO: this was a bug, OR is correct intead of AND, fix in other branches (doesn't show because tag here is 0 anyways, but if special tags is != 0, it would still be tagged with 0)
+            // set new special free tag in base_ptr
+            let tagged_ptr: Value = builder.ins().bor_imm(base_ptr, special_free_tag_mask);
+
+            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
         }
         Operator::SegmentStackFree { memarg } => {
             // TODO: add explanation what this instruction does
