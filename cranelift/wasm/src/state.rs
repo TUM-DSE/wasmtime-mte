@@ -332,6 +332,7 @@ impl FuncTranslationState {
         self.tables.clear();
         self.signatures.clear();
         self.functions.clear();
+        self.latest_tagged_index = None;
     }
 
     /// Initialize the state for compiling a function with the given signature.
