@@ -2349,13 +2349,36 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 op
             ));
         }
-        Operator::SegmentNew => {
-            // builder
-            // .ins()
-            // .Store(opcode, val_ty, flags, Offset32::new(0), val, base);
-            // Ok(())
-            // builder.ins().arm64_irg()
-            todo!("not yet implemented: segment.new")
+        Operator::SegmentNew { memarg } => {
+            let size = state.pop1();
+
+            let index = state.pop1();
+            let tagged_index = builder.ins().arm64_irg(index);
+            // make sure that prepare_addr uses our tagged index
+            state.push1(tagged_index);
+
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+
+            tag_memory_region(base_ptr, base_ptr, size, builder, environ)?;
+
+            state.push1(tagged_index);
+        }
+        Operator::SegmentSetTag { memarg } => {
+            let size = state.pop1();
+
+            let (_, tag) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
+                state,
+                prepare_addr(memarg, 16, builder, state, environ)?
+            );
+
+            tag_memory_region(base_ptr, tag, size, builder, environ)?;
         }
         Operator::SegmentFree { memarg } => {
             // This instruction iterates over the base_ptr (for size bytes) and
@@ -2384,41 +2407,6 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             let tagged_ptr: Value = builder.ins().band_imm(base_ptr, special_free_tag_mask);
 
             tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
-        }
-        Operator::SegmentStackNew { memarg } => {
-            // TODO: add explanation what this instruction does
-
-            let size = state.pop1();
-
-            let index = state.pop1();
-            let tagged_index = builder.ins().arm64_irg(index);
-            // make sure that prepare_addr uses our tagged index
-            state.push1(tagged_index);
-
-            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
-
-            tag_memory_region(base_ptr, base_ptr, size, builder, environ)?;
-
-            state.push1(tagged_index);
-        }
-        Operator::SegmentStackFree { memarg } => {
-            // TODO: add explanation what this instruction does
-
-            let size = state.pop1();
-
-            let (_, stack_ptr) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
-            let (_, base_ptr) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
-
-            tag_memory_region(base_ptr, stack_ptr, size, builder, environ)?;
         }
     };
     Ok(())
