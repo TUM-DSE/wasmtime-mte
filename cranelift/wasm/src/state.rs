@@ -263,7 +263,7 @@ impl FuncTranslationState {
     /// generated, increment and use that, otherwise generate a new random tag
     /// with IRG. Returns tagged index.
     pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
-        let tagged_index = match self.latest_tagged_index.take() {
+        let new_tagged_index = match self.latest_tagged_index.take() {
             None => {
                 println!("called irg");
                 // Generate random tag with IRG
@@ -293,8 +293,8 @@ impl FuncTranslationState {
             }
         };
 
-        self.latest_tagged_index = Some(tagged_index);
-        tagged_index
+        self.latest_tagged_index = Some(new_tagged_index);
+        new_tagged_index
     }
 }
 
@@ -319,6 +319,7 @@ impl FuncTranslationState {
             tables: HashMap::new(),
             signatures: HashMap::new(),
             functions: HashMap::new(),
+            // Don't use a random (irg return) value from a previous function
             latest_tagged_index: None,
         }
     }
@@ -332,6 +333,7 @@ impl FuncTranslationState {
         self.tables.clear();
         self.signatures.clear();
         self.functions.clear();
+        // Don't use a random (irg return) value from a previous function
         self.latest_tagged_index = None;
     }
 
