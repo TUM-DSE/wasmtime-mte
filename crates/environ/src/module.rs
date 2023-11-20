@@ -80,6 +80,8 @@ pub struct MemoryPlan {
     pub pre_guard_size: u64,
     /// Our chosen offset-guard size.
     pub offset_guard_size: u64,
+    /// If the memory should enable mte
+    pub mte_protected: bool,
 }
 
 impl MemoryPlan {
@@ -95,6 +97,7 @@ impl MemoryPlan {
             } else {
                 0
             },
+            mte_protected: tunables.enable_mte,
         }
     }
 }

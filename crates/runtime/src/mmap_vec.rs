@@ -40,7 +40,8 @@ impl MmapVec {
     /// bytes. All bytes will be initialized to zero since this is a fresh OS
     /// page allocation.
     pub fn with_capacity(size: usize) -> Result<MmapVec> {
-        Ok(MmapVec::new(Mmap::with_at_least(size)?, size))
+        // TODO: at some point, check if we can also enable mte here.
+        Ok(MmapVec::new(Mmap::with_at_least(size, false)?, size))
     }
 
     /// Creates a new `MmapVec` from the contents of an existing `slice`.

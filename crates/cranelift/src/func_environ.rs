@@ -1463,6 +1463,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                 offset_guard_size,
                 pre_guard_size: _,
                 memory: _,
+                mte_protected: _,
             } => {
                 let heap_bound = func.create_global_value(ir::GlobalValueData::Load {
                     base: ptr,
@@ -1483,6 +1484,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                 offset_guard_size,
                 pre_guard_size: _,
                 memory: _,
+                mte_protected: _,
             } => (
                 offset_guard_size,
                 HeapStyle::Static {

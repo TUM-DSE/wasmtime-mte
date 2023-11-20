@@ -313,6 +313,7 @@ impl Metadata {
             static_memory_bound_is_maximum,
             guard_before_linear_memory,
             relaxed_simd_deterministic,
+            enable_mte,
 
             // This doesn't affect compilation, it's just a runtime setting.
             dynamic_memory_growth_reserve: _,
@@ -372,6 +373,11 @@ impl Metadata {
             relaxed_simd_deterministic,
             other.relaxed_simd_deterministic,
             "relaxed simd deterministic semantics",
+        )?;
+        Self::check_bool(
+            enable_mte,
+            other.enable_mte,
+            "mte protection"
         )?;
 
         Ok(())

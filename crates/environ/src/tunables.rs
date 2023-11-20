@@ -49,6 +49,9 @@ pub struct Tunables {
     /// Whether or not lowerings for relaxed simd instructions are forced to
     /// be deterministic.
     pub relaxed_simd_deterministic: bool,
+
+    /// Whether mte should be enabled for memories
+    pub enable_mte: bool,
 }
 
 impl Default for Tunables {
@@ -96,6 +99,7 @@ impl Default for Tunables {
             generate_address_map: true,
             debug_adapter_modules: false,
             relaxed_simd_deterministic: false,
+            enable_mte: false,
         }
     }
 }

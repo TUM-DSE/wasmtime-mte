@@ -247,6 +247,10 @@ pub struct CommonOptions {
     /// of Wasmtime have both built in.
     #[clap(long)]
     pub compiler: Option<String>,
+
+    /// Whether to enable mte for memories
+    #[clap(long)]
+    pub enable_mte: bool,
 }
 
 impl CommonOptions {
@@ -352,6 +356,7 @@ impl CommonOptions {
         }
 
         config.relaxed_simd_deterministic(self.relaxed_simd_deterministic);
+        config.enable_mte(self.enable_mte);
 
         Ok(config)
     }

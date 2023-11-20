@@ -194,7 +194,8 @@ impl MemoryPool {
             })?;
 
         // Create a completely inaccessible region to start
-        let mapping = Mmap::accessible_reserved(0, allocation_size)
+        // TODO: enable mte here at some point
+        let mapping = Mmap::accessible_reserved(0, allocation_size, false)
             .context("failed to create memory pool mapping")?;
 
         let num_image_slots = max_instances * max_memories;
@@ -330,7 +331,8 @@ impl TablePool {
             .and_then(|c| c.checked_mul(max_instances))
             .ok_or_else(|| anyhow!("total size of instance tables exceeds addressable memory"))?;
 
-        let mapping = Mmap::accessible_reserved(allocation_size, allocation_size)
+        // TODO: enable mte here at some point
+        let mapping = Mmap::accessible_reserved(allocation_size, allocation_size, false)
             .context("failed to create table pool mapping")?;
 
         Ok(Self {

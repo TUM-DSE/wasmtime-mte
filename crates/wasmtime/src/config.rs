@@ -732,6 +732,14 @@ impl Config {
         self
     }
 
+    /// Enable mte for memories
+    ///
+    /// This is `false` by default.
+    pub fn enable_mte(&mut self, enable: bool) -> &mut Self {
+        self.tunables.enable_mte = enable;
+        self
+    }
+
     /// Configures whether the [WebAssembly bulk memory operations
     /// proposal][proposal] will be enabled for compilation.
     ///

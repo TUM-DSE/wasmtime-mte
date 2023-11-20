@@ -22,6 +22,7 @@ pub struct Mmap {
     ptr: usize,
     len: usize,
     file: Option<Arc<File>>,
+    mte_protected: bool,
 }
 
 impl Mmap {
@@ -35,14 +36,15 @@ impl Mmap {
             ptr: empty.as_ptr() as usize,
             len: 0,
             file: None,
+            mte_protected: false,
         }
     }
 
     /// Create a new `Mmap` pointing to at least `size` bytes of page-aligned accessible memory.
-    pub fn with_at_least(size: usize) -> Result<Self> {
+    pub fn with_at_least(size: usize, mte_protected: bool) -> Result<Self> {
         let page_size = crate::page_size();
         let rounded_size = (size + (page_size - 1)) & !(page_size - 1);
-        Self::accessible_reserved(rounded_size, rounded_size)
+        Self::accessible_reserved(rounded_size, rounded_size, mte_protected)
     }
 
     /// Creates a new `Mmap` by opening the file located at `path` and mapping
@@ -79,6 +81,7 @@ impl Mmap {
                 ptr: ptr as usize,
                 len,
                 file: Some(Arc::new(file)),
+                mte_protected: false,
             })
         }
 
@@ -168,7 +171,7 @@ impl Mmap {
     /// within a reserved mapping of `mapping_size` bytes. `accessible_size` and `mapping_size`
     /// must be native page-size multiples.
     #[cfg(not(target_os = "windows"))]
-    pub fn accessible_reserved(accessible_size: usize, mapping_size: usize) -> Result<Self> {
+    pub fn accessible_reserved(accessible_size: usize, mapping_size: usize, mte_protected: bool) -> Result<Self> {
         let page_size = crate::page_size();
         assert!(accessible_size <= mapping_size);
         assert_eq!(mapping_size & (page_size - 1), 0);
@@ -196,6 +199,7 @@ impl Mmap {
                 ptr: ptr as usize,
                 len: mapping_size,
                 file: None,
+                mte_protected,
             }
         } else {
             // Reserve the mapping size.
@@ -213,6 +217,7 @@ impl Mmap {
                 ptr: ptr as usize,
                 len: mapping_size,
                 file: None,
+                mte_protected,
             };
 
             if accessible_size != 0 {
@@ -297,7 +302,9 @@ impl Mmap {
         assert!(len <= self.len);
         assert!(start <= self.len - len);
 
-        if !self.make_accessible_with_mte(start, len)? {
+        if self.mte_protected {
+            self.make_accessible_with_mte(start, len)?;
+        } else {
             // Commit the accessible size.
             let ptr = self.ptr as *mut u8;
             unsafe {
@@ -313,15 +320,11 @@ impl Mmap {
     }
 
     /// Make memory accessible while enabling mte
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<bool> {
+    #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte"))]
+    fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<()> {
         use std::io;
 
-        if !std::arch::is_aarch64_feature_detected!("mte") {
-            return Ok(false);
-        }
-
-        const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
+       const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
         const PR_TAGGED_ADDR_ENABLE: u64 = 1 << 0;
         const PR_MTE_TCF_SHIFT: i32 = 1;
         const PR_MTE_TCF_SYNC: u64 = 1u64 << PR_MTE_TCF_SHIFT;
@@ -340,7 +343,7 @@ impl Mmap {
                 0,
             ) != 0
             {
-                return Err::<bool, io::Error>(io::Error::last_os_error().into())
+                return Err::<(), io::Error>(io::Error::last_os_error().into())
                     .context("unable to enable mte (prctl)");
             }
         }
@@ -355,33 +358,19 @@ impl Mmap {
 
         unsafe {
             if libc::mprotect(ptr.add(start).cast(), len, prot) != 0 {
-                return Err::<bool, io::Error>(io::Error::last_os_error().into())
+                return Err::<(), io::Error>(io::Error::last_os_error().into())
                     .context("unable to mprotect mte flags");
             }
         }
-        //
-        // unsafe {
-        //     let old_ptr: *mut i8 = ptr.add(start).cast();
-        //     let mut ptr = old_ptr as u64;
-        //     asm!("irg {ptr}, {ptr}", ptr = inout(reg) ptr);
-        //     asm!("stg {ptr}, [{ptr}]", ptr = inout(reg) ptr);
-        //     let ptr = ptr as *mut i8;
-        //     ptr.write_volatile(42);
-        //     let result = ptr.read_volatile();
-        //     println!("got ptr[0] = {result}");
-        //     println!("expecting segfault...");
-        //     ptr.add(16).write_volatile(43);
-        //     let result = ptr.add(16).read_volatile();
-        //     println!("got ptr[16] = {result}");
-        // }
 
-        Ok(true)
+        Ok(())
     }
 
     /// We don't support MTE on non arm64 linux
-    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
-    fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<bool> {
-        Ok(false)
+    #[cfg(not(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte")))]
+    fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
+        use anyhow::bail;
+        bail!("cannot enable mte on os {}, arch {}", std::env::consts::OS, std::env::consts::ARCH)
     }
 
     /// Make the memory starting at `start` and extending for `len` bytes accessible.
@@ -446,6 +435,11 @@ impl Mmap {
     /// Return whether any memory has been allocated.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Return whether mte is enabled for this memory
+    pub fn mte_protected(&self) -> bool {
+        self.mte_protected
     }
 
     /// Makes the specified `range` within this `Mmap` to be read/execute.
