@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use wasmparser::{
     types::Types, CustomSectionReader, DataKind, ElementItems, ElementKind, Encoding, ExternalKind,
-    FuncToValidate, FunctionBody, NameSectionReader, Naming, Operator, Parser, Payload, Type,
-    TypeRef, Validator, ValidatorResources,
+    FuncToValidate, FunctionBody, InstReplacement, NameSectionReader, Naming, Operator, Parser,
+    Payload, Type, TypeRef, Validator, ValidatorResources,
 };
 
 /// Object containing the standalone environment information.
@@ -94,6 +94,13 @@ pub struct ModuleTranslation<'data> {
     /// The type information of the current module made available at the end of the
     /// validation process.
     types: Option<Types>,
+
+    /// At which offset in the binary wasm file the code starts. This is used for instruction
+    /// replacements and is quite hacky.
+    pub code_offset: usize,
+
+    /// Replacement for instructions
+    pub instr_replacements: HashMap<usize, InstReplacement>,
 }
 
 impl<'data> ModuleTranslation<'data> {
@@ -502,6 +509,7 @@ impl<'a, 'data> ModuleEnvironment<'a, 'data> {
             Payload::CodeSectionStart { count, range, .. } => {
                 self.validator.code_section_start(count, &range)?;
                 let cnt = usize::try_from(count).unwrap();
+                self.result.code_offset = range.start;
                 self.result.function_body_inputs.reserve_exact(cnt);
                 self.result.debuginfo.wasm_file.code_section_offset = range.start as u64;
             }
@@ -648,6 +656,11 @@ and for re-adding support for interface types you can see this issue:
                 ))
             }
 
+            Payload::CustomSection(s) if s.name() == "pcsections.mem-safety" => {
+                self.result
+                    .instr_replacements
+                    .extend(self.validator.memory_safety_section(&s, s.range().start)?);
+            }
             Payload::CustomSection(s) => {
                 self.register_dwarf_section(&s);
             }

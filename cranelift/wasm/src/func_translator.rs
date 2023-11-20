@@ -4,17 +4,22 @@
 //! function to Cranelift IR guided by a `FuncEnvironment` which provides information about the
 //! WebAssembly module and the runtime environment.
 
+use core::convert::TryInto;
+use log::{debug, error};
+
+use wasmparser::{self, BinaryReader, FunctionBody, FuncValidator, WasmModuleResources};
+use wasmparser::Operator::Drop;
+
+use cranelift_codegen::entity::EntityRef;
+use cranelift_codegen::ir::{self, Block, InstBuilder, ValueLabel};
+use cranelift_codegen::timing;
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+
 use crate::code_translator::{bitcast_wasm_returns, translate_operator};
 use crate::environ::FuncEnvironment;
 use crate::state::FuncTranslationState;
 use crate::translation_utils::get_vmctx_value_label;
 use crate::WasmResult;
-use core::convert::TryInto;
-use cranelift_codegen::entity::EntityRef;
-use cranelift_codegen::ir::{self, Block, InstBuilder, ValueLabel};
-use cranelift_codegen::timing;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use wasmparser::{self, BinaryReader, FuncValidator, FunctionBody, WasmModuleResources};
 
 /// WebAssembly to Cranelift IR function translator.
 ///
@@ -203,12 +208,12 @@ fn declare_locals<FE: FuncEnvironment + ?Sized>(
             builder.ins().vconst(ir::types::I8X16, constant_handle)
         }
         Ref(wasmparser::RefType {
-            nullable: true,
-            heap_type,
-        }) => environ.translate_ref_null(builder.cursor(), heap_type.try_into()?)?,
+                nullable: true,
+                heap_type,
+            }) => environ.translate_ref_null(builder.cursor(), heap_type.try_into()?)?,
         Ref(wasmparser::RefType {
-            nullable: false, ..
-        }) => unreachable!(),
+                nullable: false, ..
+            }) => unreachable!(),
     };
 
     let ty = builder.func.dfg.value_type(zeroval);
@@ -237,14 +242,42 @@ fn parse_function_body<FE: FuncEnvironment + ?Sized>(
     debug_assert_eq!(state.control_stack.len(), 1, "State not initialized");
 
     environ.before_translate_function(builder, state)?;
+
     while !reader.eof() {
         let pos = reader.original_position();
         builder.set_srcloc(cur_srcloc(&reader));
-        let op = reader.read_operator()?;
-        validator.op(pos, &op)?;
-        environ.before_translate_operator(&op, builder, state)?;
-        translate_operator(validator, &op, builder, state, environ)?;
-        environ.after_translate_operator(&op, builder, state)?;
+
+        // // Code duplication is necessary here because in the first branch, op lives only as long
+        // // as &replacement.inst
+        // if let Some(replacement) = environ.inst_replacement(pos) {
+        //     reader.skip(|r| {
+        //         let skipped_bytes = r.read_bytes(replacement.skip_bytes as usize)?;
+        //         eprintln!("Replacing {} bytes ({:x?}) with {:x?}", skipped_bytes.len(), skipped_bytes, &replacement.inst);
+        //         Ok(())
+        //     })?;
+        //     let mut reader = BinaryReader::new(&replacement.inst);
+        //     let op = reader.read_operator()?;
+        //
+        //     validator.op(pos, &op)?;
+        //     environ.before_translate_operator(&op, builder, state)?;
+        //     translate_operator(validator, &op, builder, state, environ)?;
+        //     environ.after_translate_operator(&op, builder, state)?;
+        // } else {
+        if let Some(replacement) = environ.inst_replacement(pos) {
+            eprintln!("Replacement found at 0x{pos:x}: {:x?}", replacement);
+        }
+
+            let op = reader.read_operator()?;
+
+            if let Drop = op {
+                eprintln!("Drop encountered at 0x{:x}", pos);
+            }
+
+            validator.op(pos, &op)?;
+            environ.before_translate_operator(&op, builder, state)?;
+            translate_operator(validator, &op, builder, state, environ)?;
+            environ.after_translate_operator(&op, builder, state)?;
+        // }
     }
     environ.after_translate_function(builder, state)?;
     let pos = reader.original_position();
@@ -278,15 +311,18 @@ fn cur_srcloc(reader: &BinaryReader) -> ir::SourceLoc {
 
 #[cfg(test)]
 mod tests {
-    use super::FuncTranslator;
-    use crate::environ::DummyEnvironment;
-    use cranelift_codegen::ir::types::I32;
-    use cranelift_codegen::{ir, isa, settings, Context};
     use log::debug;
     use target_lexicon::PointerWidth;
     use wasmparser::{
-        FuncValidator, FunctionBody, Parser, ValidPayload, Validator, ValidatorResources,
+        FunctionBody, FuncValidator, Parser, Validator, ValidatorResources, ValidPayload,
     };
+
+    use cranelift_codegen::{Context, ir, isa, settings};
+    use cranelift_codegen::ir::types::I32;
+
+    use crate::environ::DummyEnvironment;
+
+    use super::FuncTranslator;
 
     #[test]
     fn small1() {
@@ -321,8 +357,8 @@ mod tests {
 
         let (body, mut validator) = extract_func(&wasm);
         trans
-            .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
-            .unwrap();
+        .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
+        .unwrap();
         debug!("{}", ctx.func.display());
         ctx.verify(&flags).unwrap();
     }
@@ -360,8 +396,8 @@ mod tests {
 
         let (body, mut validator) = extract_func(&wasm);
         trans
-            .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
-            .unwrap();
+        .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
+        .unwrap();
         debug!("{}", ctx.func.display());
         ctx.verify(&flags).unwrap();
     }
@@ -403,8 +439,8 @@ mod tests {
 
         let (body, mut validator) = extract_func(&wasm);
         trans
-            .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
-            .unwrap();
+        .translate_body(&mut validator, body, &mut ctx.func, &mut runtime.func_env())
+        .unwrap();
         debug!("{}", ctx.func.display());
         ctx.verify(&flags).unwrap();
     }

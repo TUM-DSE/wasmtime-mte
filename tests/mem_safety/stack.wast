@@ -16,14 +16,18 @@
         (local.get $ptr)
         (i64.const 0)
         (i64.const 16)
-        (segment.stack_free)
+        drop
+        drop
+        drop
+        ;;(segment.stack_free)
         (return)
   )
   (func (export "bar") (result i32)
         (local $ptr i64)
         (i64.const 0)
         (i64.const 16)
-        (segment.stack_new)
+        drop
+        ;;(segment.stack_new)
         (local.tee $ptr)
 
         ;; this should generate a mte fault
@@ -37,7 +41,11 @@
         (local.get $ptr)
         (i64.const 0)
         (i64.const 16)
-        (segment.stack_free)
+        ;; 0x1a, len 3 -> segment.stack_free
+        drop
+        drop
+        drop
+        ;;(segment.stack_free)
         (return)
   )
 )
