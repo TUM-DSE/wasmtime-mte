@@ -13,6 +13,7 @@ fn wrong_import_numbers() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn initializes_linear_memory() -> Result<()> {
     // Test for https://github.com/bytecodealliance/wasmtime/issues/2784
     let wat = r#"
@@ -33,6 +34,7 @@ fn initializes_linear_memory() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn linear_memory_limits() -> Result<()> {
     // this test will allocate 4GB of virtual memory space, and may not work in
     // situations like CI QEMU emulation where it triggers SIGKILL.
@@ -40,8 +42,8 @@ fn linear_memory_limits() -> Result<()> {
         return Ok(());
     }
     test(&Engine::default())?;
-    let mut pool = PoolingAllocationConfig::default();
-    pool.instance_memory_pages(65536);
+    let mut pool = crate::small_pool_config();
+    pool.memory_pages(65536);
     test(&Engine::new(Config::new().allocation_strategy(
         InstanceAllocationStrategy::Pooling(pool),
     ))?)?;

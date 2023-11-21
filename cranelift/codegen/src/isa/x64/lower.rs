@@ -3,10 +3,12 @@
 // ISLE integration glue.
 pub(super) mod isle;
 
+use crate::ir::pcc::{FactContext, PccResult};
 use crate::ir::{types, ExternalName, Inst as IRInst, LibCall, Opcode, Type};
 use crate::isa::x64::abi::*;
 use crate::isa::x64::inst::args::*;
 use crate::isa::x64::inst::*;
+use crate::isa::x64::pcc;
 use crate::isa::{x64::X64Backend, CallConv};
 use crate::machinst::abi::SmallInstVec;
 use crate::machinst::lower::*;
@@ -18,6 +20,18 @@ use target_lexicon::Triple;
 
 //=============================================================================
 // Helpers for instruction lowering.
+
+impl Lower<'_, Inst> {
+    #[inline]
+    pub fn temp_writable_gpr(&mut self) -> WritableGpr {
+        WritableGpr::from_writable_reg(self.alloc_tmp(types::I64).only_reg().unwrap()).unwrap()
+    }
+
+    #[inline]
+    pub fn temp_writable_xmm(&mut self) -> WritableXmm {
+        WritableXmm::from_writable_reg(self.alloc_tmp(types::F64).only_reg().unwrap()).unwrap()
+    }
+}
 
 fn is_int_or_ref_ty(ty: Type) -> bool {
     match ty {
@@ -150,7 +164,7 @@ fn emit_vm_call(
 
     // TODO avoid recreating signatures for every single Libcall function.
     let call_conv = CallConv::for_libcall(flags, CallConv::triple_default(triple));
-    let sig = libcall.signature(call_conv);
+    let sig = libcall.signature(call_conv, types::I64);
     let caller_conv = ctx.abi().call_conv(ctx.sigs());
 
     if !ctx.sigs().have_abi_sig_for_signature(&sig) {
@@ -159,7 +173,7 @@ fn emit_vm_call(
     }
 
     let mut abi =
-        X64Caller::from_libcall(ctx.sigs(), &sig, &extname, dist, caller_conv, flags.clone())?;
+        X64CallSite::from_libcall(ctx.sigs(), &sig, &extname, dist, caller_conv, flags.clone());
 
     abi.emit_stack_pre_adjust(ctx);
 
@@ -266,9 +280,9 @@ fn lower_to_amode(ctx: &mut Lower<Inst>, spec: InsnInput, offset: i32) -> Amode 
                         let uext_cst: u64 = (cst << shift) >> shift;
 
                         let final_offset = (offset as i64).wrapping_add(uext_cst as i64);
-                        if low32_will_sign_extend_to_64(final_offset as u64) {
+                        if let Ok(final_offset) = i32::try_from(final_offset) {
                             let base = put_input_in_reg(ctx, add_inputs[1 - i]);
-                            return Amode::imm_reg(final_offset as u32, base).with_flags(flags);
+                            return Amode::imm_reg(final_offset, base).with_flags(flags);
                         }
                     }
                 }
@@ -276,9 +290,9 @@ fn lower_to_amode(ctx: &mut Lower<Inst>, spec: InsnInput, offset: i32) -> Amode 
                 // If it's a constant, add it directly!
                 if let Some(cst) = ctx.get_input_as_source_or_const(add, i).constant {
                     let final_offset = (offset as i64).wrapping_add(cst as i64);
-                    if low32_will_sign_extend_to_64(final_offset as u64) {
+                    if let Ok(final_offset) = i32::try_from(final_offset) {
                         let base = put_input_in_reg(ctx, add_inputs[1 - i]);
-                        return Amode::imm_reg(final_offset as u32, base).with_flags(flags);
+                        return Amode::imm_reg(final_offset, base).with_flags(flags);
                     }
                 }
             }
@@ -291,7 +305,7 @@ fn lower_to_amode(ctx: &mut Lower<Inst>, spec: InsnInput, offset: i32) -> Amode 
         };
 
         return Amode::imm_reg_reg_shift(
-            offset as u32,
+            offset,
             Gpr::new(base).unwrap(),
             Gpr::new(index).unwrap(),
             shift,
@@ -300,7 +314,7 @@ fn lower_to_amode(ctx: &mut Lower<Inst>, spec: InsnInput, offset: i32) -> Amode 
     }
 
     let input = put_input_in_reg(ctx, spec);
-    Amode::imm_reg(offset as u32, input).with_flags(flags)
+    Amode::imm_reg(offset, input).with_flags(flags)
 }
 
 //=============================================================================
@@ -325,4 +339,16 @@ impl LowerBackend for X64Backend {
     fn maybe_pinned_reg(&self) -> Option<Reg> {
         Some(regs::pinned_reg())
     }
+
+    fn check_fact(
+        &self,
+        ctx: &FactContext<'_>,
+        vcode: &mut VCode<Self::MInst>,
+        inst: InsnIndex,
+        state: &mut pcc::FactFlowState,
+    ) -> PccResult<()> {
+        pcc::check(ctx, vcode, inst, state)
+    }
+
+    type FactFlowState = pcc::FactFlowState;
 }

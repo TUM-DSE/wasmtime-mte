@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use wasmtime::{
     AsContext, AsContextMut, Store, StoreContext, StoreContextMut, StoreLimits, StoreLimitsBuilder,
-    Val,
+    UpdateDeadline, Val,
 };
 
 /// This representation of a `Store` is used to implement the `wasm.h` API.
@@ -106,6 +106,47 @@ pub extern "C" fn wasmtime_store_new(
     })
 }
 
+pub type wasmtime_update_deadline_kind_t = u8;
+pub const WASMTIME_UPDATE_DEADLINE_CONTINUE: wasmtime_update_deadline_kind_t = 0;
+pub const WASMTIME_UPDATE_DEADLINE_YIELD: wasmtime_update_deadline_kind_t = 1;
+
+#[no_mangle]
+pub extern "C" fn wasmtime_store_epoch_deadline_callback(
+    store: &mut wasmtime_store_t,
+    func: extern "C" fn(
+        CStoreContextMut<'_>,
+        *mut c_void,
+        *mut u64,
+        *mut wasmtime_update_deadline_kind_t,
+    ) -> Option<Box<wasmtime_error_t>>,
+    data: *mut c_void,
+    finalizer: Option<extern "C" fn(*mut c_void)>,
+) {
+    let foreign = crate::ForeignData { data, finalizer };
+    store.store.epoch_deadline_callback(move |mut store_ctx| {
+        let _ = &foreign; // Move foreign into this closure
+        let mut delta: u64 = 0;
+        let mut kind = WASMTIME_UPDATE_DEADLINE_CONTINUE;
+        let result = (func)(
+            store_ctx.as_context_mut(),
+            foreign.data,
+            &mut delta as *mut u64,
+            &mut kind as *mut wasmtime_update_deadline_kind_t,
+        );
+        match result {
+            Some(err) => Err(wasmtime::Error::from(<wasmtime_error_t as Into<
+                anyhow::Error,
+            >>::into(*err))),
+            None if kind == WASMTIME_UPDATE_DEADLINE_CONTINUE => {
+                Ok(UpdateDeadline::Continue(delta))
+            }
+            #[cfg(feature = "async")]
+            None if kind == WASMTIME_UPDATE_DEADLINE_YIELD => Ok(UpdateDeadline::Yield(delta)),
+            _ => panic!("unknown wasmtime_update_deadline_kind_t: {}", kind),
+        }
+    });
+}
+
 #[no_mangle]
 pub extern "C" fn wasmtime_store_context(store: &mut wasmtime_store_t) -> CStoreContextMut<'_> {
     store.store.as_context_mut()
@@ -167,32 +208,20 @@ pub extern "C" fn wasmtime_context_gc(mut context: CStoreContextMut<'_>) {
 }
 
 #[no_mangle]
-pub extern "C" fn wasmtime_context_add_fuel(
+pub extern "C" fn wasmtime_context_set_fuel(
     mut store: CStoreContextMut<'_>,
     fuel: u64,
 ) -> Option<Box<wasmtime_error_t>> {
-    crate::handle_result(store.add_fuel(fuel), |()| {})
+    crate::handle_result(store.set_fuel(fuel), |()| {})
 }
 
 #[no_mangle]
-pub extern "C" fn wasmtime_context_fuel_consumed(store: CStoreContext<'_>, fuel: &mut u64) -> bool {
-    match store.fuel_consumed() {
-        Some(amt) => {
-            *fuel = amt;
-            true
-        }
-        None => false,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn wasmtime_context_consume_fuel(
-    mut store: CStoreContextMut<'_>,
-    fuel: u64,
-    remaining_fuel: &mut u64,
+pub extern "C" fn wasmtime_context_get_fuel(
+    store: CStoreContext<'_>,
+    fuel: &mut u64,
 ) -> Option<Box<wasmtime_error_t>> {
-    crate::handle_result(store.consume_fuel(fuel), |remaining| {
-        *remaining_fuel = remaining;
+    crate::handle_result(store.get_fuel(), |amt| {
+        *fuel = amt;
     })
 }
 

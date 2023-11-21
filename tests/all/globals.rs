@@ -73,7 +73,6 @@ fn use_after_drop() -> anyhow::Result<()> {
     let g = instance.get_global(&mut store, "foo").unwrap();
     assert_eq!(g.get(&mut store).i32(), Some(100));
     g.set(&mut store, 101.into())?;
-    drop(instance);
     assert_eq!(g.get(&mut store).i32(), Some(101));
     Instance::new(&mut store, &module, &[])?;
     assert_eq!(g.get(&mut store).i32(), Some(101));
@@ -98,8 +97,8 @@ fn v128() -> anyhow::Result<()> {
         GlobalType::new(ValType::V128, Mutability::Var),
         0u128.into(),
     )?;
-    assert_eq!(g.get(&mut store).v128(), Some(0));
+    assert_eq!(g.get(&mut store).v128(), Some(V128::from(0)));
     g.set(&mut store, 1u128.into())?;
-    assert_eq!(g.get(&mut store).v128(), Some(1));
+    assert_eq!(g.get(&mut store).v128(), Some(V128::from(1)));
     Ok(())
 }

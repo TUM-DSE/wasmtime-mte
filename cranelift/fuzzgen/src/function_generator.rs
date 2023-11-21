@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::cranelift_arbitrary::CraneliftArbitrary;
+use crate::target_isa_extras::TargetIsaExtras;
 use anyhow::Result;
 use arbitrary::{Arbitrary, Unstructured};
 use cranelift::codegen::data_value::DataValue;
@@ -8,11 +9,12 @@ use cranelift::codegen::ir::instructions::{InstructionFormat, ResolvedConstraint
 use cranelift::codegen::ir::stackslot::StackSize;
 
 use cranelift::codegen::ir::{
-    types::*, AtomicRmwOp, Block, ConstantData, ExternalName, FuncRef, Function, LibCall, Opcode,
-    SigRef, Signature, StackSlot, Type, UserExternalName, UserFuncName, Value,
+    types::*, AtomicRmwOp, Block, ConstantData, Endianness, ExternalName, FuncRef, Function,
+    LibCall, Opcode, SigRef, Signature, StackSlot, Type, UserExternalName, UserFuncName, Value,
 };
 use cranelift::codegen::isa::CallConv;
 use cranelift::frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
+use cranelift::prelude::isa::OwnedTargetIsa;
 use cranelift::prelude::{
     EntityRef, ExtFuncData, FloatCC, InstBuilder, IntCC, JumpTableData, MemFlags, StackSlotData,
     StackSlotKind,
@@ -20,6 +22,7 @@ use cranelift::prelude::{
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
+use std::str::FromStr;
 use target_lexicon::{Architecture, Triple};
 
 type BlockSignature = Vec<Type>;
@@ -68,27 +71,32 @@ fn insert_opcode(
     Ok(())
 }
 
-fn insert_call(
+fn insert_call_to_function(
     fgen: &mut FunctionGenerator,
     builder: &mut FunctionBuilder,
-    opcode: Opcode,
-    args: &[Type],
-    _rets: &[Type],
+    call_opcode: Opcode,
+    sig: &Signature,
+    sig_ref: SigRef,
+    func_ref: FuncRef,
 ) -> Result<()> {
-    assert!(matches!(opcode, Opcode::Call | Opcode::CallIndirect));
-    let (sig, sig_ref, func_ref) = fgen.u.choose(&fgen.resources.func_refs)?.clone();
-
     let actuals = fgen.generate_values_for_signature(
         builder,
         sig.params.iter().map(|abi_param| abi_param.value_type),
     )?;
 
-    let call = if opcode == Opcode::Call {
-        builder.ins().call(func_ref, &actuals)
-    } else {
-        let addr_ty = args[0];
-        let addr = builder.ins().func_addr(addr_ty, func_ref);
-        builder.ins().call_indirect(sig_ref, addr, &actuals)
+    let addr_ty = fgen.isa.pointer_type();
+    let call = match call_opcode {
+        Opcode::Call => builder.ins().call(func_ref, &actuals),
+        Opcode::ReturnCall => builder.ins().return_call(func_ref, &actuals),
+        Opcode::CallIndirect => {
+            let addr = builder.ins().func_addr(addr_ty, func_ref);
+            builder.ins().call_indirect(sig_ref, addr, &actuals)
+        }
+        Opcode::ReturnCallIndirect => {
+            let addr = builder.ins().func_addr(addr_ty, func_ref);
+            builder.ins().return_call_indirect(sig_ref, addr, &actuals)
+        }
+        _ => unreachable!(),
     };
 
     // Assign the return values to random variables
@@ -102,6 +110,19 @@ fn insert_call(
     Ok(())
 }
 
+fn insert_call(
+    fgen: &mut FunctionGenerator,
+    builder: &mut FunctionBuilder,
+    opcode: Opcode,
+    _args: &[Type],
+    _rets: &[Type],
+) -> Result<()> {
+    assert!(matches!(opcode, Opcode::Call | Opcode::CallIndirect));
+    let (sig, sig_ref, func_ref) = fgen.u.choose(&fgen.resources.func_refs)?.clone();
+
+    insert_call_to_function(fgen, builder, opcode, &sig, sig_ref, func_ref)
+}
+
 fn insert_stack_load(
     fgen: &mut FunctionGenerator,
     builder: &mut FunctionBuilder,
@@ -111,7 +132,14 @@ fn insert_stack_load(
 ) -> Result<()> {
     let typevar = rets[0];
     let type_size = typevar.bytes();
-    let (slot, slot_size) = fgen.stack_slot_with_size(type_size)?;
+    let (slot, slot_size, category) = fgen.stack_slot_with_size(type_size)?;
+
+    // `stack_load` doesen't support setting MemFlags, and it does not set any
+    // alias analysis bits, so we can only emit it for `Other` slots.
+    if category != AACategory::Other {
+        return Err(arbitrary::Error::IncorrectFormat.into());
+    }
+
     let offset = fgen.u.int_in_range(0..=(slot_size - type_size))? as i32;
 
     let val = builder.ins().stack_load(typevar, slot, offset);
@@ -130,7 +158,15 @@ fn insert_stack_store(
 ) -> Result<()> {
     let typevar = args[0];
     let type_size = typevar.bytes();
-    let (slot, slot_size) = fgen.stack_slot_with_size(type_size)?;
+
+    let (slot, slot_size, category) = fgen.stack_slot_with_size(type_size)?;
+
+    // `stack_store` doesen't support setting MemFlags, and it does not set any
+    // alias analysis bits, so we can only emit it for `Other` slots.
+    if category != AACategory::Other {
+        return Err(arbitrary::Error::IncorrectFormat.into());
+    }
+
     let offset = fgen.u.int_in_range(0..=(slot_size - type_size))? as i32;
 
     let arg0 = fgen.get_variable_of_type(typevar)?;
@@ -159,7 +195,7 @@ fn insert_cmp(
         // We filter out condition codes that aren't supported by the target at
         // this point after randomly choosing one, instead of randomly choosing a
         // supported one, to avoid invalidating the corpus when these get implemented.
-        let unimplemented_cc = match (fgen.target_triple.architecture, cc) {
+        let unimplemented_cc = match (fgen.isa.triple().architecture, cc) {
             // Some FloatCC's are not implemented on AArch64, see:
             // https://github.com/bytecodealliance/wasmtime/issues/4850
             (Architecture::Aarch64(_), FloatCC::OrderedNotEqual) => true,
@@ -217,7 +253,13 @@ fn insert_bitcast(
     let to_var = fgen.get_variable_of_type(rets[0])?;
 
     // TODO: We can generate little/big endian flags here.
-    let memflags = MemFlags::new();
+    let mut memflags = MemFlags::new();
+
+    // When bitcasting between vectors of different lane counts, we need to
+    // specify the endianness.
+    if args[0].lane_count() != rets[0].lane_count() {
+        memflags.set_endianness(Endianness::Little);
+    }
 
     let res = builder.ins().bitcast(rets[0], memflags, from_val);
     builder.def_var(to_var, res);
@@ -435,7 +477,7 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
             assert_eq!(rets.len(), 1);
 
             let arg = args[0];
-            let ret = args[0];
+            let ret = rets[0];
 
             // Vector arguments must produce vector results, and scalar arguments must produce
             // scalar results.
@@ -443,7 +485,7 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 return false;
             }
 
-            if arg.is_vector() && arg.is_vector() {
+            if arg.is_vector() && ret.is_vector() {
                 // Vector conversions must have the same number of lanes, and the lanes must be the
                 // same bit-width.
                 if arg.lane_count() != ret.lane_count() {
@@ -456,6 +498,20 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
             }
         }
 
+        Opcode::Bitcast => {
+            assert_eq!(args.len(), 1);
+            assert_eq!(rets.len(), 1);
+
+            let arg = args[0];
+            let ret = rets[0];
+
+            // The opcode generator still allows bitcasts between different sized types, but these
+            // are rejected in the verifier.
+            if arg.bits() != ret.bits() {
+                return false;
+            }
+        }
+
         _ => {}
     }
 
@@ -465,7 +521,7 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 op,
                 args,
                 rets,
-                (Opcode::IaddCout, &([I8, I8] | [I16, I16] | [I128, I128])),
+                (Opcode::UmulOverflow | Opcode::SmulOverflow, &[I128, I128]),
                 (Opcode::Imul, &[I8X16, I8X16]),
                 // https://github.com/bytecodealliance/wasmtime/issues/5468
                 (Opcode::Smulhi | Opcode::Umulhi, &[I8, I8]),
@@ -473,28 +529,10 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 (Opcode::Udiv | Opcode::Sdiv, &[I128, I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/5474
                 (Opcode::Urem | Opcode::Srem, &[I128, I128]),
-                // https://github.com/bytecodealliance/wasmtime/issues/5466
-                (Opcode::Iabs, &[I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/3370
                 (
                     Opcode::Smin | Opcode::Umin | Opcode::Smax | Opcode::Umax,
                     &[I128, I128]
-                ),
-                // https://github.com/bytecodealliance/wasmtime/issues/4870
-                (Opcode::Bnot, &[F32 | F64]),
-                (
-                    Opcode::Band
-                        | Opcode::Bor
-                        | Opcode::Bxor
-                        | Opcode::BandNot
-                        | Opcode::BorNot
-                        | Opcode::BxorNot,
-                    &([F32, F32] | [F64, F64])
-                ),
-                // https://github.com/bytecodealliance/wasmtime/issues/5041
-                (
-                    Opcode::BandNot | Opcode::BorNot | Opcode::BxorNot,
-                    &([I8, I8] | [I16, I16] | [I32, I32] | [I64, I64] | [I128, I128])
                 ),
                 // https://github.com/bytecodealliance/wasmtime/issues/5107
                 (Opcode::Cls, &[I8], &[I8]),
@@ -502,15 +540,8 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 (Opcode::Cls, &[I32], &[I32]),
                 (Opcode::Cls, &[I64], &[I64]),
                 (Opcode::Cls, &[I128], &[I128]),
-                // https://github.com/bytecodealliance/wasmtime/issues/5197
-                (
-                    Opcode::Bitselect,
-                    &([I8, I8, I8]
-                        | [I16, I16, I16]
-                        | [I32, I32, I32]
-                        | [I64, I64, I64]
-                        | [I128, I128, I128])
-                ),
+                // TODO
+                (Opcode::Bitselect, &[_, _, _], &[F32 | F64]),
                 // https://github.com/bytecodealliance/wasmtime/issues/4897
                 // https://github.com/bytecodealliance/wasmtime/issues/4899
                 (
@@ -551,6 +582,7 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                     Opcode::Umax | Opcode::Smax | Opcode::Umin | Opcode::Smin,
                     &[I64X2, I64X2]
                 ),
+                // https://github.com/bytecodealliance/wasmtime/issues/6104
                 (Opcode::Bitcast, &[I128], &[_]),
                 (Opcode::Bitcast, &[_], &[I128]),
                 (Opcode::Uunarrow),
@@ -574,6 +606,15 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                     &[],
                     &[I8X16 | I16X8 | I32X4 | I64X2 | F32X4 | F64X2]
                 ),
+                // TODO
+                (
+                    Opcode::Sshr | Opcode::Ushr | Opcode::Ishl,
+                    &[I8X16 | I16X8 | I32X4 | I64X2, I128]
+                ),
+                (
+                    Opcode::Rotr | Opcode::Rotl,
+                    &[I8X16 | I16X8 | I32X4 | I64X2, _]
+                ),
             )
         }
 
@@ -582,13 +623,11 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 op,
                 args,
                 rets,
-                (Opcode::IaddCout, &[I128, I128]),
+                (Opcode::UmulOverflow | Opcode::SmulOverflow, &[I128, I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/4864
                 (Opcode::Udiv | Opcode::Sdiv, &[I128, I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/5472
                 (Opcode::Urem | Opcode::Srem, &[I128, I128]),
-                // https://github.com/bytecodealliance/wasmtime/issues/5467
-                (Opcode::Iabs, &[I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/4313
                 (
                     Opcode::Smin | Opcode::Umin | Opcode::Smax | Opcode::Umax,
@@ -613,7 +652,8 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                         | Opcode::FcvtToUintSat
                         | Opcode::FcvtToSint
                         | Opcode::FcvtToSintSat,
-                    &[F32 | F64]
+                    &[F32 | F64],
+                    &[I128]
                 ),
                 // https://github.com/bytecodealliance/wasmtime/issues/4933
                 (
@@ -629,6 +669,21 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 // Nothing wrong with this select. But we have an isle rule that can optimize it
                 // into a `min`/`max` instructions, which we don't have implemented yet.
                 (Opcode::Select, &[I8, I128, I128]),
+                // https://github.com/bytecodealliance/wasmtime/issues/6104
+                (Opcode::Bitcast, &[I128], &[_]),
+                (Opcode::Bitcast, &[_], &[I128]),
+                // TODO
+                (
+                    Opcode::Sshr | Opcode::Ushr | Opcode::Ishl,
+                    &[I8X16 | I16X8 | I32X4 | I64X2, I128]
+                ),
+                (
+                    Opcode::Rotr | Opcode::Rotl,
+                    &[I8X16 | I16X8 | I32X4 | I64X2, _]
+                ),
+                // TODO
+                (Opcode::Bitselect, &[_, _, _], &[F32 | F64]),
+                (Opcode::VhighBits, &[F32X4 | F64X2]),
             )
         }
 
@@ -637,7 +692,9 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 op,
                 args,
                 rets,
-                (Opcode::IaddCout),
+                (Opcode::UaddOverflow | Opcode::SaddOverflow),
+                (Opcode::UsubOverflow | Opcode::SsubOverflow),
+                (Opcode::UmulOverflow | Opcode::SmulOverflow),
                 (
                     Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem,
                     &[I128, I128]
@@ -666,22 +723,23 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                     &[F32 | F64]
                 ),
                 (Opcode::SsubSat | Opcode::SaddSat, &[I64X2, I64X2]),
+                // https://github.com/bytecodealliance/wasmtime/issues/6104
+                (Opcode::Bitcast, &[I128], &[_]),
+                (Opcode::Bitcast, &[_], &[I128]),
+                // TODO
+                (Opcode::Bitselect, &[_, _, _], &[F32 | F64]),
             )
         }
 
         Architecture::Riscv64(_) => {
-            // RISC-V Does not support SIMD at all
-            let is_simd = args.iter().chain(rets).any(|t| t.is_vector());
-            if is_simd {
-                return false;
-            }
-
             exceptions!(
                 op,
                 args,
                 rets,
                 // TODO
-                (Opcode::IaddCout),
+                (Opcode::UaddOverflow | Opcode::SaddOverflow),
+                (Opcode::UsubOverflow | Opcode::SsubOverflow),
+                (Opcode::UmulOverflow | Opcode::SmulOverflow),
                 // TODO
                 (
                     Opcode::Udiv | Opcode::Sdiv | Opcode::Urem | Opcode::Srem,
@@ -691,30 +749,38 @@ fn valid_for_target(triple: &Triple, op: Opcode, args: &[Type], rets: &[Type]) -
                 (Opcode::Iabs, &[I128]),
                 // TODO
                 (Opcode::Bitselect, &[I128, I128, I128]),
-                // TODO
-                (Opcode::Bswap),
                 // https://github.com/bytecodealliance/wasmtime/issues/5528
                 (
-                    Opcode::FcvtToUint
-                        | Opcode::FcvtToUintSat
-                        | Opcode::FcvtToSint
-                        | Opcode::FcvtToSintSat,
+                    Opcode::FcvtToUint | Opcode::FcvtToSint,
+                    [F32 | F64],
+                    &[I128]
+                ),
+                (
+                    Opcode::FcvtToUintSat | Opcode::FcvtToSintSat,
                     &[F32 | F64],
-                    &[I8 | I16 | I128]
+                    &[I128]
                 ),
                 // https://github.com/bytecodealliance/wasmtime/issues/5528
                 (
                     Opcode::FcvtFromUint | Opcode::FcvtFromSint,
-                    &[I8 | I16 | I128],
+                    &[I128],
                     &[F32 | F64]
                 ),
+                // https://github.com/bytecodealliance/wasmtime/issues/6104
+                (Opcode::Bitcast, &[I128], &[_]),
+                (Opcode::Bitcast, &[_], &[I128]),
                 // TODO
                 (
-                    Opcode::BandNot | Opcode::BorNot | Opcode::BxorNot,
-                    &([F32, F32] | [F64, F64])
+                    Opcode::SelectSpectreGuard,
+                    &[_, _, _],
+                    &[F32 | F64 | I8X16 | I16X8 | I32X4 | I64X2 | F64X2 | F32X4]
                 ),
-                // https://github.com/bytecodealliance/wasmtime/issues/5884
-                (Opcode::AtomicRmw),
+                // TODO
+                (Opcode::Bitselect, &[_, _, _], &[F32 | F64]),
+                (
+                    Opcode::Rotr | Opcode::Rotl,
+                    &[I8X16 | I16X8 | I32X4 | I64X2, _]
+                ),
             )
         }
 
@@ -732,12 +798,28 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
         F32X4, F64X2, // SIMD Floats
     ];
 
+    // When this env variable is passed, we only generate instructions for the opcodes listed in
+    // the comma-separated list. This is useful for debugging, as it allows us to focus on a few
+    // specific opcodes.
+    let allowed_opcodes = std::env::var("FUZZGEN_ALLOWED_OPS").ok().map(|s| {
+        s.split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| Opcode::from_str(s).expect("Unrecoginzed opcode"))
+            .collect::<Vec<_>>()
+    });
+
     Opcode::all()
         .iter()
         .filter(|op| {
             match op {
                 // Control flow opcodes should not be generated through `generate_instructions`.
-                Opcode::BrTable | Opcode::Brif | Opcode::Jump | Opcode::Return => false,
+                Opcode::BrTable
+                | Opcode::Brif
+                | Opcode::Jump
+                | Opcode::Return
+                | Opcode::ReturnCall
+                | Opcode::ReturnCallIndirect => false,
 
                 // Constants are generated outside of `generate_instructions`
                 Opcode::Iconst => false,
@@ -815,8 +897,6 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::Trapnz),
                 (Opcode::ResumableTrapnz),
                 (Opcode::CallIndirect, &[I32]),
-                (Opcode::ReturnCall),
-                (Opcode::ReturnCallIndirect),
                 (Opcode::FuncAddr),
                 (Opcode::X86Pshufb),
                 (Opcode::AvgRound),
@@ -841,7 +921,6 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::TableAddr),
                 (Opcode::Null),
                 (Opcode::X86Blendv),
-                (Opcode::VallTrue),
                 (Opcode::IcmpImm),
                 (Opcode::X86Pmulhrsw),
                 (Opcode::IaddImm),
@@ -855,7 +934,6 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::IaddCarry),
                 (Opcode::UaddOverflowTrap),
                 (Opcode::IsubBin),
-                (Opcode::IsubBout),
                 (Opcode::IsubBorrow),
                 (Opcode::BandImm),
                 (Opcode::BorImm),
@@ -870,146 +948,6 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::ScalarToVector),
                 (Opcode::X86Pmaddubsw),
                 (Opcode::X86Cvtt2dq),
-                (Opcode::Select, &[I8, F32, F32], &[F32]),
-                (Opcode::Select, &[I16, F32, F32], &[F32]),
-                (Opcode::Select, &[I32, F32, F32], &[F32]),
-                (Opcode::Select, &[I64, F32, F32], &[F32]),
-                (Opcode::Select, &[I128, F32, F32], &[F32]),
-                (Opcode::Select, &[I8, F64, F64], &[F64]),
-                (Opcode::Select, &[I16, F64, F64], &[F64]),
-                (Opcode::Select, &[I32, F64, F64], &[F64]),
-                (Opcode::Select, &[I64, F64, F64], &[F64]),
-                (Opcode::Select, &[I128, F64, F64], &[F64]),
-                (Opcode::Select, &[I8, I8X16, I8X16], &[I8X16]),
-                (Opcode::Select, &[I16, I8X16, I8X16], &[I8X16]),
-                (Opcode::Select, &[I32, I8X16, I8X16], &[I8X16]),
-                (Opcode::Select, &[I64, I8X16, I8X16], &[I8X16]),
-                (Opcode::Select, &[I128, I8X16, I8X16], &[I8X16]),
-                (Opcode::Select, &[I8, I16X8, I16X8], &[I16X8]),
-                (Opcode::Select, &[I16, I16X8, I16X8], &[I16X8]),
-                (Opcode::Select, &[I32, I16X8, I16X8], &[I16X8]),
-                (Opcode::Select, &[I64, I16X8, I16X8], &[I16X8]),
-                (Opcode::Select, &[I128, I16X8, I16X8], &[I16X8]),
-                (Opcode::Select, &[I8, I32X4, I32X4], &[I32X4]),
-                (Opcode::Select, &[I16, I32X4, I32X4], &[I32X4]),
-                (Opcode::Select, &[I32, I32X4, I32X4], &[I32X4]),
-                (Opcode::Select, &[I64, I32X4, I32X4], &[I32X4]),
-                (Opcode::Select, &[I128, I32X4, I32X4], &[I32X4]),
-                (Opcode::Select, &[I8, I64X2, I64X2], &[I64X2]),
-                (Opcode::Select, &[I16, I64X2, I64X2], &[I64X2]),
-                (Opcode::Select, &[I32, I64X2, I64X2], &[I64X2]),
-                (Opcode::Select, &[I64, I64X2, I64X2], &[I64X2]),
-                (Opcode::Select, &[I128, I64X2, I64X2], &[I64X2]),
-                (Opcode::Select, &[I8, F32X4, F32X4], &[F32X4]),
-                (Opcode::Select, &[I16, F32X4, F32X4], &[F32X4]),
-                (Opcode::Select, &[I32, F32X4, F32X4], &[F32X4]),
-                (Opcode::Select, &[I64, F32X4, F32X4], &[F32X4]),
-                (Opcode::Select, &[I128, F32X4, F32X4], &[F32X4]),
-                (Opcode::Select, &[I8, F64X2, F64X2], &[F64X2]),
-                (Opcode::Select, &[I16, F64X2, F64X2], &[F64X2]),
-                (Opcode::Select, &[I32, F64X2, F64X2], &[F64X2]),
-                (Opcode::Select, &[I64, F64X2, F64X2], &[F64X2]),
-                (Opcode::Select, &[I128, F64X2, F64X2], &[F64X2]),
-                (Opcode::SelectSpectreGuard, &[I8, F32, F32], &[F32]),
-                (Opcode::SelectSpectreGuard, &[I16, F32, F32], &[F32]),
-                (Opcode::SelectSpectreGuard, &[I32, F32, F32], &[F32]),
-                (Opcode::SelectSpectreGuard, &[I64, F32, F32], &[F32]),
-                (Opcode::SelectSpectreGuard, &[I128, F32, F32], &[F32]),
-                (Opcode::SelectSpectreGuard, &[I8, F64, F64], &[F64]),
-                (Opcode::SelectSpectreGuard, &[I16, F64, F64], &[F64]),
-                (Opcode::SelectSpectreGuard, &[I32, F64, F64], &[F64]),
-                (Opcode::SelectSpectreGuard, &[I64, F64, F64], &[F64]),
-                (Opcode::SelectSpectreGuard, &[I128, F64, F64], &[F64]),
-                (Opcode::SelectSpectreGuard, &[I8, I8X16, I8X16], &[I8X16]),
-                (Opcode::SelectSpectreGuard, &[I16, I8X16, I8X16], &[I8X16]),
-                (Opcode::SelectSpectreGuard, &[I32, I8X16, I8X16], &[I8X16]),
-                (Opcode::SelectSpectreGuard, &[I64, I8X16, I8X16], &[I8X16]),
-                (Opcode::SelectSpectreGuard, &[I128, I8X16, I8X16], &[I8X16]),
-                (Opcode::SelectSpectreGuard, &[I8, I16X8, I16X8], &[I16X8]),
-                (Opcode::SelectSpectreGuard, &[I16, I16X8, I16X8], &[I16X8]),
-                (Opcode::SelectSpectreGuard, &[I32, I16X8, I16X8], &[I16X8]),
-                (Opcode::SelectSpectreGuard, &[I64, I16X8, I16X8], &[I16X8]),
-                (Opcode::SelectSpectreGuard, &[I128, I16X8, I16X8], &[I16X8]),
-                (Opcode::SelectSpectreGuard, &[I8, I32X4, I32X4], &[I32X4]),
-                (Opcode::SelectSpectreGuard, &[I16, I32X4, I32X4], &[I32X4]),
-                (Opcode::SelectSpectreGuard, &[I32, I32X4, I32X4], &[I32X4]),
-                (Opcode::SelectSpectreGuard, &[I64, I32X4, I32X4], &[I32X4]),
-                (Opcode::SelectSpectreGuard, &[I128, I32X4, I32X4], &[I32X4]),
-                (Opcode::SelectSpectreGuard, &[I8, I64X2, I64X2], &[I64X2]),
-                (Opcode::SelectSpectreGuard, &[I16, I64X2, I64X2], &[I64X2]),
-                (Opcode::SelectSpectreGuard, &[I32, I64X2, I64X2], &[I64X2]),
-                (Opcode::SelectSpectreGuard, &[I64, I64X2, I64X2], &[I64X2]),
-                (Opcode::SelectSpectreGuard, &[I128, I64X2, I64X2], &[I64X2]),
-                (Opcode::SelectSpectreGuard, &[I8, F32X4, F32X4], &[F32X4]),
-                (Opcode::SelectSpectreGuard, &[I16, F32X4, F32X4], &[F32X4]),
-                (Opcode::SelectSpectreGuard, &[I32, F32X4, F32X4], &[F32X4]),
-                (Opcode::SelectSpectreGuard, &[I64, F32X4, F32X4], &[F32X4]),
-                (Opcode::SelectSpectreGuard, &[I128, F32X4, F32X4], &[F32X4]),
-                (Opcode::SelectSpectreGuard, &[I8, F64X2, F64X2], &[F64X2]),
-                (Opcode::SelectSpectreGuard, &[I16, F64X2, F64X2], &[F64X2]),
-                (Opcode::SelectSpectreGuard, &[I32, F64X2, F64X2], &[F64X2]),
-                (Opcode::SelectSpectreGuard, &[I64, F64X2, F64X2], &[F64X2]),
-                (Opcode::SelectSpectreGuard, &[I128, F64X2, F64X2], &[F64X2]),
-                (Opcode::Bitselect, &[F32, F32, F32], &[F32]),
-                (Opcode::Bitselect, &[F64, F64, F64], &[F64]),
-                (Opcode::Bitselect, &[F32X4, F32X4, F32X4], &[F32X4]),
-                (Opcode::Bitselect, &[F64X2, F64X2, F64X2], &[F64X2]),
-                (Opcode::VanyTrue, &[F32X4], &[I8]),
-                (Opcode::VanyTrue, &[F64X2], &[I8]),
-                (Opcode::VhighBits, &[F32X4], &[I8]),
-                (Opcode::VhighBits, &[F64X2], &[I8]),
-                (Opcode::VhighBits, &[I8X16], &[I16]),
-                (Opcode::VhighBits, &[I16X8], &[I16]),
-                (Opcode::VhighBits, &[I32X4], &[I16]),
-                (Opcode::VhighBits, &[I64X2], &[I16]),
-                (Opcode::VhighBits, &[F32X4], &[I16]),
-                (Opcode::VhighBits, &[F64X2], &[I16]),
-                (Opcode::VhighBits, &[I8X16], &[I32]),
-                (Opcode::VhighBits, &[I16X8], &[I32]),
-                (Opcode::VhighBits, &[I32X4], &[I32]),
-                (Opcode::VhighBits, &[I64X2], &[I32]),
-                (Opcode::VhighBits, &[F32X4], &[I32]),
-                (Opcode::VhighBits, &[F64X2], &[I32]),
-                (Opcode::VhighBits, &[I8X16], &[I64]),
-                (Opcode::VhighBits, &[I16X8], &[I64]),
-                (Opcode::VhighBits, &[I32X4], &[I64]),
-                (Opcode::VhighBits, &[I64X2], &[I64]),
-                (Opcode::VhighBits, &[F32X4], &[I64]),
-                (Opcode::VhighBits, &[F64X2], &[I64]),
-                (Opcode::VhighBits, &[I8X16], &[I128]),
-                (Opcode::VhighBits, &[I16X8], &[I128]),
-                (Opcode::VhighBits, &[I32X4], &[I128]),
-                (Opcode::VhighBits, &[I64X2], &[I128]),
-                (Opcode::VhighBits, &[F32X4], &[I128]),
-                (Opcode::VhighBits, &[F64X2], &[I128]),
-                (Opcode::VhighBits, &[I8X16], &[I8X16]),
-                (Opcode::VhighBits, &[I16X8], &[I8X16]),
-                (Opcode::VhighBits, &[I32X4], &[I8X16]),
-                (Opcode::VhighBits, &[I64X2], &[I8X16]),
-                (Opcode::VhighBits, &[F32X4], &[I8X16]),
-                (Opcode::VhighBits, &[F64X2], &[I8X16]),
-                (Opcode::VhighBits, &[I8X16], &[I16X8]),
-                (Opcode::VhighBits, &[I16X8], &[I16X8]),
-                (Opcode::VhighBits, &[I32X4], &[I16X8]),
-                (Opcode::VhighBits, &[I64X2], &[I16X8]),
-                (Opcode::VhighBits, &[F32X4], &[I16X8]),
-                (Opcode::VhighBits, &[F64X2], &[I16X8]),
-                (Opcode::VhighBits, &[I8X16], &[I32X4]),
-                (Opcode::VhighBits, &[I16X8], &[I32X4]),
-                (Opcode::VhighBits, &[I32X4], &[I32X4]),
-                (Opcode::VhighBits, &[I64X2], &[I32X4]),
-                (Opcode::VhighBits, &[F32X4], &[I32X4]),
-                (Opcode::VhighBits, &[F64X2], &[I32X4]),
-                (Opcode::VhighBits, &[I8X16], &[I64X2]),
-                (Opcode::VhighBits, &[I16X8], &[I64X2]),
-                (Opcode::VhighBits, &[I32X4], &[I64X2]),
-                (Opcode::VhighBits, &[I64X2], &[I64X2]),
-                (Opcode::VhighBits, &[F32X4], &[I64X2]),
-                (Opcode::VhighBits, &[F64X2], &[I64X2]),
-                (Opcode::Ineg, &[I8X16], &[I8X16]),
-                (Opcode::Ineg, &[I16X8], &[I16X8]),
-                (Opcode::Ineg, &[I32X4], &[I32X4]),
-                (Opcode::Ineg, &[I64X2], &[I64X2]),
                 (Opcode::Umulhi, &[I128, I128], &[I128]),
                 (Opcode::Smulhi, &[I128, I128], &[I128]),
                 // https://github.com/bytecodealliance/wasmtime/issues/6073
@@ -1020,279 +958,10 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::Isplit, &[I64], &[I32, I32]),
                 (Opcode::Isplit, &[I32], &[I16, I16]),
                 (Opcode::Isplit, &[I16], &[I8, I8]),
-                (Opcode::Rotl, &[I8X16, I8], &[I8X16]),
-                (Opcode::Rotl, &[I8X16, I16], &[I8X16]),
-                (Opcode::Rotl, &[I8X16, I32], &[I8X16]),
-                (Opcode::Rotl, &[I8X16, I64], &[I8X16]),
-                (Opcode::Rotl, &[I8X16, I128], &[I8X16]),
-                (Opcode::Rotl, &[I16X8, I8], &[I16X8]),
-                (Opcode::Rotl, &[I16X8, I16], &[I16X8]),
-                (Opcode::Rotl, &[I16X8, I32], &[I16X8]),
-                (Opcode::Rotl, &[I16X8, I64], &[I16X8]),
-                (Opcode::Rotl, &[I16X8, I128], &[I16X8]),
-                (Opcode::Rotl, &[I32X4, I8], &[I32X4]),
-                (Opcode::Rotl, &[I32X4, I16], &[I32X4]),
-                (Opcode::Rotl, &[I32X4, I32], &[I32X4]),
-                (Opcode::Rotl, &[I32X4, I64], &[I32X4]),
-                (Opcode::Rotl, &[I32X4, I128], &[I32X4]),
-                (Opcode::Rotl, &[I64X2, I8], &[I64X2]),
-                (Opcode::Rotl, &[I64X2, I16], &[I64X2]),
-                (Opcode::Rotl, &[I64X2, I32], &[I64X2]),
-                (Opcode::Rotl, &[I64X2, I64], &[I64X2]),
-                (Opcode::Rotl, &[I64X2, I128], &[I64X2]),
-                (Opcode::Rotr, &[I8X16, I8], &[I8X16]),
-                (Opcode::Rotr, &[I8X16, I16], &[I8X16]),
-                (Opcode::Rotr, &[I8X16, I32], &[I8X16]),
-                (Opcode::Rotr, &[I8X16, I64], &[I8X16]),
-                (Opcode::Rotr, &[I8X16, I128], &[I8X16]),
-                (Opcode::Rotr, &[I16X8, I8], &[I16X8]),
-                (Opcode::Rotr, &[I16X8, I16], &[I16X8]),
-                (Opcode::Rotr, &[I16X8, I32], &[I16X8]),
-                (Opcode::Rotr, &[I16X8, I64], &[I16X8]),
-                (Opcode::Rotr, &[I16X8, I128], &[I16X8]),
-                (Opcode::Rotr, &[I32X4, I8], &[I32X4]),
-                (Opcode::Rotr, &[I32X4, I16], &[I32X4]),
-                (Opcode::Rotr, &[I32X4, I32], &[I32X4]),
-                (Opcode::Rotr, &[I32X4, I64], &[I32X4]),
-                (Opcode::Rotr, &[I32X4, I128], &[I32X4]),
-                (Opcode::Rotr, &[I64X2, I8], &[I64X2]),
-                (Opcode::Rotr, &[I64X2, I16], &[I64X2]),
-                (Opcode::Rotr, &[I64X2, I32], &[I64X2]),
-                (Opcode::Rotr, &[I64X2, I64], &[I64X2]),
-                (Opcode::Rotr, &[I64X2, I128], &[I64X2]),
-                (Opcode::Ishl, &[I8X16, I8], &[I8X16]),
-                (Opcode::Ishl, &[I8X16, I16], &[I8X16]),
-                (Opcode::Ishl, &[I8X16, I32], &[I8X16]),
-                (Opcode::Ishl, &[I8X16, I64], &[I8X16]),
-                (Opcode::Ishl, &[I8X16, I128], &[I8X16]),
-                (Opcode::Ishl, &[I16X8, I8], &[I16X8]),
-                (Opcode::Ishl, &[I16X8, I16], &[I16X8]),
-                (Opcode::Ishl, &[I16X8, I32], &[I16X8]),
-                (Opcode::Ishl, &[I16X8, I64], &[I16X8]),
-                (Opcode::Ishl, &[I16X8, I128], &[I16X8]),
-                (Opcode::Ishl, &[I32X4, I8], &[I32X4]),
-                (Opcode::Ishl, &[I32X4, I16], &[I32X4]),
-                (Opcode::Ishl, &[I32X4, I32], &[I32X4]),
-                (Opcode::Ishl, &[I32X4, I64], &[I32X4]),
-                (Opcode::Ishl, &[I32X4, I128], &[I32X4]),
-                (Opcode::Ishl, &[I64X2, I8], &[I64X2]),
-                (Opcode::Ishl, &[I64X2, I16], &[I64X2]),
-                (Opcode::Ishl, &[I64X2, I32], &[I64X2]),
-                (Opcode::Ishl, &[I64X2, I64], &[I64X2]),
-                (Opcode::Ishl, &[I64X2, I128], &[I64X2]),
-                (Opcode::Ushr, &[I8X16, I8], &[I8X16]),
-                (Opcode::Ushr, &[I8X16, I16], &[I8X16]),
-                (Opcode::Ushr, &[I8X16, I32], &[I8X16]),
-                (Opcode::Ushr, &[I8X16, I64], &[I8X16]),
-                (Opcode::Ushr, &[I8X16, I128], &[I8X16]),
-                (Opcode::Ushr, &[I16X8, I8], &[I16X8]),
-                (Opcode::Ushr, &[I16X8, I16], &[I16X8]),
-                (Opcode::Ushr, &[I16X8, I32], &[I16X8]),
-                (Opcode::Ushr, &[I16X8, I64], &[I16X8]),
-                (Opcode::Ushr, &[I16X8, I128], &[I16X8]),
-                (Opcode::Ushr, &[I32X4, I8], &[I32X4]),
-                (Opcode::Ushr, &[I32X4, I16], &[I32X4]),
-                (Opcode::Ushr, &[I32X4, I32], &[I32X4]),
-                (Opcode::Ushr, &[I32X4, I64], &[I32X4]),
-                (Opcode::Ushr, &[I32X4, I128], &[I32X4]),
-                (Opcode::Ushr, &[I64X2, I8], &[I64X2]),
-                (Opcode::Ushr, &[I64X2, I16], &[I64X2]),
-                (Opcode::Ushr, &[I64X2, I32], &[I64X2]),
-                (Opcode::Ushr, &[I64X2, I64], &[I64X2]),
-                (Opcode::Ushr, &[I64X2, I128], &[I64X2]),
-                (Opcode::Sshr, &[I8X16, I8], &[I8X16]),
-                (Opcode::Sshr, &[I8X16, I16], &[I8X16]),
-                (Opcode::Sshr, &[I8X16, I32], &[I8X16]),
-                (Opcode::Sshr, &[I8X16, I64], &[I8X16]),
-                (Opcode::Sshr, &[I8X16, I128], &[I8X16]),
-                (Opcode::Sshr, &[I16X8, I8], &[I16X8]),
-                (Opcode::Sshr, &[I16X8, I16], &[I16X8]),
-                (Opcode::Sshr, &[I16X8, I32], &[I16X8]),
-                (Opcode::Sshr, &[I16X8, I64], &[I16X8]),
-                (Opcode::Sshr, &[I16X8, I128], &[I16X8]),
-                (Opcode::Sshr, &[I32X4, I8], &[I32X4]),
-                (Opcode::Sshr, &[I32X4, I16], &[I32X4]),
-                (Opcode::Sshr, &[I32X4, I32], &[I32X4]),
-                (Opcode::Sshr, &[I32X4, I64], &[I32X4]),
-                (Opcode::Sshr, &[I32X4, I128], &[I32X4]),
-                (Opcode::Sshr, &[I64X2, I8], &[I64X2]),
-                (Opcode::Sshr, &[I64X2, I16], &[I64X2]),
-                (Opcode::Sshr, &[I64X2, I32], &[I64X2]),
-                (Opcode::Sshr, &[I64X2, I64], &[I64X2]),
-                (Opcode::Sshr, &[I64X2, I128], &[I64X2]),
                 (Opcode::Fmin, &[F32X4, F32X4], &[F32X4]),
                 (Opcode::Fmin, &[F64X2, F64X2], &[F64X2]),
-                (Opcode::FminPseudo, &[F32X4, F32X4], &[F32X4]),
-                (Opcode::FminPseudo, &[F64X2, F64X2], &[F64X2]),
                 (Opcode::Fmax, &[F32X4, F32X4], &[F32X4]),
                 (Opcode::Fmax, &[F64X2, F64X2], &[F64X2]),
-                (Opcode::FmaxPseudo, &[F32X4, F32X4], &[F32X4]),
-                (Opcode::FmaxPseudo, &[F64X2, F64X2], &[F64X2]),
-                (Opcode::Bitcast, &[I8], &[I8]),
-                (Opcode::Bitcast, &[I16], &[I8]),
-                (Opcode::Bitcast, &[I32], &[I8]),
-                (Opcode::Bitcast, &[I64], &[I8]),
-                (Opcode::Bitcast, &[I128], &[I8]),
-                (Opcode::Bitcast, &[F32], &[I8]),
-                (Opcode::Bitcast, &[F64], &[I8]),
-                (Opcode::Bitcast, &[I8X16], &[I8]),
-                (Opcode::Bitcast, &[I16X8], &[I8]),
-                (Opcode::Bitcast, &[I32X4], &[I8]),
-                (Opcode::Bitcast, &[I64X2], &[I8]),
-                (Opcode::Bitcast, &[F32X4], &[I8]),
-                (Opcode::Bitcast, &[F64X2], &[I8]),
-                (Opcode::Bitcast, &[I8], &[I16]),
-                (Opcode::Bitcast, &[I16], &[I16]),
-                (Opcode::Bitcast, &[I32], &[I16]),
-                (Opcode::Bitcast, &[I64], &[I16]),
-                (Opcode::Bitcast, &[I128], &[I16]),
-                (Opcode::Bitcast, &[F32], &[I16]),
-                (Opcode::Bitcast, &[F64], &[I16]),
-                (Opcode::Bitcast, &[I8X16], &[I16]),
-                (Opcode::Bitcast, &[I16X8], &[I16]),
-                (Opcode::Bitcast, &[I32X4], &[I16]),
-                (Opcode::Bitcast, &[I64X2], &[I16]),
-                (Opcode::Bitcast, &[F32X4], &[I16]),
-                (Opcode::Bitcast, &[F64X2], &[I16]),
-                (Opcode::Bitcast, &[I8], &[I32]),
-                (Opcode::Bitcast, &[I16], &[I32]),
-                (Opcode::Bitcast, &[I32], &[I32]),
-                (Opcode::Bitcast, &[I64], &[I32]),
-                (Opcode::Bitcast, &[I128], &[I32]),
-                (Opcode::Bitcast, &[F64], &[I32]),
-                (Opcode::Bitcast, &[I8X16], &[I32]),
-                (Opcode::Bitcast, &[I16X8], &[I32]),
-                (Opcode::Bitcast, &[I32X4], &[I32]),
-                (Opcode::Bitcast, &[I64X2], &[I32]),
-                (Opcode::Bitcast, &[F32X4], &[I32]),
-                (Opcode::Bitcast, &[F64X2], &[I32]),
-                (Opcode::Bitcast, &[I8], &[I64]),
-                (Opcode::Bitcast, &[I16], &[I64]),
-                (Opcode::Bitcast, &[I32], &[I64]),
-                (Opcode::Bitcast, &[I64], &[I64]),
-                (Opcode::Bitcast, &[I128], &[I64]),
-                (Opcode::Bitcast, &[F32], &[I64]),
-                (Opcode::Bitcast, &[I8X16], &[I64]),
-                (Opcode::Bitcast, &[I16X8], &[I64]),
-                (Opcode::Bitcast, &[I32X4], &[I64]),
-                (Opcode::Bitcast, &[I64X2], &[I64]),
-                (Opcode::Bitcast, &[F32X4], &[I64]),
-                (Opcode::Bitcast, &[F64X2], &[I64]),
-                (Opcode::Bitcast, &[I8], &[I128]),
-                (Opcode::Bitcast, &[I16], &[I128]),
-                (Opcode::Bitcast, &[I32], &[I128]),
-                (Opcode::Bitcast, &[I64], &[I128]),
-                (Opcode::Bitcast, &[I128], &[I128]),
-                (Opcode::Bitcast, &[F32], &[I128]),
-                (Opcode::Bitcast, &[F64], &[I128]),
-                (Opcode::Bitcast, &[I8X16], &[I128]),
-                (Opcode::Bitcast, &[I16X8], &[I128]),
-                (Opcode::Bitcast, &[I32X4], &[I128]),
-                (Opcode::Bitcast, &[I64X2], &[I128]),
-                (Opcode::Bitcast, &[F32X4], &[I128]),
-                (Opcode::Bitcast, &[F64X2], &[I128]),
-                (Opcode::Bitcast, &[I8], &[F32]),
-                (Opcode::Bitcast, &[I16], &[F32]),
-                (Opcode::Bitcast, &[I64], &[F32]),
-                (Opcode::Bitcast, &[I128], &[F32]),
-                (Opcode::Bitcast, &[F32], &[F32]),
-                (Opcode::Bitcast, &[F64], &[F32]),
-                (Opcode::Bitcast, &[I8X16], &[F32]),
-                (Opcode::Bitcast, &[I16X8], &[F32]),
-                (Opcode::Bitcast, &[I32X4], &[F32]),
-                (Opcode::Bitcast, &[I64X2], &[F32]),
-                (Opcode::Bitcast, &[F32X4], &[F32]),
-                (Opcode::Bitcast, &[F64X2], &[F32]),
-                (Opcode::Bitcast, &[I8], &[F64]),
-                (Opcode::Bitcast, &[I16], &[F64]),
-                (Opcode::Bitcast, &[I32], &[F64]),
-                (Opcode::Bitcast, &[I128], &[F64]),
-                (Opcode::Bitcast, &[F32], &[F64]),
-                (Opcode::Bitcast, &[F64], &[F64]),
-                (Opcode::Bitcast, &[I8X16], &[F64]),
-                (Opcode::Bitcast, &[I16X8], &[F64]),
-                (Opcode::Bitcast, &[I32X4], &[F64]),
-                (Opcode::Bitcast, &[I64X2], &[F64]),
-                (Opcode::Bitcast, &[F32X4], &[F64]),
-                (Opcode::Bitcast, &[F64X2], &[F64]),
-                (Opcode::Bitcast, &[I8], &[I8X16]),
-                (Opcode::Bitcast, &[I16], &[I8X16]),
-                (Opcode::Bitcast, &[I32], &[I8X16]),
-                (Opcode::Bitcast, &[I64], &[I8X16]),
-                (Opcode::Bitcast, &[I128], &[I8X16]),
-                (Opcode::Bitcast, &[F32], &[I8X16]),
-                (Opcode::Bitcast, &[F64], &[I8X16]),
-                (Opcode::Bitcast, &[I8X16], &[I8X16]),
-                (Opcode::Bitcast, &[I16X8], &[I8X16]),
-                (Opcode::Bitcast, &[I32X4], &[I8X16]),
-                (Opcode::Bitcast, &[I64X2], &[I8X16]),
-                (Opcode::Bitcast, &[F32X4], &[I8X16]),
-                (Opcode::Bitcast, &[F64X2], &[I8X16]),
-                (Opcode::Bitcast, &[I8], &[I16X8]),
-                (Opcode::Bitcast, &[I16], &[I16X8]),
-                (Opcode::Bitcast, &[I32], &[I16X8]),
-                (Opcode::Bitcast, &[I64], &[I16X8]),
-                (Opcode::Bitcast, &[I128], &[I16X8]),
-                (Opcode::Bitcast, &[F32], &[I16X8]),
-                (Opcode::Bitcast, &[F64], &[I16X8]),
-                (Opcode::Bitcast, &[I8X16], &[I16X8]),
-                (Opcode::Bitcast, &[I16X8], &[I16X8]),
-                (Opcode::Bitcast, &[I32X4], &[I16X8]),
-                (Opcode::Bitcast, &[I64X2], &[I16X8]),
-                (Opcode::Bitcast, &[F32X4], &[I16X8]),
-                (Opcode::Bitcast, &[F64X2], &[I16X8]),
-                (Opcode::Bitcast, &[I8], &[I32X4]),
-                (Opcode::Bitcast, &[I16], &[I32X4]),
-                (Opcode::Bitcast, &[I32], &[I32X4]),
-                (Opcode::Bitcast, &[I64], &[I32X4]),
-                (Opcode::Bitcast, &[I128], &[I32X4]),
-                (Opcode::Bitcast, &[F32], &[I32X4]),
-                (Opcode::Bitcast, &[F64], &[I32X4]),
-                (Opcode::Bitcast, &[I8X16], &[I32X4]),
-                (Opcode::Bitcast, &[I16X8], &[I32X4]),
-                (Opcode::Bitcast, &[I32X4], &[I32X4]),
-                (Opcode::Bitcast, &[I64X2], &[I32X4]),
-                (Opcode::Bitcast, &[F32X4], &[I32X4]),
-                (Opcode::Bitcast, &[F64X2], &[I32X4]),
-                (Opcode::Bitcast, &[I8], &[I64X2]),
-                (Opcode::Bitcast, &[I16], &[I64X2]),
-                (Opcode::Bitcast, &[I32], &[I64X2]),
-                (Opcode::Bitcast, &[I64], &[I64X2]),
-                (Opcode::Bitcast, &[I128], &[I64X2]),
-                (Opcode::Bitcast, &[F32], &[I64X2]),
-                (Opcode::Bitcast, &[F64], &[I64X2]),
-                (Opcode::Bitcast, &[I8X16], &[I64X2]),
-                (Opcode::Bitcast, &[I16X8], &[I64X2]),
-                (Opcode::Bitcast, &[I32X4], &[I64X2]),
-                (Opcode::Bitcast, &[I64X2], &[I64X2]),
-                (Opcode::Bitcast, &[F32X4], &[I64X2]),
-                (Opcode::Bitcast, &[F64X2], &[I64X2]),
-                (Opcode::Bitcast, &[I8], &[F32X4]),
-                (Opcode::Bitcast, &[I16], &[F32X4]),
-                (Opcode::Bitcast, &[I32], &[F32X4]),
-                (Opcode::Bitcast, &[I64], &[F32X4]),
-                (Opcode::Bitcast, &[I128], &[F32X4]),
-                (Opcode::Bitcast, &[F32], &[F32X4]),
-                (Opcode::Bitcast, &[F64], &[F32X4]),
-                (Opcode::Bitcast, &[I8X16], &[F32X4]),
-                (Opcode::Bitcast, &[I16X8], &[F32X4]),
-                (Opcode::Bitcast, &[I32X4], &[F32X4]),
-                (Opcode::Bitcast, &[I64X2], &[F32X4]),
-                (Opcode::Bitcast, &[F32X4], &[F32X4]),
-                (Opcode::Bitcast, &[F64X2], &[F32X4]),
-                (Opcode::Bitcast, &[I8], &[F64X2]),
-                (Opcode::Bitcast, &[I16], &[F64X2]),
-                (Opcode::Bitcast, &[I32], &[F64X2]),
-                (Opcode::Bitcast, &[I64], &[F64X2]),
-                (Opcode::Bitcast, &[I128], &[F64X2]),
-                (Opcode::Bitcast, &[F32], &[F64X2]),
-                (Opcode::Bitcast, &[F64], &[F64X2]),
-                (Opcode::Bitcast, &[I8X16], &[F64X2]),
-                (Opcode::Bitcast, &[I16X8], &[F64X2]),
-                (Opcode::Bitcast, &[I32X4], &[F64X2]),
-                (Opcode::Bitcast, &[I64X2], &[F64X2]),
-                (Opcode::Bitcast, &[F32X4], &[F64X2]),
-                (Opcode::Bitcast, &[F64X2], &[F64X2]),
                 (Opcode::FcvtToUintSat, &[F32X4], &[I8]),
                 (Opcode::FcvtToUintSat, &[F64X2], &[I8]),
                 (Opcode::FcvtToUintSat, &[F32X4], &[I16]),
@@ -1389,42 +1058,12 @@ static OPCODE_SIGNATURES: Lazy<Vec<OpcodeSignature>> = Lazy::new(|| {
                 (Opcode::FcvtFromSint, &[I8X16], &[F64X2]),
                 (Opcode::FcvtFromSint, &[I16X8], &[F64X2]),
                 (Opcode::FcvtFromSint, &[I32X4], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I8], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I16], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I32], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I64], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I128], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I8X16], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I16X8], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I32X4], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I64X2], &[F32]),
-                (Opcode::FcvtLowFromSint, &[I8], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I16], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I32], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I64], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I128], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I8X16], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I16X8], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I32X4], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I64X2], &[F64]),
-                (Opcode::FcvtLowFromSint, &[I8], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I16], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I32], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I64], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I128], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I8X16], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I16X8], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I32X4], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I64X2], &[F32X4]),
-                (Opcode::FcvtLowFromSint, &[I8], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I16], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I32], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I64], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I128], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I8X16], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I16X8], &[F64X2]),
-                (Opcode::FcvtLowFromSint, &[I64X2], &[F64X2]),
             )
+        })
+        .filter(|(op, ..)| {
+            allowed_opcodes
+                .as_ref()
+                .map_or(true, |opcodes| opcodes.contains(op))
         })
         .collect()
 });
@@ -1484,7 +1123,7 @@ where
     u: &'r mut Unstructured<'data>,
     config: &'r Config,
     resources: Resources,
-    target_triple: Triple,
+    isa: OwnedTargetIsa,
     name: UserFuncName,
     signature: Signature,
 }
@@ -1496,6 +1135,8 @@ enum BlockTerminator {
     Br(Block, Block),
     BrTable(Block, Vec<Block>),
     Switch(Type, Block, HashMap<u128, Block>),
+    TailCall(FuncRef),
+    TailCallIndirect(FuncRef),
 }
 
 #[derive(Debug, Clone)]
@@ -1505,6 +1146,47 @@ enum BlockTerminatorKind {
     Br,
     BrTable,
     Switch,
+    TailCall,
+    TailCallIndirect,
+}
+
+/// Alias Analysis Category
+///
+/// Our alias analysis pass supports 4 categories of accesses to distinguish
+/// different regions. The "Other" region is the general case, and is the default
+/// Although they have highly suggestive names there is no difference between any
+/// of the categories.
+///
+/// We assign each stack slot a category when we first generate them, and then
+/// ensure that all accesses to that stack slot are correctly tagged. We already
+/// ensure that memory accesses never cross stack slots, so there is no risk
+/// of a memory access being tagged with the wrong category.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum AACategory {
+    Other,
+    Heap,
+    Table,
+    VmCtx,
+}
+
+impl AACategory {
+    pub fn all() -> &'static [Self] {
+        &[
+            AACategory::Other,
+            AACategory::Heap,
+            AACategory::Table,
+            AACategory::VmCtx,
+        ]
+    }
+
+    pub fn update_memflags(&self, flags: &mut MemFlags) {
+        match self {
+            AACategory::Other => {}
+            AACategory::Heap => flags.set_heap(),
+            AACategory::Table => flags.set_table(),
+            AACategory::VmCtx => flags.set_vmctx(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1514,7 +1196,10 @@ struct Resources {
     blocks_without_params: Vec<Block>,
     block_terminators: Vec<BlockTerminator>,
     func_refs: Vec<(Signature, SigRef, FuncRef)>,
-    stack_slots: Vec<(StackSlot, StackSize)>,
+    /// This field is required to be sorted by stack slot size at all times.
+    /// We use this invariant when searching for stack slots with a given size.
+    /// See [FunctionGenerator::stack_slot_with_size]
+    stack_slots: Vec<(StackSlot, StackSize, AACategory)>,
     usercalls: Vec<(UserExternalName, Signature)>,
     libcalls: Vec<LibCall>,
 }
@@ -1545,6 +1230,17 @@ impl Resources {
         let partition_point = self.blocks_without_params.partition_point(|b| *b <= block);
         &self.blocks_without_params[partition_point..]
     }
+
+    /// Generates an iterator of all valid tail call targets. This includes all functions with both
+    ///  the `tail` calling convention and the same return values as the caller.
+    fn tail_call_targets<'a>(
+        &'a self,
+        caller_sig: &'a Signature,
+    ) -> impl Iterator<Item = &'a (Signature, SigRef, FuncRef)> {
+        self.func_refs.iter().filter(|(sig, _, _)| {
+            sig.call_conv == CallConv::Tail && sig.returns == caller_sig.returns
+        })
+    }
 }
 
 impl<'r, 'data> FunctionGenerator<'r, 'data>
@@ -1554,7 +1250,7 @@ where
     pub fn new(
         u: &'r mut Unstructured<'data>,
         config: &'r Config,
-        target_triple: Triple,
+        isa: OwnedTargetIsa,
         name: UserFuncName,
         signature: Signature,
         usercalls: Vec<(UserExternalName, Signature)>,
@@ -1568,7 +1264,7 @@ where
                 libcalls,
                 ..Resources::default()
             },
-            target_triple,
+            isa,
             name,
             signature,
         }
@@ -1586,11 +1282,11 @@ where
     }
 
     /// Finds a stack slot with size of at least n bytes
-    fn stack_slot_with_size(&mut self, n: u32) -> Result<(StackSlot, StackSize)> {
+    fn stack_slot_with_size(&mut self, n: u32) -> Result<(StackSlot, StackSize, AACategory)> {
         let first = self
             .resources
             .stack_slots
-            .partition_point(|&(_slot, size)| size < n);
+            .partition_point(|&(_slot, size, _category)| size < n);
         Ok(*self.u.choose(&self.resources.stack_slots[first..])?)
     }
 
@@ -1611,11 +1307,11 @@ where
         builder: &mut FunctionBuilder,
         min_size: u32,
         aligned: bool,
-    ) -> Result<(Value, u32)> {
+    ) -> Result<(Value, u32, AACategory)> {
         // TODO: Currently our only source of addresses is stack_addr, but we
         // should add global_value, symbol_value eventually
-        let (addr, available_size) = {
-            let (ss, slot_size) = self.stack_slot_with_size(min_size)?;
+        let (addr, available_size, category) = {
+            let (ss, slot_size, category) = self.stack_slot_with_size(min_size)?;
 
             // stack_slot_with_size guarantees that slot_size >= min_size
             let max_offset = slot_size - min_size;
@@ -1627,7 +1323,7 @@ where
 
             let base_addr = builder.ins().stack_addr(I64, ss, offset as i32);
             let available_size = slot_size.saturating_sub(offset);
-            (base_addr, available_size)
+            (base_addr, available_size, category)
         };
 
         // TODO: Insert a bunch of amode opcodes here to modify the address!
@@ -1635,7 +1331,7 @@ where
         // Now that we have an address and a size, we just choose a random offset to return to the
         // caller. Preserving min_size bytes.
         let max_offset = available_size.saturating_sub(min_size);
-        Ok((addr, max_offset))
+        Ok((addr, max_offset, category))
     }
 
     // Generates an address and memflags for a load or store.
@@ -1650,7 +1346,7 @@ where
         // AArch64: https://github.com/bytecodealliance/wasmtime/issues/5483
         // RISCV: https://github.com/bytecodealliance/wasmtime/issues/5882
         let requires_aligned_atomics = matches!(
-            self.target_triple.architecture,
+            self.isa.triple().architecture,
             Architecture::Aarch64(_) | Architecture::Riscv64(_)
         );
         let aligned = if is_atomic && requires_aligned_atomics {
@@ -1675,7 +1371,11 @@ where
             flags.set_notrap();
         }
 
-        let (address, max_offset) = self.generate_load_store_address(builder, min_size, aligned)?;
+        let (address, max_offset, category) =
+            self.generate_load_store_address(builder, min_size, aligned)?;
+
+        // Set the Alias Analysis bits on the memflags
+        category.update_memflags(&mut flags);
 
         // Pick an offset to pass into the load/store.
         let offset = if aligned {
@@ -1698,9 +1398,9 @@ where
     /// Generates an instruction(`iconst`/`fconst`/etc...) to introduce a constant value
     fn generate_const(&mut self, builder: &mut FunctionBuilder, ty: Type) -> Result<Value> {
         Ok(match self.u.datavalue(ty)? {
-            DataValue::I8(i) => builder.ins().iconst(ty, i as i64),
-            DataValue::I16(i) => builder.ins().iconst(ty, i as i64),
-            DataValue::I32(i) => builder.ins().iconst(ty, i as i64),
+            DataValue::I8(i) => builder.ins().iconst(ty, i as u8 as i64),
+            DataValue::I16(i) => builder.ins().iconst(ty, i as u16 as i64),
+            DataValue::I32(i) => builder.ins().iconst(ty, i as u32 as i64),
             DataValue::I64(i) => builder.ins().iconst(ty, i as i64),
             DataValue::I128(i) => {
                 let hi = builder.ins().iconst(I64, (i >> 64) as i64);
@@ -1821,6 +1521,23 @@ where
 
                 switch.emit(builder, switch_val, default);
             }
+            BlockTerminator::TailCall(target) | BlockTerminator::TailCallIndirect(target) => {
+                let (sig, sig_ref, func_ref) = self
+                    .resources
+                    .func_refs
+                    .iter()
+                    .find(|(_, _, f)| *f == target)
+                    .expect("Failed to find previously selected function")
+                    .clone();
+
+                let opcode = match terminator {
+                    BlockTerminator::TailCall(_) => Opcode::ReturnCall,
+                    BlockTerminator::TailCallIndirect(_) => Opcode::ReturnCallIndirect,
+                    _ => unreachable!(),
+                };
+
+                insert_call_to_function(self, builder, opcode, &sig, sig_ref, func_ref)?;
+            }
         }
 
         Ok(())
@@ -1834,7 +1551,7 @@ where
             // We filter out instructions that aren't supported by the target at this point instead
             // of building a single vector of valid instructions at the beginning of function
             // generation, to avoid invalidating the corpus when instructions are enabled/disabled.
-            if !valid_for_target(&self.target_triple, *op, &args, &rets) {
+            if !valid_for_target(&self.isa.triple(), *op, &args, &rets) {
                 return Err(arbitrary::Error::IncorrectFormat.into());
             }
 
@@ -1863,7 +1580,11 @@ where
             .libcalls
             .iter()
             .map(|libcall| {
-                let signature = libcall.signature(lib_callconv);
+                let pointer_type = Type::int_with_byte_size(
+                    self.isa.triple().pointer_width().unwrap().bytes().into(),
+                )
+                .unwrap();
+                let signature = libcall.signature(lib_callconv, pointer_type);
                 let name = ExternalName::LibCall(*libcall);
                 (name, signature)
             })
@@ -1890,12 +1611,16 @@ where
             let bytes = self.param(&self.config.static_stack_slot_size)? as u32;
             let ss_data = StackSlotData::new(StackSlotKind::ExplicitSlot, bytes);
             let slot = builder.create_sized_stack_slot(ss_data);
-            self.resources.stack_slots.push((slot, bytes));
+
+            // Generate one Alias Analysis Category for each slot
+            let category = *self.u.choose(AACategory::all())?;
+
+            self.resources.stack_slots.push((slot, bytes, category));
         }
 
         self.resources
             .stack_slots
-            .sort_unstable_by_key(|&(_slot, bytes)| bytes);
+            .sort_unstable_by_key(|&(_slot, bytes, _category)| bytes);
 
         Ok(())
     }
@@ -1908,7 +1633,7 @@ where
         let i64_zero = builder.ins().iconst(I64, 0);
         let i128_zero = builder.ins().uextend(I128, i64_zero);
 
-        for &(slot, init_size) in self.resources.stack_slots.iter() {
+        for &(slot, init_size, category) in self.resources.stack_slots.iter() {
             let mut size = init_size;
 
             // Insert the largest available store for the remaining size.
@@ -1921,7 +1646,16 @@ where
                     sz if sz / 2 > 0 => (i16_zero, 2),
                     _ => (i8_zero, 1),
                 };
-                builder.ins().stack_store(val, slot, offset);
+                let addr = builder.ins().stack_addr(I64, slot, offset);
+
+                // Each stack slot has an associated category, that means we have to set the
+                // correct memflags for it. So we can't use `stack_store` directly.
+                let mut flags = MemFlags::new();
+                flags.set_notrap();
+                category.update_memflags(&mut flags);
+
+                builder.ins().store(flags, val, addr, 0);
+
                 size -= filled;
             }
         }
@@ -2017,6 +1751,31 @@ where
                     valid_terminators.push(BlockTerminatorKind::Switch);
                 }
 
+                // Tail Calls are a block terminator, so we should insert them as any other block
+                // terminator. We should ensure that we can select at least one target before considering
+                // them as candidate instructions.
+                let has_tail_callees = self
+                    .resources
+                    .tail_call_targets(&self.signature)
+                    .next()
+                    .is_some();
+                let is_tail_caller = self.signature.call_conv == CallConv::Tail;
+
+                let supports_tail_calls = match self.isa.triple().architecture {
+                    Architecture::Aarch64(_) | Architecture::Riscv64(_) => true,
+                    // TODO: x64 currently requires frame pointers for tail calls.
+                    Architecture::X86_64 => self.isa.flags().preserve_frame_pointers(),
+                    // TODO: Other platforms do not support tail calls yet.
+                    _ => false,
+                };
+
+                if is_tail_caller && has_tail_callees && supports_tail_calls {
+                    valid_terminators.extend([
+                        BlockTerminatorKind::TailCall,
+                        BlockTerminatorKind::TailCallIndirect,
+                    ]);
+                }
+
                 let terminator = self.u.choose(&valid_terminators)?;
 
                 // Choose block targets for the terminators that we picked above
@@ -2075,6 +1834,22 @@ where
 
                         BlockTerminator::Switch(_type, default_block, entries)
                     }
+                    BlockTerminatorKind::TailCall => {
+                        let targets = self
+                            .resources
+                            .tail_call_targets(&self.signature)
+                            .collect::<Vec<_>>();
+                        let (_, _, funcref) = *self.u.choose(&targets[..])?;
+                        BlockTerminator::TailCall(*funcref)
+                    }
+                    BlockTerminatorKind::TailCallIndirect => {
+                        let targets = self
+                            .resources
+                            .tail_call_targets(&self.signature)
+                            .collect::<Vec<_>>();
+                        let (_, _, funcref) = *self.u.choose(&targets[..])?;
+                        BlockTerminator::TailCallIndirect(*funcref)
+                    }
                 })
             })
             .collect::<Result<_>>()?;
@@ -2087,7 +1862,7 @@ where
 
         let mut params = Vec::with_capacity(param_count);
         for _ in 0..param_count {
-            params.push(self.u._type(self.target_triple.architecture)?);
+            params.push(self.u._type((&*self.isa).supports_simd())?);
         }
         Ok(params)
     }
@@ -2107,7 +1882,7 @@ where
 
         // Create a pool of vars that are going to be used in this function
         for _ in 0..self.param(&self.config.vars_per_function)? {
-            let ty = self.u._type(self.target_triple.architecture)?;
+            let ty = self.u._type((&*self.isa).supports_simd())?;
             let value = self.generate_const(builder, ty)?;
             vars.push((ty, value));
         }
@@ -2140,10 +1915,12 @@ where
 
         let mut builder = FunctionBuilder::new(&mut func, &mut fn_builder_ctx);
 
+        // Build the function references before generating the block CFG since we store
+        // function references in the CFG.
+        self.generate_funcrefs(&mut builder)?;
         self.generate_blocks(&mut builder)?;
 
         // Function preamble
-        self.generate_funcrefs(&mut builder)?;
         self.generate_stack_slots(&mut builder)?;
 
         // Main instruction generation loop

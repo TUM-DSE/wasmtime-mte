@@ -3,13 +3,14 @@
 use crate::binemit::{Addend, CodeOffset, Reloc};
 use crate::ir::{types, ExternalName, Opcode, Type};
 use crate::isa::s390x::abi::S390xMachineDeps;
-use crate::isa::CallConv;
+use crate::isa::{CallConv, FunctionAlignment};
 use crate::machinst::*;
 use crate::{settings, CodegenError, CodegenResult};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use regalloc2::{PRegSet, VReg};
 use smallvec::SmallVec;
+use std::fmt::Write;
 use std::string::{String, ToString};
 pub mod regs;
 pub use self::regs::*;
@@ -231,6 +232,7 @@ impl Inst {
             | Inst::Call { .. }
             | Inst::CallInd { .. }
             | Inst::Args { .. }
+            | Inst::Rets { .. }
             | Inst::Ret { .. }
             | Inst::Jump { .. }
             | Inst::CondBr { .. }
@@ -944,12 +946,14 @@ fn s390x_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandC
                 collector.reg_fixed_def(arg.vreg, arg.preg);
             }
         }
-        &Inst::Ret { ref rets, .. } => {
-            // NOTE: we explicitly don't mark the link register as used here, as the use is only in
-            // the epilog where callee-save registers are restored.
+        &Inst::Rets { ref rets } => {
             for ret in rets {
                 collector.reg_fixed_use(ret.vreg, ret.preg);
             }
+        }
+        &Inst::Ret { .. } => {
+            // NOTE: we explicitly don't mark the link register as used here, as the use is only in
+            // the epilog where callee-save registers are restored.
         }
         &Inst::Jump { .. } => {}
         &Inst::IndirectBr { rn, .. } => {
@@ -1047,7 +1051,7 @@ impl MachInst for Inst {
 
     fn is_term(&self) -> MachTerminator {
         match self {
-            &Inst::Ret { .. } => MachTerminator::Ret,
+            &Inst::Rets { .. } => MachTerminator::Ret,
             &Inst::Jump { .. } => MachTerminator::Uncond,
             &Inst::CondBr { .. } => MachTerminator::Cond,
             &Inst::OneWayCondBr { .. } => {
@@ -1058,6 +1062,10 @@ impl MachInst for Inst {
             &Inst::JTSequence { .. } => MachTerminator::Indirect,
             _ => MachTerminator::None,
         }
+    }
+
+    fn is_mem_access(&self) -> bool {
+        panic!("TODO FILL ME OUT")
     }
 
     fn is_safepoint(&self) -> bool {
@@ -1117,6 +1125,7 @@ impl MachInst for Inst {
         match rc {
             RegClass::Int => types::I64,
             RegClass::Float => types::I8X16,
+            RegClass::Vector => unreachable!(),
         }
     }
 
@@ -1141,6 +1150,13 @@ impl MachInst for Inst {
 
     fn gen_dummy_use(reg: Reg) -> Inst {
         Inst::DummyUse { reg }
+    }
+
+    fn function_alignment() -> FunctionAlignment {
+        FunctionAlignment {
+            minimum: 4,
+            preferred: 4,
+        }
     }
 }
 
@@ -3144,23 +3160,25 @@ impl Inst {
             &Inst::Args { ref args } => {
                 let mut s = "args".to_string();
                 for arg in args {
-                    use std::fmt::Write;
                     let preg = pretty_print_reg(arg.preg, &mut empty_allocs);
                     let def = pretty_print_reg(arg.vreg.to_reg(), allocs);
                     write!(&mut s, " {}={}", def, preg).unwrap();
                 }
                 s
             }
-            &Inst::Ret { link, ref rets } => {
-                debug_assert_eq!(link, gpr(14));
-                let mut s = format!("br {}", show_reg(link));
+            &Inst::Rets { ref rets } => {
+                let mut s = "rets".to_string();
                 for ret in rets {
-                    use std::fmt::Write;
                     let preg = pretty_print_reg(ret.preg, &mut empty_allocs);
                     let vreg = pretty_print_reg(ret.vreg, allocs);
                     write!(&mut s, " {}={}", vreg, preg).unwrap();
                 }
                 s
+            }
+            &Inst::Ret { link } => {
+                debug_assert_eq!(link, gpr(14));
+                let link = show_reg(link);
+                format!("br {link}")
             }
             &Inst::Jump { dest } => {
                 let dest = dest.to_string();
@@ -3378,6 +3396,10 @@ impl MachInstLabelUse for LabelUse {
 
     /// How large is the veneer, if supported?
     fn veneer_size(self) -> CodeOffset {
+        0
+    }
+
+    fn worst_case_veneer_size() -> CodeOffset {
         0
     }
 

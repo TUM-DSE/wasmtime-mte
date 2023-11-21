@@ -1,14 +1,16 @@
-interface red {
-  use self.green.{thing}
+package foo:foo;
 
-  foo: func() -> thing
+interface red {
+  use green.{thing};
+
+  foo: func() -> thing;
 }
 
 interface green {
-  type thing = s32
+  type thing = s32;
 }
 
-default world neptune {
-  import blue: self.red
-  import orange: self.green
+world neptune {
+  import red;
+  import green;
 }

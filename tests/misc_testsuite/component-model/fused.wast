@@ -64,13 +64,13 @@
         (call $assert_false (i32.const 0))
 
         (if (i32.ne (call $ret_bool (i32.const 1)) (i32.const 1))
-          (unreachable))
+          (then (unreachable)))
         (if (i32.ne (call $ret_bool (i32.const 2)) (i32.const 1))
-          (unreachable))
+          (then (unreachable)))
         (if (i32.ne (call $ret_bool (i32.const -1)) (i32.const 1))
-          (unreachable))
+          (then (unreachable)))
         (if (i32.ne (call $ret_bool (i32.const 0)) (i32.const 0))
-          (unreachable))
+          (then (unreachable)))
       )
       (start $start)
     )
@@ -108,28 +108,28 @@
     (func (export "roundtrip") (param $src i32) (result i32)
       (local $dst i32)
       (if (i32.ne (local.get $src) (i32.const 16))
-        (unreachable))
+        (then (unreachable)))
 
-      (if (i32.ne (i32.load offset=0 (local.get $src)) (i32.const 1)) (unreachable))
-      (if (i32.ne (i32.load offset=4 (local.get $src)) (i32.const 2)) (unreachable))
-      (if (i32.ne (i32.load offset=8 (local.get $src)) (i32.const 3)) (unreachable))
-      (if (i32.ne (i32.load offset=12 (local.get $src)) (i32.const 4)) (unreachable))
-      (if (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 5)) (unreachable))
-      (if (i32.ne (i32.load offset=20 (local.get $src)) (i32.const 6)) (unreachable))
-      (if (i32.ne (i32.load offset=24 (local.get $src)) (i32.const 7)) (unreachable))
-      (if (i32.ne (i32.load offset=28 (local.get $src)) (i32.const 8)) (unreachable))
-      (if (i32.ne (i32.load offset=32 (local.get $src)) (i32.const 9)) (unreachable))
-      (if (i32.ne (i32.load offset=36 (local.get $src)) (i32.const 10)) (unreachable))
-      (if (i32.ne (i32.load offset=40 (local.get $src)) (i32.const 11)) (unreachable))
-      (if (i32.ne (i32.load offset=44 (local.get $src)) (i32.const 12)) (unreachable))
-      (if (i32.ne (i32.load offset=48 (local.get $src)) (i32.const 13)) (unreachable))
-      (if (i32.ne (i32.load offset=52 (local.get $src)) (i32.const 14)) (unreachable))
-      (if (i32.ne (i32.load offset=56 (local.get $src)) (i32.const 15)) (unreachable))
-      (if (i32.ne (i32.load offset=60 (local.get $src)) (i32.const 16)) (unreachable))
-      (if (i32.ne (i32.load offset=64 (local.get $src)) (i32.const 17)) (unreachable))
-      (if (i32.ne (i32.load offset=68 (local.get $src)) (i32.const 18)) (unreachable))
-      (if (i32.ne (i32.load offset=72 (local.get $src)) (i32.const 19)) (unreachable))
-      (if (i32.ne (i32.load offset=76 (local.get $src)) (i32.const 20)) (unreachable))
+      (if (i32.ne (i32.load offset=0 (local.get $src)) (i32.const 1)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=4 (local.get $src)) (i32.const 2)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=8 (local.get $src)) (i32.const 3)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=12 (local.get $src)) (i32.const 4)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 5)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=20 (local.get $src)) (i32.const 6)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=24 (local.get $src)) (i32.const 7)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=28 (local.get $src)) (i32.const 8)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=32 (local.get $src)) (i32.const 9)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=36 (local.get $src)) (i32.const 10)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=40 (local.get $src)) (i32.const 11)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=44 (local.get $src)) (i32.const 12)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=48 (local.get $src)) (i32.const 13)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=52 (local.get $src)) (i32.const 14)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=56 (local.get $src)) (i32.const 15)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=60 (local.get $src)) (i32.const 16)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=64 (local.get $src)) (i32.const 17)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=68 (local.get $src)) (i32.const 18)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=72 (local.get $src)) (i32.const 19)) (then (unreachable)))
+      (if (i32.ne (i32.load offset=76 (local.get $src)) (i32.const 20)) (then (unreachable)))
 
       (local.set $dst (i32.const 500))
 
@@ -186,16 +186,16 @@
         (local.set $retaddr (i32.const 200))
         (call $roundtrip (local.get $addr) (local.get $retaddr))
 
-        (if (i32.ne (i32.load offset=0 (local.get $retaddr)) (i32.const 21)) (unreachable))
-        (if (i32.ne (i32.load offset=4 (local.get $retaddr)) (i32.const 22)) (unreachable))
-        (if (i32.ne (i32.load offset=8 (local.get $retaddr)) (i32.const 23)) (unreachable))
-        (if (i32.ne (i32.load offset=12 (local.get $retaddr)) (i32.const 24)) (unreachable))
-        (if (i32.ne (i32.load offset=16 (local.get $retaddr)) (i32.const 25)) (unreachable))
-        (if (i32.ne (i32.load offset=20 (local.get $retaddr)) (i32.const 26)) (unreachable))
-        (if (i32.ne (i32.load offset=24 (local.get $retaddr)) (i32.const 27)) (unreachable))
-        (if (i32.ne (i32.load offset=28 (local.get $retaddr)) (i32.const 28)) (unreachable))
-        (if (i32.ne (i32.load offset=32 (local.get $retaddr)) (i32.const 29)) (unreachable))
-        (if (i32.ne (i32.load offset=36 (local.get $retaddr)) (i32.const 30)) (unreachable))
+        (if (i32.ne (i32.load offset=0 (local.get $retaddr)) (i32.const 21)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=4 (local.get $retaddr)) (i32.const 22)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=8 (local.get $retaddr)) (i32.const 23)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=12 (local.get $retaddr)) (i32.const 24)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=16 (local.get $retaddr)) (i32.const 25)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=20 (local.get $retaddr)) (i32.const 26)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=24 (local.get $retaddr)) (i32.const 27)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=28 (local.get $retaddr)) (i32.const 28)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=32 (local.get $retaddr)) (i32.const 29)) (then (unreachable)))
+        (if (i32.ne (i32.load offset=36 (local.get $retaddr)) (i32.const 30)) (then (unreachable)))
       )
 
       (func $store_many (param $amt i32) (param $addr i32)
@@ -205,7 +205,7 @@
           (i32.store (local.get $addr) (local.get $c))
           (local.set $addr (i32.add (local.get $addr) (i32.const 4)))
 
-          (if (i32.ne (local.get $amt) (local.get $c)) (br $loop))
+          (if (i32.ne (local.get $amt) (local.get $c)) (then (br $loop)))
         )
       )
       (start $start)
@@ -439,7 +439,7 @@
   (core module $m
     (func (export "foo") (result i32) i32.const 100)
     (func (export "foo-post") (param i32)
-      (if (i32.ne (local.get 0) (i32.const 100)) (unreachable)))
+      (if (i32.ne (local.get 0) (i32.const 100)) (then (unreachable))))
   )
   (core instance $m (instantiate $m))
   (func $foo (result u32)
@@ -452,7 +452,7 @@
     (core module $something
       (import "" "foo" (func $foo (result i32)))
       (func $start
-        (if (i32.ne (call $foo) (i32.const 100)) (unreachable)))
+        (if (i32.ne (call $foo) (i32.const 100)) (then (unreachable))))
       (start $start)
     )
     (core instance (instantiate $something
@@ -637,13 +637,15 @@
 
 ;; simple variant translation
 (component
-  (type $a (variant (case "x")))
-  (type $b (variant (case "y")))
-
   (component $c1
+    (type $a' (variant (case "x")))
+    (export $a "a" (type $a'))
+    (type $b' (variant (case "y")))
+    (export $b "b" (type $b'))
+
     (core module $m
       (func (export "r") (param i32) (result i32)
-        (if (i32.ne (local.get 0) (i32.const 0)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0)) (then (unreachable)))
         i32.const 0
       )
     )
@@ -651,6 +653,11 @@
     (func (export "r") (param "a" $a) (result $b) (canon lift (core func $m "r")))
   )
   (component $c2
+    (type $a' (variant (case "x")))
+    (import "a" (type $a (eq $a')))
+    (type $b' (variant (case "y")))
+    (import "b" (type $b (eq $b')))
+
     (import "r" (func $r (param "a" $a) (result $b)))
     (core func $r (canon lower (func $r)))
 
@@ -670,15 +677,19 @@
     ))
   )
   (instance $c1 (instantiate $c1))
-  (instance $c2 (instantiate $c2 (with "r" (func $c1 "r"))))
+  (instance $c2 (instantiate $c2
+    (with "a" (type $c1 "a"))
+    (with "b" (type $c1 "b"))
+    (with "r" (func $c1 "r"))
+  ))
 )
 
 ;; invalid variant discriminant in a parameter
 (assert_trap
   (component
-    (type $a (variant (case "x")))
-
     (component $c1
+      (type $a' (variant (case "x")))
+      (export $a "a" (type $a'))
       (core module $m
         (func (export "r") (param i32))
       )
@@ -686,6 +697,8 @@
       (func (export "r") (param "a" $a) (canon lift (core func $m "r")))
     )
     (component $c2
+      (type $a' (variant (case "x")))
+      (import "a" (type $a (eq $a')))
       (import "r" (func $r (param "a" $a)))
       (core func $r (canon lower (func $r)))
 
@@ -702,16 +715,19 @@
       ))
     )
     (instance $c1 (instantiate $c1))
-    (instance $c2 (instantiate $c2 (with "r" (func $c1 "r"))))
+    (instance $c2 (instantiate $c2
+      (with "a" (type $c1 "a"))
+      (with "r" (func $c1 "r"))
+    ))
   )
   "unreachable")
 
 ;; invalid variant discriminant in a result
 (assert_trap
   (component
-    (type $a (variant (case "x")))
-
     (component $c1
+      (type $a' (variant (case "x")))
+      (export $a "a" (type $a'))
       (core module $m
         (func (export "r") (result i32) i32.const 1)
       )
@@ -719,6 +735,8 @@
       (func (export "r") (result $a) (canon lift (core func $m "r")))
     )
     (component $c2
+      (type $a' (variant (case "x")))
+      (import "a" (type $a (eq $a')))
       (import "r" (func $r (result $a)))
       (core func $r (canon lower (func $r)))
 
@@ -732,7 +750,10 @@
       ))
     )
     (instance $c1 (instantiate $c1))
-    (instance $c2 (instantiate $c2 (with "r" (func $c1 "r"))))
+    (instance $c2 (instantiate $c2
+      (with "a" (type $c1 "a"))
+      (with "r" (func $c1 "r"))
+    ))
   )
   "unreachable")
 
@@ -742,10 +763,10 @@
   (component $c1
     (core module $m
       (func (export "u") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0)) (then (unreachable)))
       )
       (func (export "s") (param i32)
-        (if (i32.ne (local.get 0) (i32.const -1)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const -1)) (then (unreachable)))
       )
     )
     (core instance $m (instantiate $m))
@@ -803,68 +824,73 @@
 
 ;; translation of locals between different types
 (component
-  (type $a (variant (case "a" u8) (case "b" float32)))
-  (type $b (variant (case "a" u16) (case "b" s64)))
-  (type $c (variant (case "a" u64) (case "b" float64)))
-  (type $d (variant (case "a" float32) (case "b" float64)))
-  (type $e (variant (case "a" float32) (case "b" s64)))
-
-  (type $func_a (func (param "x" bool) (param "a" $a)))
-  (type $func_b (func (param "x" bool) (param "b" $b)))
-  (type $func_c (func (param "x" bool) (param "c" $c)))
-  (type $func_d (func (param "x" bool) (param "d" $d)))
-  (type $func_e (func (param "x" bool) (param "e" $d)))
-
   (component $c1
+    (type $a' (variant (case "a" u8) (case "b" float32)))
+    (type $b' (variant (case "a" u16) (case "b" s64)))
+    (type $c' (variant (case "a" u64) (case "b" float64)))
+    (type $d' (variant (case "a" float32) (case "b" float64)))
+    (type $e' (variant (case "a" float32) (case "b" s64)))
+    (export $a "t-a" (type $a'))
+    (export $b "t-b" (type $b'))
+    (export $c "t-c" (type $c'))
+    (export $d "t-d" (type $d'))
+    (export $e "t-e" (type $e'))
+
+    (type $func_a (func (param "x" bool) (param "a" $a)))
+    (type $func_b (func (param "x" bool) (param "b" $b)))
+    (type $func_c (func (param "x" bool) (param "c" $c)))
+    (type $func_d (func (param "x" bool) (param "d" $d)))
+    (type $func_e (func (param "x" bool) (param "e" $d)))
+
     (core module $m
       (func (export "a") (param i32 i32 i32)
         (i32.eqz (local.get 0))
         if
-          (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-          (if (i32.ne (local.get 2) (i32.const 2)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+          (if (i32.ne (local.get 2) (i32.const 2)) (then (unreachable)))
         else
-          (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-          (if (f32.ne (f32.reinterpret_i32 (local.get 2)) (f32.const 3)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+          (if (f32.ne (f32.reinterpret_i32 (local.get 2)) (f32.const 3)) (then (unreachable)))
         end
       )
       (func (export "b") (param i32 i32 i64)
         (i32.eqz (local.get 0))
         if
-          (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-          (if (i64.ne (local.get 2) (i64.const 4)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+          (if (i64.ne (local.get 2) (i64.const 4)) (then (unreachable)))
         else
-          (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-          (if (i64.ne (local.get 2) (i64.const 5)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+          (if (i64.ne (local.get 2) (i64.const 5)) (then (unreachable)))
         end
       )
       (func (export "c") (param i32 i32 i64)
         (i32.eqz (local.get 0))
         if
-          (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-          (if (i64.ne (local.get 2) (i64.const 6)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+          (if (i64.ne (local.get 2) (i64.const 6)) (then (unreachable)))
         else
-          (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-          (if (f64.ne (f64.reinterpret_i64 (local.get 2)) (f64.const 7)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+          (if (f64.ne (f64.reinterpret_i64 (local.get 2)) (f64.const 7)) (then (unreachable)))
         end
       )
       (func (export "d") (param i32 i32 i64)
         (i32.eqz (local.get 0))
         if
-          (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-          (if (f32.ne (f32.reinterpret_i32 (i32.wrap_i64 (local.get 2))) (f32.const 8)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+          (if (f32.ne (f32.reinterpret_i32 (i32.wrap_i64 (local.get 2))) (f32.const 8)) (then (unreachable)))
         else
-          (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-          (if (f64.ne (f64.reinterpret_i64 (local.get 2)) (f64.const 9)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+          (if (f64.ne (f64.reinterpret_i64 (local.get 2)) (f64.const 9)) (then (unreachable)))
         end
       )
       (func (export "e") (param i32 i32 i64)
         (i32.eqz (local.get 0))
         if
-          (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-          (if (f32.ne (f32.reinterpret_i32 (i32.wrap_i64 (local.get 2))) (f32.const 10)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+          (if (f32.ne (f32.reinterpret_i32 (i32.wrap_i64 (local.get 2))) (f32.const 10)) (then (unreachable)))
         else
-          (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-          (if (i64.ne (local.get 2) (i64.const 11)) (unreachable))
+          (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+          (if (i64.ne (local.get 2) (i64.const 11)) (then (unreachable)))
         end
       )
     )
@@ -877,6 +903,22 @@
   )
   (component $c2
     (import "a" (instance $i
+      (type $a' (variant (case "a" u8) (case "b" float32)))
+      (type $b' (variant (case "a" u16) (case "b" s64)))
+      (type $c' (variant (case "a" u64) (case "b" float64)))
+      (type $d' (variant (case "a" float32) (case "b" float64)))
+      (type $e' (variant (case "a" float32) (case "b" s64)))
+      (export $a "t-a" (type (eq $a')))
+      (export $b "t-b" (type (eq $b')))
+      (export $c "t-c" (type (eq $c')))
+      (export $d "t-d" (type (eq $d')))
+      (export $e "t-e" (type (eq $e')))
+      (type $func_a (func (param "x" bool) (param "a" $a)))
+      (type $func_b (func (param "x" bool) (param "b" $b)))
+      (type $func_c (func (param "x" bool) (param "c" $c)))
+      (type $func_d (func (param "x" bool) (param "d" $d)))
+      (type $func_e (func (param "x" bool) (param "e" $d)))
+
       (export "a" (func (type $func_a)))
       (export "b" (func (type $func_b)))
       (export "c" (func (type $func_c)))
@@ -933,50 +975,51 @@
 
 ;; different size variants
 (component
-  (type $a (variant
-    (case "a")
-    (case "b" float32)
-    (case "c" (tuple float32 u32))
-    (case "d" (tuple float32 (record)  u64 u8))
-  ))
-
   (component $c1
+    (type $a' (variant
+      (case "a")
+      (case "b" float32)
+      (case "c" (tuple float32 u32))
+      (case "d" (tuple float32 u64 u8))
+    ))
+    (export $a "t-a" (type $a'))
+
     (core module $m
       (func (export "a") (param i32 i32 f32 i64 i32)
         (if (i32.eq (local.get 0) (i32.const 0))
-          (block
-            (if (i32.ne (local.get 1) (i32.const 0)) (unreachable))
-            (if (f32.ne (local.get 2) (f32.const 0)) (unreachable))
-            (if (i64.ne (local.get 3) (i64.const 0)) (unreachable))
-            (if (i32.ne (local.get 4) (i32.const 0)) (unreachable))
-          )
+          (then (block
+            (if (i32.ne (local.get 1) (i32.const 0)) (then (unreachable)))
+            (if (f32.ne (local.get 2) (f32.const 0)) (then (unreachable)))
+            (if (i64.ne (local.get 3) (i64.const 0)) (then (unreachable)))
+            (if (i32.ne (local.get 4) (i32.const 0)) (then (unreachable)))
+          ))
         )
         (if (i32.eq (local.get 0) (i32.const 1))
-          (block
-            (if (i32.ne (local.get 1) (i32.const 1)) (unreachable))
-            (if (f32.ne (local.get 2) (f32.const 1)) (unreachable))
-            (if (i64.ne (local.get 3) (i64.const 0)) (unreachable))
-            (if (i32.ne (local.get 4) (i32.const 0)) (unreachable))
-          )
+          (then (block
+            (if (i32.ne (local.get 1) (i32.const 1)) (then (unreachable)))
+            (if (f32.ne (local.get 2) (f32.const 1)) (then (unreachable)))
+            (if (i64.ne (local.get 3) (i64.const 0)) (then (unreachable)))
+            (if (i32.ne (local.get 4) (i32.const 0)) (then (unreachable)))
+          ))
         )
         (if (i32.eq (local.get 0) (i32.const 2))
-          (block
-            (if (i32.ne (local.get 1) (i32.const 2)) (unreachable))
-            (if (f32.ne (local.get 2) (f32.const 2)) (unreachable))
-            (if (i64.ne (local.get 3) (i64.const 2)) (unreachable))
-            (if (i32.ne (local.get 4) (i32.const 0)) (unreachable))
-          )
+          (then (block
+            (if (i32.ne (local.get 1) (i32.const 2)) (then (unreachable)))
+            (if (f32.ne (local.get 2) (f32.const 2)) (then (unreachable)))
+            (if (i64.ne (local.get 3) (i64.const 2)) (then (unreachable)))
+            (if (i32.ne (local.get 4) (i32.const 0)) (then (unreachable)))
+          ))
         )
         (if (i32.eq (local.get 0) (i32.const 3))
-          (block
-            (if (i32.ne (local.get 1) (i32.const 3)) (unreachable))
-            (if (f32.ne (local.get 2) (f32.const 3)) (unreachable))
-            (if (i64.ne (local.get 3) (i64.const 3)) (unreachable))
-            (if (i32.ne (local.get 4) (i32.const 3)) (unreachable))
-          )
+          (then (block
+            (if (i32.ne (local.get 1) (i32.const 3)) (then (unreachable)))
+            (if (f32.ne (local.get 2) (f32.const 3)) (then (unreachable)))
+            (if (i64.ne (local.get 3) (i64.const 3)) (then (unreachable)))
+            (if (i32.ne (local.get 4) (i32.const 3)) (then (unreachable)))
+          ))
         )
         (if (i32.gt_u (local.get 0) (i32.const 3))
-          (unreachable))
+          (then (unreachable)))
       )
     )
     (core instance $m (instantiate $m))
@@ -984,6 +1027,13 @@
   )
   (component $c2
     (import "a" (instance $i
+      (type $a' (variant
+        (case "a")
+        (case "b" float32)
+        (case "c" (tuple float32 u32))
+        (case "d" (tuple float32 u64 u8))
+      ))
+      (export $a "t-a" (type (eq $a')))
       (export "a" (func (param "x" u8) (param "a" $a)))
     ))
 
@@ -1154,33 +1204,32 @@
 
 ;; test that flags get their upper bits all masked off
 (component
-  (type $f0 (flags))
-  (type $f1 (flags "f1"))
-  (type $f8 (flags "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"))
-  (type $f9 (flags "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8" "f9"))
-  (type $f16 (flags
+  (type $f1' (flags "f1"))
+  (type $f8' (flags "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"))
+  (type $f9' (flags "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8" "f9"))
+  (type $f16' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
   ))
-  (type $f17 (flags
+  (type $f17' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
     "g9"
   ))
-  (type $f32 (flags
+  (type $f32' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
     "h1" "h2" "h3" "h4" "h5" "h6" "h7" "h8"
     "i1" "i2" "i3" "i4" "i5" "i6" "i7" "i8"
   ))
-  (type $f33 (flags
+  (type $f33' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
     "h1" "h2" "h3" "h4" "h5" "h6" "h7" "h8"
     "i1" "i2" "i3" "i4" "i5" "i6" "i7" "i8"
     "i9"
   ))
-  (type $f64 (flags
+  (type $f64' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
     "h1" "h2" "h3" "h4" "h5" "h6" "h7" "h8"
@@ -1190,7 +1239,7 @@
     "l1" "l2" "l3" "l4" "l5" "l6" "l7" "l8"
     "m1" "m2" "m3" "m4" "m5" "m6" "m7" "m8"
   ))
-  (type $f65 (flags
+  (type $f65' (flags
     "f1" "f2" "f3" "f4" "f5" "f6" "f7" "f8"
     "g1" "g2" "g3" "g4" "g5" "g6" "g7" "g8"
     "h1" "h2" "h3" "h4" "h5" "h6" "h7" "h8"
@@ -1203,42 +1252,49 @@
   ))
 
   (component $c1
+    (export $f1 "t-f1" (type $f1'))
+    (export $f8 "t-f8" (type $f8'))
+    (export $f9 "t-f9" (type $f9'))
+    (export $f16 "t-f16" (type $f16'))
+    (export $f17 "t-f17" (type $f17'))
+    (export $f32 "t-f32" (type $f32'))
+    (export $f33 "t-f33" (type $f33'))
+    (export $f64 "t-f64" (type $f64'))
+    (export $f65 "t-f65" (type $f65'))
     (core module $m
-      (func (export "f0"))
       (func (export "f1") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x1)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x1)) (then (unreachable)))
       )
       (func (export "f8") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11)) (then (unreachable)))
       )
       (func (export "f9") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x111)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x111)) (then (unreachable)))
       )
       (func (export "f16") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x1111)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x1111)) (then (unreachable)))
       )
       (func (export "f17") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11111)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11111)) (then (unreachable)))
       )
       (func (export "f32") (param i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (then (unreachable)))
       )
       (func (export "f33") (param i32 i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (unreachable))
-        (if (i32.ne (local.get 1) (i32.const 0x1)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (then (unreachable)))
+        (if (i32.ne (local.get 1) (i32.const 0x1)) (then (unreachable)))
       )
       (func (export "f64") (param i32 i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (unreachable))
-        (if (i32.ne (local.get 1) (i32.const 0x11111111)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (then (unreachable)))
+        (if (i32.ne (local.get 1) (i32.const 0x11111111)) (then (unreachable)))
       )
       (func (export "f65") (param i32 i32 i32)
-        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (unreachable))
-        (if (i32.ne (local.get 1) (i32.const 0x11111111)) (unreachable))
-        (if (i32.ne (local.get 2) (i32.const 0x1)) (unreachable))
+        (if (i32.ne (local.get 0) (i32.const 0x11111111)) (then (unreachable)))
+        (if (i32.ne (local.get 1) (i32.const 0x11111111)) (then (unreachable)))
+        (if (i32.ne (local.get 2) (i32.const 0x1)) (then (unreachable)))
       )
     )
     (core instance $m (instantiate $m))
-    (func (export "f0") (param "a" $f0) (canon lift (core func $m "f0")))
     (func (export "f1") (param "a" $f1) (canon lift (core func $m "f1")))
     (func (export "f8") (param "a" $f8) (canon lift (core func $m "f8")))
     (func (export "f9") (param "a" $f9) (canon lift (core func $m "f9")))
@@ -1253,7 +1309,15 @@
 
   (component $c2
     (import "a" (instance $i
-      (export "f0" (func (param "a" $f0)))
+      (export $f1 "t-f1" (type (eq $f1')))
+      (export $f8 "t-f8" (type (eq $f8')))
+      (export $f9 "t-f9" (type (eq $f9')))
+      (export $f16 "t-f16" (type (eq $f16')))
+      (export $f17 "t-f17" (type (eq $f17')))
+      (export $f32 "t-f32" (type (eq $f32')))
+      (export $f33 "t-f33" (type (eq $f33')))
+      (export $f64 "t-f64" (type (eq $f64')))
+      (export $f65 "t-f65" (type (eq $f65')))
       (export "f1" (func (param "a" $f1)))
       (export "f8" (func (param "a" $f8)))
       (export "f9" (func (param "a" $f9)))
@@ -1264,7 +1328,6 @@
       (export "f64" (func (param "a" $f64)))
       (export "f65" (func (param "a" $f65)))
     ))
-    (core func $f0 (canon lower (func $i "f0")))
     (core func $f1 (canon lower (func $i "f1")))
     (core func $f8 (canon lower (func $i "f8")))
     (core func $f9 (canon lower (func $i "f9")))
@@ -1276,7 +1339,6 @@
     (core func $f65 (canon lower (func $i "f65")))
 
     (core module $m
-      (import "" "f0" (func $f0))
       (import "" "f1" (func $f1 (param i32)))
       (import "" "f8" (func $f8 (param i32)))
       (import "" "f9" (func $f9 (param i32)))
@@ -1288,7 +1350,6 @@
       (import "" "f65" (func $f65 (param i32 i32 i32)))
 
       (func $start
-        (call $f0)
         (call $f1 (i32.const 0xffffff01))
         (call $f8 (i32.const 0xffffff11))
         (call $f9 (i32.const 0xffffff11))
@@ -1304,7 +1365,6 @@
     )
     (core instance $m (instantiate $m
       (with "" (instance
-        (export "f0" (func $f0))
         (export "f1" (func $f1))
         (export "f8" (func $f8))
         (export "f9" (func $f9))

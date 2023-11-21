@@ -41,17 +41,17 @@
 
 ;; function u0:0:
 ;; block0:
-;;   movn w8, #65534
-;;   adds x10, x0, x8
+;;   movn w9, #65534
+;;   adds x9, x0, x9
 ;;   b.hs #trap=heap_oob
-;;   ldr x11, [x2, #8]
-;;   subs xzr, x10, x11
+;;   ldr x10, [x2, #8]
+;;   subs xzr, x9, x10
 ;;   b.hi label3 ; b label1
 ;; block1:
 ;;   ldr x12, [x2]
+;;   add x12, x12, x0
 ;;   movz x13, #65535, LSL #16
-;;   add x13, x13, x0
-;;   strb w1, [x13, x12]
+;;   strb w1, [x12, x13]
 ;;   b label2
 ;; block2:
 ;;   ret
@@ -60,17 +60,17 @@
 ;;
 ;; function u0:1:
 ;; block0:
-;;   movn w8, #65534
-;;   adds x10, x0, x8
+;;   movn w9, #65534
+;;   adds x9, x0, x9
 ;;   b.hs #trap=heap_oob
-;;   ldr x11, [x1, #8]
-;;   subs xzr, x10, x11
+;;   ldr x10, [x1, #8]
+;;   subs xzr, x9, x10
 ;;   b.hi label3 ; b label1
 ;; block1:
 ;;   ldr x12, [x1]
-;;   movz x11, #65535, LSL #16
-;;   add x11, x11, x0
-;;   ldrb w0, [x11, x12]
+;;   add x12, x12, x0
+;;   movz x13, #65535, LSL #16
+;;   ldrb w0, [x12, x13]
 ;;   b label2
 ;; block2:
 ;;   ret

@@ -3,7 +3,7 @@
 use core::fmt::{self, Display, Formatter};
 use core::str::FromStr;
 #[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 /// A trap code describing the reason for a trap.
 ///
@@ -54,6 +54,9 @@ pub enum TrapCode {
 
     /// A user-defined trap code.
     User(u16),
+
+    /// A null reference was encountered which was required to be non-null.
+    NullReference,
 }
 
 impl TrapCode {
@@ -72,6 +75,7 @@ impl TrapCode {
             TrapCode::UnreachableCodeReached,
             TrapCode::MemoryTaggingExtensionFault,
             TrapCode::Interrupt,
+            TrapCode::NullReference,
         ]
     }
 }
@@ -93,6 +97,7 @@ impl Display for TrapCode {
             UnreachableCodeReached => "unreachable",
             Interrupt => "interrupt",
             User(x) => return write!(f, "user{}", x),
+            NullReference => "null_reference",
         };
         f.write_str(identifier)
     }
@@ -116,6 +121,7 @@ impl FromStr for TrapCode {
             "unreachable" => Ok(UnreachableCodeReached),
             "mte_fault" => Ok(MemoryTaggingExtensionFault),
             "interrupt" => Ok(Interrupt),
+            "null_reference" => Ok(NullReference),
             _ if s.starts_with("user") => s[4..].parse().map(User).map_err(|_| ()),
             _ => Err(()),
         }

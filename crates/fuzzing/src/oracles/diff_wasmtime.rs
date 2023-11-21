@@ -130,6 +130,11 @@ impl WasmtimeInstance {
             })
             .collect()
     }
+
+    /// Returns whether or not this instance has hit its OOM condition yet.
+    pub fn is_oom(&self) -> bool {
+        self.store.data().is_oom()
+    }
 }
 
 impl DiffInstance for WasmtimeInstance {
@@ -191,7 +196,7 @@ impl From<&DiffValue> for Val {
             DiffValue::I64(n) => Val::I64(n),
             DiffValue::F32(n) => Val::F32(n),
             DiffValue::F64(n) => Val::F64(n),
-            DiffValue::V128(n) => Val::V128(n),
+            DiffValue::V128(n) => Val::V128(n.into()),
             DiffValue::FuncRef { null } => {
                 assert!(null);
                 Val::FuncRef(None)
@@ -211,7 +216,7 @@ impl Into<DiffValue> for Val {
             Val::I64(n) => DiffValue::I64(n),
             Val::F32(n) => DiffValue::F32(n),
             Val::F64(n) => DiffValue::F64(n),
-            Val::V128(n) => DiffValue::V128(n),
+            Val::V128(n) => DiffValue::V128(n.into()),
             Val::FuncRef(f) => DiffValue::FuncRef { null: f.is_none() },
             Val::ExternRef(e) => DiffValue::ExternRef { null: e.is_none() },
         }

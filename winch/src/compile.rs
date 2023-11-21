@@ -5,10 +5,10 @@ use std::{fs, path::PathBuf, str::FromStr};
 use target_lexicon::Triple;
 use wasmtime_environ::{
     wasmparser::{Parser as WasmParser, Validator},
-    DefinedFuncIndex, FunctionBodyData, ModuleEnvironment, Tunables,
+    DefinedFuncIndex, FunctionBodyData, ModuleEnvironment, ModuleTranslation, ModuleTypes,
+    Tunables, TypeConvert, VMOffsets,
 };
-use winch_codegen::lookup;
-use winch_environ::FuncEnv;
+use winch_codegen::{lookup, BuiltinFunctions, TargetIsa};
 use winch_filetests::disasm::disasm;
 
 #[derive(Parser, Debug)]
@@ -36,45 +36,43 @@ pub fn run(opt: &Options) -> Result<()> {
     let mut translation = ModuleEnvironment::new(&tunables, &mut validator, &mut types)
         .translate(parser, &bytes)
         .context("Failed to translate WebAssembly module")?;
-    let _ = types.finish();
-
+    let types = types.finish();
     let body_inputs = std::mem::take(&mut translation.function_body_inputs);
-    let module = &translation.module;
-    let types = translation.get_types();
-    let env = FuncEnv::new(module, &types, &isa);
 
     body_inputs
         .into_iter()
-        .try_for_each(|func| compile(&env, func))?;
+        .try_for_each(|func| compile(&isa, &translation, &types, func))?;
 
     Ok(())
 }
 
-fn compile(env: &FuncEnv, f: (DefinedFuncIndex, FunctionBodyData<'_>)) -> Result<()> {
-    let index = env.module.func_index(f.0);
-    let sig = env
-        .types
-        .function_at(index.as_u32())
-        .expect(&format!("function type at index {:?}", index.as_u32()));
+fn compile(
+    isa: &Box<dyn TargetIsa>,
+    translation: &ModuleTranslation,
+    module_types: &ModuleTypes,
+    f: (DefinedFuncIndex, FunctionBodyData<'_>),
+) -> Result<()> {
+    let index = translation.module.func_index(f.0);
+    let types = &translation.get_types();
+    let sig = types[types.core_function_at(index.as_u32())].unwrap_func();
+    let sig = translation.module.convert_func_type(sig);
     let FunctionBodyData { body, validator } = f.1;
+    let vmoffsets = VMOffsets::new(isa.pointer_bytes(), &translation.module);
+    let mut builtins = BuiltinFunctions::new(&vmoffsets, isa.wasmtime_call_conv());
     let mut validator = validator.into_validator(Default::default());
-    let buffer = env
-        .isa
-        .compile_function(&sig, &body, env, &mut validator)
+    let buffer = isa
+        .compile_function(
+            &sig,
+            &body,
+            translation,
+            module_types,
+            &mut builtins,
+            &mut validator,
+        )
         .expect("Couldn't compile function");
 
     println!("Disassembly for function: {}", index.as_u32());
-    disasm(buffer.data(), env.isa)?
-        .iter()
-        .for_each(|s| println!("{}", s));
-
-    let buffer = env
-        .isa
-        .host_to_wasm_trampoline(sig)
-        .expect("Couldn't compile trampoline");
-
-    println!("Disassembly for trampoline: {}", index.as_u32());
-    disasm(buffer.data(), env.isa)?
+    disasm(buffer.data(), isa)?
         .iter()
         .for_each(|s| println!("{}", s));
 

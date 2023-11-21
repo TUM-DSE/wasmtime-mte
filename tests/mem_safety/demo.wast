@@ -69,7 +69,7 @@
     i64.const 32
     i64.add
     i64.const 64
-    segment.stack_new align=1
+    segment.new align=1
     local.set 3
     block ;; label = @1
       block ;; label = @2
@@ -120,7 +120,7 @@
     i64.const 32
     i64.add
     i64.const 64
-    segment.stack_free align=1
+    segment.set_tag align=1
     local.get 2
     i64.const 96
     i64.add
@@ -190,7 +190,7 @@
       end
       i64.const 0
       local.set 2
-      i64.const 71472
+      i64.const 71488
       local.get 4
       i64.add
       i64.const -1
@@ -203,7 +203,7 @@
       i64.const 131072
       i64.eqz
       select
-      i64.const 71472
+      i64.const 71488
       i64.sub
       local.tee 5
       i64.const 129
@@ -215,10 +215,10 @@
       local.get 5
       i64.store offset=4728
       i64.const 0
-      i64.const 71472
+      i64.const 71488
       i64.store offset=4720
       i64.const 0
-      i64.const 71472
+      i64.const 71488
       i64.store offset=3856
       i64.const 0
       local.get 3
@@ -281,14 +281,14 @@
         i64.ne
         br_if 0 (;@2;)
       end
-      i64.const 71472
+      i64.const 71488
       i64.const 0
       i64.const -16
-      i64.const 71472
+      i64.const 71488
       i64.sub
       i64.const 15
       i64.and
-      i64.const 71472
+      i64.const 71488
       i64.const 16
       i64.add
       i64.const 15
@@ -318,7 +318,7 @@
       i64.const 0
       local.get 2
       i64.store offset=3872
-      i64.const 71472
+      i64.const 71488
       local.get 3
       i64.add
       i64.const 80
@@ -4487,7 +4487,7 @@
     local.get 2
     local.get 1
     i64.store offset=8
-    i64.const 3632
+    i64.const 3440
     local.get 0
     local.get 1
     call $vfprintf
@@ -4724,57 +4724,7 @@
     global.set $__stack_pointer
     local.get 6
   )
-  (func $__lseek (;33;) (type 14) (param i32 i64 i32) (result i64)
-    (local i64)
-    global.get $__stack_pointer
-    i64.const 16
-    i64.sub
-    local.tee 3
-    global.set $__stack_pointer
-    block ;; label = @1
-      block ;; label = @2
-        local.get 0
-        local.get 1
-        local.get 2
-        i32.const 255
-        i32.and
-        local.get 3
-        i64.const 8
-        i64.add
-        call $__wasi_fd_seek
-        local.tee 2
-        i32.eqz
-        br_if 0 (;@2;)
-        i64.const 0
-        i32.const 70
-        local.get 2
-        local.get 2
-        i32.const 76
-        i32.eq
-        select
-        i32.store offset=4816
-        i64.const -1
-        local.set 1
-        br 1 (;@1;)
-      end
-      local.get 3
-      i64.load offset=8
-      local.set 1
-    end
-    local.get 3
-    i64.const 16
-    i64.add
-    global.set $__stack_pointer
-    local.get 1
-  )
-  (func $__stdio_seek (;34;) (type 1) (param i64 i64 i32) (result i64)
-    local.get 0
-    i32.load offset=112
-    local.get 1
-    local.get 2
-    call $__lseek
-  )
-  (func $__isatty (;35;) (type 3) (param i32) (result i32)
+  (func $__isatty (;33;) (type 3) (param i32) (result i32)
     (local i64)
     global.get $__stack_pointer
     i64.const 32
@@ -4818,9 +4768,9 @@
     global.set $__stack_pointer
     local.get 0
   )
-  (func $__stdout_write (;36;) (type 0) (param i64 i64 i64) (result i64)
+  (func $__stdout_write (;34;) (type 0) (param i64 i64 i64) (result i64)
     local.get 0
-    i64.const 2
+    i64.const 1
     i64.store offset=64
     block ;; label = @1
       local.get 0
@@ -4840,6 +4790,56 @@
     local.get 1
     local.get 2
     call $__stdio_write
+  )
+  (func $__lseek (;35;) (type 14) (param i32 i64 i32) (result i64)
+    (local i64)
+    global.get $__stack_pointer
+    i64.const 16
+    i64.sub
+    local.tee 3
+    global.set $__stack_pointer
+    block ;; label = @1
+      block ;; label = @2
+        local.get 0
+        local.get 1
+        local.get 2
+        i32.const 255
+        i32.and
+        local.get 3
+        i64.const 8
+        i64.add
+        call $__wasi_fd_seek
+        local.tee 2
+        i32.eqz
+        br_if 0 (;@2;)
+        i64.const 0
+        i32.const 70
+        local.get 2
+        local.get 2
+        i32.const 76
+        i32.eq
+        select
+        i32.store offset=4816
+        i64.const -1
+        local.set 1
+        br 1 (;@1;)
+      end
+      local.get 3
+      i64.load offset=8
+      local.set 1
+    end
+    local.get 3
+    i64.const 16
+    i64.add
+    global.set $__stack_pointer
+    local.get 1
+  )
+  (func $__stdio_seek (;36;) (type 1) (param i64 i64 i32) (result i64)
+    local.get 0
+    i32.load offset=112
+    local.get 1
+    local.get 2
+    call $__lseek
   )
   (func $__ofl_lock (;37;) (type 15) (result i64)
     i64.const 5864
@@ -4940,7 +4940,7 @@
     end
     block ;; label = @1
       i64.const 0
-      i64.load offset=3816
+      i64.load offset=3624
       local.tee 0
       i64.eqz
       br_if 0 (;@1;)
@@ -4981,7 +4981,7 @@
     end
     block ;; label = @1
       i64.const 0
-      i64.load offset=3624
+      i64.load offset=3816
       local.tee 0
       i64.eqz
       br_if 0 (;@1;)
@@ -10795,7 +10795,7 @@
   )
   (func $long_double_not_supported (;53;) (type 8)
     i64.const 1111
-    i64.const 3440
+    i64.const 3632
     call $fputs
     drop
     call $abort
@@ -12165,10 +12165,14 @@
   )
   (table (;0;) 5 5 funcref)
   (memory (;0;) i64 2)
-  (global $__stack_pointer (;0;) (mut i64) i64.const 71472)
+  (global $__stack_pointer (;0;) (mut i64) i64.const 71488)
   (export "memory" (memory 0))
   (export "_start" (func $_start))
-  (elem (;0;) (i32.const 1) func $__stdio_close $__stdio_write $__stdio_seek $__stdout_write)
+  (elem (;0;) (i32.const 1) func $__stdio_write $__stdio_close $__stdout_write $__stdio_seek)
   (data $.rodata (;0;) (i64.const 1024) "-+   0X0x\00-0X+0X 0X-0x+0x 0x\00nan\00inf\00NAN\00INF\00.\00(null)\00Usage: %s index value\0a\00val = %d\0a\00Support for formatting long double values is currently disabled.\0aTo enable it, add -lc-printscan-long-double to the link command.\0a\00Success\00Illegal byte sequence\00Domain error\00Result not representable\00Not a tty\00Permission denied\00Operation not permitted\00No such file or directory\00No such process\00File exists\00Value too large for data type\00No space left on device\00Out of memory\00Resource busy\00Interrupted system call\00Resource temporarily unavailable\00Invalid seek\00Cross-device link\00Read-only file system\00Directory not empty\00Connection reset by peer\00Operation timed out\00Connection refused\00Host is unreachable\00Address in use\00Broken pipe\00I/O error\00No such device or address\00No such device\00Not a directory\00Is a directory\00Text file busy\00Exec format error\00Invalid argument\00Argument list too long\00Symbolic link loop\00Filename too long\00Too many open files in system\00No file descriptors available\00Bad file descriptor\00No child process\00Bad address\00File too large\00Too many links\00No locks available\00Resource deadlock would occur\00State not recoverable\00Previous owner died\00Operation canceled\00Function not implemented\00No message of desired type\00Identifier removed\00Link has been severed\00Protocol error\00Bad message\00Not a socket\00Destination address required\00Message too large\00Protocol wrong type for socket\00Protocol not available\00Protocol not supported\00Not supported\00Address family not supported by protocol\00Address not available\00Network is down\00Network unreachable\00Connection reset by network\00Connection aborted\00No buffer space available\00Socket is connected\00Socket not connected\00Operation already in progress\00Operation in progress\00Stale file handle\00Quota exceeded\00Multihop attempted\00Capabilities insufficient\00\00\00\00\00\00\00\00\00u\02N\00\d6\01\e2\04\b9\04\18\01\8e\05\ed\02\16\04\f2\00\97\03\01\038\05\af\01\82\01O\03/\04\1e\00\d4\05\a2\00\12\03\1e\03\c2\01\de\03\08\00\ac\05\00\01d\02\f1\01e\054\02\8c\02\cf\02-\03L\04\e3\05\9f\02\f8\04\1c\05\08\05\b1\02K\05\15\02x\00R\02<\03\f1\03\e4\00\c3\03}\04\cc\00\aa\03y\05$\02n\01m\03\22\04\ab\04D\00\fb\01\ae\00\83\03`\00\e5\01\07\04\94\04^\04+\00X\019\01\92\00\c2\05\9b\01C\02F\01\f6\05\00\00\00\00\00\00\19\00\0a\00\19\19\19\00\00\00\00\05\00\00\00\00\00\00\09\00\00\00\00\0b\00\00\00\00\00\00\00\00\19\00\11\0a\19\19\19\03\0a\07\00\01\1b\09\0b\18\00\00\09\06\0b\00\00\0b\00\06\19\00\00\00\19\19\19\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0e\00\00\00\00\00\00\00\00\19\00\0a\0d\19\19\19\00\0d\00\00\02\00\09\0e\00\00\00\09\00\0e\00\00\0e\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\13\00\00\00\00\13\00\00\00\00\09\0c\00\00\00\00\00\0c\00\00\0c\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\10\00\00\00\00\00\00\00\00\00\00\00\0f\00\00\00\04\0f\00\00\00\00\09\10\00\00\00\00\00\10\00\00\10\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\12\00\00\00\00\00\00\00\00\00\00\00\11\00\00\00\00\11\00\00\00\00\09\12\00\00\00\00\00\12\00\00\12\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\1a\00\00\00\1a\1a\1a\00\00\00\00\00\00\09\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\14\00\00\00\00\00\00\00\00\00\00\00\17\00\00\00\00\17\00\00\00\00\09\14\00\00\00\00\00\14\00\00\14\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\16\00\00\00\00\00\00\00\00\00\00\00\15\00\00\00\00\15\00\00\00\00\09\16\00\00\00\00\00\16\00\00\16\00\000123456789ABCDEF")
-  (data $.data (;1;) (i64.const 3440) "\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\dc\12\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00p\0d\00\00\00\00\00\00\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\e8\12\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\0a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\000\0e\00\00\00\00\00\00")
+  (data $.data (;1;) (i64.const 3440) "\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\e8\12\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\0a\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00p\0d\00\00\00\00\00\00\05\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\04\00\00\00\00\00\00\008\17\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\ff\ff\ff\ff\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\000\0e\00\00\00\00\00\00")
+  (@producers
+    (language "C11" "")
+    (processed-by "clang" "17.0.0 (git@github.com:TUM-DSE/llvm-memsafe-wasm.git e0177d9830173a0a309525d3c7262ac1557fd40e)")
+  )
 )

@@ -100,7 +100,7 @@ command may not install the target for the correct copy of Rust.)
   standards process all along the way too.
 
 [Wasmtime]: https://github.com/bytecodealliance/wasmtime
-[Cranelift]: https://github.com/bytecodealliance/wasmtime/blob/main/cranelift/README.md
+[Cranelift]: https://cranelift.dev/
 [Google's OSS Fuzz]: https://google.github.io/oss-fuzz/
 [security policy]: https://bytecodealliance.org/security
 [RFC process]: https://github.com/bytecodealliance/rfcs
@@ -128,6 +128,7 @@ Languages supported by the Bytecode Alliance:
 Languages supported by the community:
 
 * **[Elixir]** - the [`wasmex` hex package]
+* **Perl** - the [`Wasm` Perl package's `Wasm::Wasmtime`]
 
 [Rust]: https://bytecodealliance.github.io/wasmtime/lang-rust.html
 [C]: https://bytecodealliance.github.io/wasmtime/examples-c-embed.html
@@ -146,6 +147,7 @@ Languages supported by the community:
 [`wasmtime` gem]: https://rubygems.org/gems/wasmtime
 [Elixir]: https://docs.wasmtime.dev/lang-elixir.html
 [`wasmex` hex package]: https://hex.pm/packages/wasmex
+[`Wasm` Perl package's `Wasm::Wasmtime`]: https://metacpan.org/pod/Wasm::Wasmtime
 
 ## Documentation
 

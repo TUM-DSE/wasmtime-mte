@@ -1,8 +1,11 @@
+#![cfg_attr(miri, allow(dead_code, unused_imports))]
+
 mod async_functions;
 mod call_hook;
 mod cli_tests;
+mod code_too_large;
 mod component_model;
-mod custom_signal_handler;
+mod coredump;
 mod debug;
 mod epoch_interruption;
 mod externals;
@@ -26,6 +29,7 @@ mod module_serialize;
 mod name;
 mod pooling_allocator;
 mod relocs;
+mod stack_creator;
 mod stack_overflow;
 mod store;
 mod table;
@@ -34,8 +38,8 @@ mod traps;
 mod wait_notify;
 mod wasi_testsuite;
 mod wast;
-// Currently Winch is only supported in x86_64 unix platforms.
-#[cfg(all(target_arch = "x86_64", target_family = "unix"))]
+// Currently Winch is only supported in x86_64.
+#[cfg(all(target_arch = "x86_64"))]
 mod winch;
 
 /// A helper to compile a module in a new store with reference types enabled.
@@ -49,6 +53,12 @@ pub(crate) fn ref_types_module(
 
     let mut config = Config::new();
     config.wasm_reference_types(true);
+
+    if !cfg!(target_arch = "s390x") {
+        // TODO(6530): s390x doesn't support tail calls yet.
+        config.wasm_tail_call(true);
+    }
+
     if use_epochs {
         config.epoch_interruption(true);
     }
@@ -70,4 +80,20 @@ pub(crate) fn skip_pooling_allocator_tests() -> bool {
     // - high memory usage that may exceed the limits imposed by the environment (e.g. CI)
     // - https://github.com/bytecodealliance/wasmtime/pull/2518#issuecomment-747280133
     std::env::var("WASMTIME_TEST_NO_HOG_MEMORY").is_ok()
+}
+
+/// Get the default pooling allocator configuration for tests, which is a
+/// smaller pool than the normal default.
+pub(crate) fn small_pool_config() -> wasmtime::PoolingAllocationConfig {
+    let mut config = wasmtime::PoolingAllocationConfig::default();
+
+    config.total_memories(1);
+    config.memory_pages(1);
+    config.total_tables(1);
+    config.table_elements(10);
+
+    #[cfg(feature = "async")]
+    config.total_stacks(1);
+
+    config
 }

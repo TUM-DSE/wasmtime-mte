@@ -1,11 +1,12 @@
 use super::address_transform::AddressTransform;
 use crate::debug::ModuleMemoryOffset;
 use anyhow::{Context, Error, Result};
-use cranelift_codegen::ir::{LabelValueLoc, StackSlots, ValueLabel};
+use cranelift_codegen::ir::{StackSlots, ValueLabel};
 use cranelift_codegen::isa::TargetIsa;
+use cranelift_codegen::LabelValueLoc;
 use cranelift_codegen::ValueLabelsRanges;
 use cranelift_wasm::get_vmctx_value_label;
-use gimli::{self, write, Expression, Operation, Reader, ReaderOffset, X86_64};
+use gimli::{self, write, Expression, Operation, Reader, ReaderOffset};
 use std::cmp::PartialEq;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -145,9 +146,9 @@ fn translate_loc(
             }
             Some(writer.into_vec())
         }
-        LabelValueLoc::SPOffset(off) => {
+        LabelValueLoc::CFAOffset(off) => {
             let mut writer = ExpressionWriter::new();
-            writer.write_op_breg(X86_64::RSP.0)?;
+            writer.write_op(gimli::constants::DW_OP_fbreg)?;
             writer.write_sleb128(off)?;
             if !add_stack_value {
                 writer.write_op(gimli::constants::DW_OP_deref)?;
@@ -177,8 +178,8 @@ fn append_memory_deref(
             };
             writer.write_sleb128(memory_offset)?;
         }
-        LabelValueLoc::SPOffset(off) => {
-            writer.write_op_breg(X86_64::RSP.0)?;
+        LabelValueLoc::CFAOffset(off) => {
+            writer.write_op(gimli::constants::DW_OP_fbreg)?;
             writer.write_sleb128(off)?;
             writer.write_op(gimli::constants::DW_OP_deref)?;
             writer.write_op(gimli::constants::DW_OP_consts)?;
@@ -782,7 +783,7 @@ mod tests {
         compile_expression, AddressTransform, CompiledExpression, CompiledExpressionPart,
         FunctionFrameInfo, JumpTargetMarker, ValueLabel, ValueLabelsRanges,
     };
-    use crate::CompiledFunction;
+    use crate::CompiledFunctionMetadata;
     use gimli::{self, constants, Encoding, EndianSlice, Expression, RunTimeEndian};
     use wasmtime_environ::FilePos;
 
@@ -1112,13 +1113,14 @@ mod tests {
     }
 
     fn create_mock_address_transform() -> AddressTransform {
-        use crate::FunctionAddressMap;
         use cranelift_entity::PrimaryMap;
+        use wasmtime_cranelift_shared::FunctionAddressMap;
         use wasmtime_environ::InstructionAddressMap;
         use wasmtime_environ::WasmFileInfo;
+
         let mut module_map = PrimaryMap::new();
         let code_section_offset: u32 = 100;
-        let func = CompiledFunction {
+        let func = CompiledFunctionMetadata {
             address_map: FunctionAddressMap {
                 instructions: vec![
                     InstructionAddressMap {
@@ -1157,8 +1159,7 @@ mod tests {
     }
 
     fn create_mock_value_ranges() -> (ValueLabelsRanges, (ValueLabel, ValueLabel, ValueLabel)) {
-        use cranelift_codegen::ir::LabelValueLoc;
-        use cranelift_codegen::ValueLocRange;
+        use cranelift_codegen::{LabelValueLoc, ValueLocRange};
         use cranelift_entity::EntityRef;
         use std::collections::HashMap;
         let mut value_ranges = HashMap::new();
@@ -1168,7 +1169,7 @@ mod tests {
         value_ranges.insert(
             value_0,
             vec![ValueLocRange {
-                loc: LabelValueLoc::SPOffset(0),
+                loc: LabelValueLoc::CFAOffset(0),
                 start: 0,
                 end: 25,
             }],
@@ -1176,7 +1177,7 @@ mod tests {
         value_ranges.insert(
             value_1,
             vec![ValueLocRange {
-                loc: LabelValueLoc::SPOffset(0),
+                loc: LabelValueLoc::CFAOffset(0),
                 start: 5,
                 end: 30,
             }],
@@ -1185,12 +1186,12 @@ mod tests {
             value_2,
             vec![
                 ValueLocRange {
-                    loc: LabelValueLoc::SPOffset(0),
+                    loc: LabelValueLoc::CFAOffset(0),
                     start: 0,
                     end: 10,
                 },
                 ValueLocRange {
-                    loc: LabelValueLoc::SPOffset(0),
+                    loc: LabelValueLoc::CFAOffset(0),
                     start: 20,
                     end: 30,
                 },

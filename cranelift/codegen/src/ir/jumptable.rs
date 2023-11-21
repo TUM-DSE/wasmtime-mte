@@ -10,7 +10,7 @@ use core::fmt::{self, Display, Formatter};
 use core::slice::{Iter, IterMut};
 
 #[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 /// Contents of a jump table.
 ///
@@ -28,7 +28,7 @@ pub struct JumpTableData {
 }
 
 impl JumpTableData {
-    /// Create a new jump table with the provided blocks
+    /// Create a new jump table with the provided blocks.
     pub fn new(def: BlockCall, table: &[BlockCall]) -> Self {
         Self {
             table: std::iter::once(def).chain(table.iter().copied()).collect(),

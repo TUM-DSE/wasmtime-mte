@@ -1,7 +1,6 @@
 //! Test command for verifying the unwind emitted for each function.
 //!
 //! The `unwind` test command runs each function through the full code generator pipeline.
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 
 use crate::subtest::{run_filecheck, Context, SubTest};
 use cranelift_codegen::{self, ir, isa::unwind::UnwindInfo};
@@ -39,7 +38,9 @@ impl SubTest for TestUnwind {
         let isa = context.isa.expect("unwind needs an ISA");
         let mut comp_ctx = cranelift_codegen::Context::for_function(func.into_owned());
 
-        let code = comp_ctx.compile(isa).expect("failed to compile function");
+        let code = comp_ctx
+            .compile(isa, &mut Default::default())
+            .expect("failed to compile function");
 
         let mut text = String::new();
         match code.create_unwind_info(isa).expect("unwind info") {
@@ -377,7 +378,6 @@ mod systemv {
         Ok(())
     }
 
-    #[allow(clippy::unneeded_field_pattern)]
     fn dump_cfi_instructions<R: Reader, W: Write>(
         w: &mut W,
         mut insns: gimli::CallFrameInstructionIter<R>,
@@ -560,8 +560,14 @@ mod systemv {
                     ArgsSize { size } => {
                         writeln!(w, "                DW_CFA_GNU_args_size ({})", size)?;
                     }
+                    NegateRaState => {
+                        writeln!(w, "                DW_CFA_AARCH64_negate_ra_state")?;
+                    }
                     Nop => {
                         writeln!(w, "                DW_CFA_nop")?;
+                    }
+                    _ => {
+                        writeln!(w, "                DW_CFA_<unknown>")?;
                     }
                 },
             }

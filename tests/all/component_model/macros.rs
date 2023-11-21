@@ -1,3 +1,5 @@
+#![cfg(not(miri))]
+
 use super::{make_echo_component, TypedFuncExt};
 use anyhow::Result;
 use component_macro_test::{add_variants, flags_test};
@@ -109,94 +111,6 @@ fn record_derive() -> Result<()> {
         .call_and_post_return(&mut store, (input,))?;
 
     assert_eq!((input,), output);
-
-    Ok(())
-}
-
-#[test]
-fn union_derive() -> Result<()> {
-    #[derive(ComponentType, Lift, Lower, PartialEq, Debug, Copy, Clone)]
-    #[component(union)]
-    enum Foo {
-        A(i32),
-        B(u32),
-        C(i32),
-    }
-
-    let engine = super::engine();
-    let mut store = Store::new(&engine, ());
-
-    // Happy path: component type matches case count and types
-
-    let component = Component::new(&engine, make_echo_component("(union s32 u32 s32)", 8))?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-    let func = instance.get_typed_func::<(Foo,), (Foo,)>(&mut store, "echo")?;
-
-    for &input in &[Foo::A(-42), Foo::B(73), Foo::C(314159265)] {
-        let output = func.call_and_post_return(&mut store, (input,))?;
-
-        assert_eq!((input,), output);
-    }
-
-    // Sad path: case count mismatch (too few)
-
-    let component = Component::new(&engine, make_echo_component("(union s32 u32)", 8))?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-
-    assert!(instance
-        .get_typed_func::<(Foo,), (Foo,)>(&mut store, "echo")
-        .is_err());
-
-    // Sad path: case count mismatch (too many)
-
-    let component = Component::new(
-        &engine,
-        make_echo_component(r#"(union s32 u32 s32 s32)"#, 8),
-    )?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-
-    assert!(instance
-        .get_typed_func::<(Foo,), (Foo,)>(&mut store, "echo")
-        .is_err());
-
-    assert!(instance
-        .get_typed_func::<(Foo,), (Foo,)>(&mut store, "echo")
-        .is_err());
-
-    // Sad path: case type mismatch
-
-    let component = Component::new(&engine, make_echo_component("(union s32 s32 s32)", 8))?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-
-    assert!(instance
-        .get_typed_func::<(Foo,), (Foo,)>(&mut store, "echo")
-        .is_err());
-
-    // Happy path redux, with generics this time
-
-    #[derive(ComponentType, Lift, Lower, PartialEq, Debug, Copy, Clone)]
-    #[component(union)]
-    enum Generic<A, B, C> {
-        A(A),
-        B(B),
-        C(C),
-    }
-
-    let component = Component::new(&engine, make_echo_component("(union s32 u32 s32)", 8))?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-    let func = instance.get_typed_func::<(Generic<i32, u32, i32>,), (Generic<i32, u32, i32>,)>(
-        &mut store, "echo",
-    )?;
-
-    for &input in &[
-        Generic::<i32, u32, i32>::A(-42),
-        Generic::B(73),
-        Generic::C(314159265),
-    ] {
-        let output = func.call_and_post_return(&mut store, (input,))?;
-
-        assert_eq!((input,), output);
-    }
 
     Ok(())
 }
@@ -425,18 +339,6 @@ fn enum_derive() -> Result<()> {
 fn flags() -> Result<()> {
     let engine = super::engine();
     let mut store = Store::new(&engine, ());
-
-    // Edge case of 0 flags
-    wasmtime::component::flags! {
-        Flags0 {}
-    }
-    assert_eq!(Flags0::default(), Flags0::default());
-
-    let component = Component::new(&engine, make_echo_component(r#"(flags)"#, 0))?;
-    let instance = Linker::new(&engine).instantiate(&mut store, &component)?;
-    let func = instance.get_typed_func::<(Flags0,), (Flags0,)>(&mut store, "echo")?;
-    let output = func.call_and_post_return(&mut store, (Flags0::default(),))?;
-    assert_eq!(output, (Flags0::default(),));
 
     // Simple 8-bit flags
     wasmtime::component::flags! {

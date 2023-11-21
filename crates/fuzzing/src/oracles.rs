@@ -23,9 +23,7 @@ use self::engine::{DiffEngine, DiffInstance};
 use crate::generators::{self, DiffValue, DiffValueType};
 use arbitrary::Arbitrary;
 pub use stacks::check_stacks;
-use std::cell::Cell;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use wasmtime::*;
@@ -62,48 +60,60 @@ pub fn log_wasm(wasm: &[u8]) {
 /// The `T` in `Store<T>` for fuzzing stores, used to limit resource
 /// consumption during fuzzing.
 #[derive(Clone)]
-pub struct StoreLimits(Rc<LimitsState>);
+pub struct StoreLimits(Arc<LimitsState>);
 
 struct LimitsState {
     /// Remaining memory, in bytes, left to allocate
-    remaining_memory: Cell<usize>,
+    remaining_memory: AtomicUsize,
     /// Whether or not an allocation request has been denied
-    oom: Cell<bool>,
+    oom: AtomicBool,
 }
 
 impl StoreLimits {
     /// Creates the default set of limits for all fuzzing stores.
     pub fn new() -> StoreLimits {
-        StoreLimits(Rc::new(LimitsState {
+        StoreLimits(Arc::new(LimitsState {
             // Limits tables/memories within a store to at most 1gb for now to
             // exercise some larger address but not overflow various limits.
-            remaining_memory: Cell::new(1 << 30),
-            oom: Cell::new(false),
+            remaining_memory: AtomicUsize::new(1 << 30),
+            oom: AtomicBool::new(false),
         }))
     }
 
     fn alloc(&mut self, amt: usize) -> bool {
-        match self.0.remaining_memory.get().checked_sub(amt) {
-            Some(mem) => {
-                self.0.remaining_memory.set(mem);
-                true
-            }
-            None => {
-                self.0.oom.set(true);
+        log::trace!("alloc {amt:#x} bytes");
+        match self
+            .0
+            .remaining_memory
+            .fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(amt))
+        {
+            Ok(_) => true,
+            Err(_) => {
+                self.0.oom.store(true, SeqCst);
+                log::debug!("OOM hit");
                 false
             }
         }
     }
+
+    fn is_oom(&self) -> bool {
+        self.0.oom.load(SeqCst)
+    }
 }
 
 impl ResourceLimiter for StoreLimits {
-    fn memory_growing(&mut self, current: usize, desired: usize, _maximum: Option<usize>) -> bool {
-        self.alloc(desired - current)
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> Result<bool> {
+        Ok(self.alloc(desired - current))
     }
 
-    fn table_growing(&mut self, current: u32, desired: u32, _maximum: Option<u32>) -> bool {
+    fn table_growing(&mut self, current: u32, desired: u32, _maximum: Option<u32>) -> Result<bool> {
         let delta = (desired - current) as usize * std::mem::size_of::<usize>();
-        self.alloc(delta)
+        Ok(self.alloc(delta))
     }
 }
 
@@ -128,9 +138,14 @@ pub enum Timeout {
 pub fn instantiate(wasm: &[u8], known_valid: bool, config: &generators::Config, timeout: Timeout) {
     let mut store = config.to_store();
 
+    let module = match compile_module(store.engine(), wasm, known_valid, config) {
+        Some(module) => module,
+        None => return,
+    };
+
     let mut timeout_state = SignalOnDrop::default();
     match timeout {
-        Timeout::Fuel(fuel) => set_fuel(&mut store, fuel),
+        Timeout::Fuel(fuel) => store.set_fuel(fuel).unwrap(),
 
         // If a timeout is requested then we spawn a helper thread to wait for
         // the requested time and then send us a signal to get interrupted. We
@@ -148,9 +163,7 @@ pub fn instantiate(wasm: &[u8], known_valid: bool, config: &generators::Config, 
         Timeout::None => {}
     }
 
-    if let Some(module) = compile_module(store.engine(), wasm, known_valid, config) {
-        instantiate_with_dummy(&mut store, &module);
-    }
+    instantiate_with_dummy(&mut store, &module);
 }
 
 /// Represents supported commands to the `instantiate_many` function.
@@ -241,9 +254,7 @@ fn compile_module(
         Ok(module) => Some(module),
         Err(_) if !known_valid => None,
         Err(e) => {
-            if let generators::InstanceAllocationStrategy::Pooling { .. } =
-                &config.wasmtime.strategy
-            {
+            if let generators::InstanceAllocationStrategy::Pooling(c) = &config.wasmtime.strategy {
                 // When using the pooling allocator, accept failures to compile
                 // when arbitrary table element limits have been exceeded as
                 // there is currently no way to constrain the generated module
@@ -259,6 +270,23 @@ fn compile_module(
                 // "random" instance size limit and if a module doesn't fit we
                 // move on to the next fuzz input.
                 if string.contains("instance allocation for this module requires") {
+                    return None;
+                }
+
+                // If the pooling allocator is more restrictive on the number of
+                // tables and memories than we allowed wasm-smith to generate
+                // then allow compilation errors along those lines.
+                if c.max_tables_per_module < (config.module_config.config.max_tables as u32)
+                    && string.contains("defined tables count")
+                    && string.contains("exceeds the per-instance limit")
+                {
+                    return None;
+                }
+
+                if c.max_memories_per_module < (config.module_config.config.max_memories as u32)
+                    && string.contains("defined memories count")
+                    && string.contains("exceeds the per-instance limit")
+                {
                     return None;
                 }
             }
@@ -293,7 +321,7 @@ pub fn instantiate_with_dummy(store: &mut Store<StoreLimits>, module: &Module) -
     // If the instantiation hit OOM for some reason then that's ok, it's
     // expected that fuzz-generated programs try to allocate lots of
     // stuff.
-    if store.data().0.oom.get() {
+    if store.data().is_oom() {
         log::debug!("failed to instantiate: OOM");
         return None;
     }
@@ -314,8 +342,11 @@ pub fn instantiate_with_dummy(store: &mut Store<StoreLimits>, module: &Module) -
         return None;
     }
 
-    // Also allow failures to instantiate as a result of hitting instance limits
-    if string.contains("maximum concurrent instance limit") {
+    // Also allow failures to instantiate as a result of hitting pooling limits.
+    if string.contains("maximum concurrent core instance limit")
+        || string.contains("maximum concurrent memory limit")
+        || string.contains("maximum concurrent table limit")
+    {
         log::debug!("failed to instantiate: {}", string);
         return None;
     }
@@ -358,30 +389,21 @@ pub fn differential(
         .map(|results| results.unwrap());
     log::debug!(" -> results on {}: {:?}", rhs.name(), &rhs_results);
 
-    match (lhs_results, rhs_results) {
-        // If the evaluation succeeds, we compare the results.
-        (Ok(lhs_results), Ok(rhs_results)) => assert_eq!(lhs_results, rhs_results),
+    // If Wasmtime hit its OOM condition, which is possible since it's set
+    // somewhat low while fuzzing, then don't return an error but return
+    // `false` indicating that differential fuzzing must stop. There's no
+    // guarantee the other engine has the same OOM limits as Wasmtime, and
+    // it's assumed that Wasmtime is configured to have a more conservative
+    // limit than the other engine.
+    if rhs.is_oom() {
+        return Ok(false);
+    }
 
-        // Both sides failed. If either one hits a stack overflow then that's an
-        // engine defined limit which means we can no longer compare the state
-        // of the two instances, so `false` is returned and nothing else is
-        // compared.
-        //
-        // Otherwise, though, the same error should have popped out and this
-        // falls through to checking the intermediate state otherwise.
-        (Err(lhs), Err(rhs)) => {
-            let err = rhs.downcast::<Trap>().expect("not a trap");
-            let poisoned = err == Trap::StackOverflow || lhs_engine.is_stack_overflow(&lhs);
-
-            if poisoned {
-                return Ok(false);
-            }
-            lhs_engine.assert_error_match(&err, &lhs);
-        }
-        // A real bug is found if only one side fails.
-        (Ok(_), Err(_)) => panic!("only the `rhs` ({}) failed for this input", rhs.name()),
-        (Err(_), Ok(_)) => panic!("only the `lhs` ({}) failed for this input", lhs.name()),
-    };
+    match DiffEqResult::new(lhs_engine, lhs_results, rhs_results) {
+        DiffEqResult::Success(lhs, rhs) => assert_eq!(lhs, rhs),
+        DiffEqResult::Poisoned => return Ok(false),
+        DiffEqResult::Failed => {}
+    }
 
     for (global, ty) in rhs.exported_globals() {
         log::debug!("Comparing global `{global}`");
@@ -402,10 +424,57 @@ pub fn differential(
         if lhs == rhs {
             continue;
         }
+        eprintln!("differential memory is {} bytes long", lhs.len());
+        eprintln!("wasmtime memory is     {} bytes long", rhs.len());
         panic!("memories have differing values");
     }
 
     Ok(true)
+}
+
+/// Result of comparing the result of two operations during differential
+/// execution.
+pub enum DiffEqResult<T, U> {
+    /// Both engines succeeded.
+    Success(T, U),
+    /// The result has reached the state where engines may have diverged and
+    /// results can no longer be compared.
+    Poisoned,
+    /// Both engines failed with the same error message, and internal state
+    /// should still match between the two engines.
+    Failed,
+}
+
+impl<T, U> DiffEqResult<T, U> {
+    /// Computes the differential result from executing in two different
+    /// engines.
+    pub fn new(
+        lhs_engine: &dyn DiffEngine,
+        lhs_result: Result<T>,
+        rhs_result: Result<U>,
+    ) -> DiffEqResult<T, U> {
+        match (lhs_result, rhs_result) {
+            (Ok(lhs_result), Ok(rhs_result)) => DiffEqResult::Success(lhs_result, rhs_result),
+
+            // Both sides failed. If either one hits a stack overflow then that's an
+            // engine defined limit which means we can no longer compare the state
+            // of the two instances, so `None` is returned and nothing else is
+            // compared.
+            (Err(lhs), Err(rhs)) => {
+                let err = rhs.downcast::<Trap>().expect("not a trap");
+                let poisoned = err == Trap::StackOverflow || lhs_engine.is_stack_overflow(&lhs);
+
+                if poisoned {
+                    return DiffEqResult::Poisoned;
+                }
+                lhs_engine.assert_error_match(&err, &lhs);
+                DiffEqResult::Failed
+            }
+            // A real bug is found if only one side fails.
+            (Ok(_), Err(_)) => panic!("only the `rhs` failed for this input"),
+            (Err(_), Ok(_)) => panic!("only the `lhs` failed for this input"),
+        }
+    }
 }
 
 /// Invoke the given API calls.
@@ -456,7 +525,7 @@ pub fn make_api_calls(api: generators::api::ApiCalls) {
 
             ApiCall::InstanceDrop { id } => {
                 log::trace!("dropping instance {}", id);
-                drop(instances.remove(&id));
+                instances.remove(&id);
             }
 
             ApiCall::CallExportedFunc { instance, nth } => {
@@ -529,7 +598,7 @@ pub fn table_ops(
     {
         fuzz_config.wasmtime.consume_fuel = true;
         let mut store = fuzz_config.to_store();
-        set_fuel(&mut store, 1_000);
+        store.set_fuel(1_000).unwrap();
 
         let wasm = ops.to_wasm_binary();
         log_wasm(&wasm);
@@ -767,31 +836,35 @@ impl Drop for SignalOnDrop {
     }
 }
 
-/// Set the amount of fuel in a store to a given value
-pub fn set_fuel<T>(store: &mut Store<T>, fuel: u64) {
-    // Determine the amount of fuel already within the store, if any, and
-    // add/consume as appropriate to set the remaining amount to` fuel`.
-    let remaining = store.consume_fuel(0).unwrap();
-    if fuel > remaining {
-        store.add_fuel(fuel - remaining).unwrap();
-    } else {
-        store.consume_fuel(remaining - fuel).unwrap();
-    }
-    // double-check that the store has the expected amount of fuel remaining
-    assert_eq!(store.consume_fuel(0).unwrap(), fuel);
-}
-
 /// Generate and execute a `crate::generators::component_types::TestCase` using the specified `input` to create
 /// arbitrary types and values.
 pub fn dynamic_component_api_target(input: &mut arbitrary::Unstructured) -> arbitrary::Result<()> {
     use crate::generators::component_types;
-    use component_fuzz_util::{TestCase, EXPORT_FUNCTION, IMPORT_FUNCTION};
+    use component_fuzz_util::{TestCase, Type, EXPORT_FUNCTION, IMPORT_FUNCTION, MAX_TYPE_DEPTH};
     use component_test_util::FuncExt;
     use wasmtime::component::{Component, Linker, Val};
 
     crate::init_fuzzing();
 
-    let case = input.arbitrary::<TestCase>()?;
+    let mut types = Vec::new();
+    let mut type_fuel = 500;
+
+    for _ in 0..5 {
+        types.push(Type::generate(input, MAX_TYPE_DEPTH, &mut type_fuel)?);
+    }
+    let params = (0..input.int_in_range(0..=5)?)
+        .map(|_| input.choose(&types))
+        .collect::<arbitrary::Result<Vec<_>>>()?;
+    let results = (0..input.int_in_range(0..=5)?)
+        .map(|_| input.choose(&types))
+        .collect::<arbitrary::Result<Vec<_>>>()?;
+
+    let case = TestCase {
+        params,
+        results,
+        encoding1: input.arbitrary()?,
+        encoding2: input.arbitrary()?,
+    };
 
     let mut config = component_test_util::config();
     config.debug_adapter_modules(input.arbitrary()?);

@@ -279,17 +279,12 @@ pub struct Imm12 {
 impl Imm12 {
     /// Compute a Imm12 from raw bits, if possible.
     pub fn maybe_from_u64(val: u64) -> Option<Imm12> {
-        if val == 0 {
-            Some(Imm12 {
-                bits: 0,
-                shift12: false,
-            })
-        } else if val < 0xfff {
+        if val & !0xfff == 0 {
             Some(Imm12 {
                 bits: val as u16,
                 shift12: false,
             })
-        } else if val < 0xfff_000 && (val & 0xfff == 0) {
+        } else if val & !(0xfff << 12) == 0 {
             Some(Imm12 {
                 bits: (val >> 12) as u16,
                 shift12: true,
@@ -311,6 +306,16 @@ impl Imm12 {
     /// Bits for 12-bit "imm" field in e.g. AddI.
     pub fn imm_bits(&self) -> u32 {
         self.bits as u32
+    }
+
+    /// Get the actual value that this immediate corresponds to.
+    pub fn value(&self) -> u32 {
+        let base = self.bits as u32;
+        if self.shift12 {
+            base << 12
+        } else {
+            base
+        }
     }
 }
 

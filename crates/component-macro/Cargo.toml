@@ -19,13 +19,10 @@ doctest = false
 anyhow = "1.0"
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version = "1.0", features = ["extra-traits"] }
+syn = { workspace = true, features = ["extra-traits"] }
 wasmtime-component-util = { workspace = true }
 wasmtime-wit-bindgen = { workspace = true }
 wit-parser = { workspace = true }
-
-[badges]
-maintenance = { status = "actively-developed" }
 
 [dev-dependencies]
 wasmtime = { path = '../wasmtime', features = ['component-model'] }

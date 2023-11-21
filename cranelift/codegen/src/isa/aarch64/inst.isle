@@ -651,6 +651,16 @@
         (rm Reg)
         (size VectorSize))
 
+       ;; A vector ALU op modifying a source register.
+       (VecFmlaElem
+        (alu_op VecALUModOp)
+        (rd WritableReg)
+        (ri Reg)
+        (rn Reg)
+        (rm Reg)
+        (size VectorSize)
+        (idx u8))
+
        ;; Vector two register miscellaneous instruction.
        (VecMisc
         (op VecMisc2)
@@ -778,15 +788,28 @@
        (CallInd
         (info BoxCallIndInfo))
 
+       ;; A return-call macro instruction.
+       (ReturnCall
+        (callee BoxExternalName)
+        (info BoxReturnCallInfo))
+
+       ;; An indirect return-call macro instruction.
+       (ReturnCallInd
+        (callee Reg)
+        (info BoxReturnCallInfo))
+
        ;; A pseudo-instruction that captures register arguments in vregs.
        (Args
         (args VecArgPair))
 
+       ;; A pseudo-instruction that moves vregs to return registers.
+       (Rets
+        (rets VecRetPair))
+
        ;; ---- branches (exactly one must appear at end of BB) ----
 
        ;; A machine return instruction.
-       (Ret
-        (rets VecRetPair))
+       (Ret)
 
        ;; A machine return instruction with pointer authentication using SP as the
        ;; modifier. This instruction requires pointer authentication support
@@ -795,8 +818,7 @@
        ;; the relevant support.
        (AuthenticatedRet
         (key APIKey)
-        (is_hint bool)
-        (rets VecRetPair))
+        (is_hint bool))
 
        ;; An unconditional branch.
        (Jump
@@ -810,6 +832,15 @@
         (taken BranchTarget)
         (not_taken BranchTarget)
         (kind CondBrKind))
+
+       ;; A conditional branch which tests the `bit` of `rn` and branches
+       ;; depending on `kind`.
+       (TestBitAndBranch
+        (kind TestBitAndBranchKind)
+        (taken BranchTarget)
+        (not_taken BranchTarget)
+        (rn Reg)
+        (bit u8))
 
        ;; A conditional trap: execute a `udf` if the condition is true. This is
        ;; one VCode instruction because it uses embedded control flow; it is
@@ -861,7 +892,8 @@
 
        ;; Jump-table sequence, as one compound instruction (see note in lower_inst.rs for rationale).
        (JTSequence
-        (info BoxJTSequenceInfo)
+        (default MachLabel)
+        (targets BoxVecMachLabel)
         (ridx Reg)
         (rtmp1 WritableReg)
         (rtmp2 WritableReg))
@@ -880,7 +912,7 @@
        ;; Pointer authentication code for instruction address with modifier in SP;
        ;; equivalent to a no-op if Pointer authentication (FEAT_PAuth) is not
        ;; supported.
-       (Pacisp
+       (Paci
         (key APIKey))
 
        ;; Strip pointer authentication code from instruction address in LR;
@@ -935,8 +967,9 @@
 
        ;; A call to the `ElfTlsGetAddr` libcall. Returns address of TLS symbol in x0.
        (ElfTlsGetAddr
-        (symbol ExternalName)
-        (rd WritableReg))
+        (symbol BoxExternalName)
+        (rd WritableReg)
+        (tmp WritableReg))
 
        (MachOTlsGetAddr
         (symbol ExternalName)
@@ -1005,6 +1038,10 @@
     (MAdd)
     ;; Multiply-sub
     (MSub)
+    ;; Unsigned-Multiply-add
+    (UMAddL)
+    ;; Signed-Multiply-add
+    (SMAddL)
 ))
 
 (type MoveWideOp
@@ -1022,9 +1059,11 @@
 (type NZCV (primitive NZCV))
 (type ASIMDFPModImm (primitive ASIMDFPModImm))
 (type ASIMDMovModImm (primitive ASIMDMovModImm))
+(type SImm7Scaled (primitive SImm7Scaled))
 
 (type BoxCallInfo (primitive BoxCallInfo))
 (type BoxCallIndInfo (primitive BoxCallIndInfo))
+(type BoxReturnCallInfo (primitive BoxReturnCallInfo))
 (type CondBrKind (primitive CondBrKind))
 (type BranchTarget (primitive BranchTarget))
 (type BoxJTSequenceInfo (primitive BoxJTSequenceInfo))
@@ -1163,13 +1202,28 @@
          (off i64)
          (ty Type))))
 
-(type PairAMode extern (enum))
+;; A memory argument to a load/store-pair.
+(type PairAMode (enum
+  ;; Signed, scaled 7-bit offset from a register.
+  (SignedOffset
+    (reg Reg)
+    (simm7 SImm7Scaled))
+
+  ;; Pre-increment register before address computation.
+  (SPPreIndexed (simm7 SImm7Scaled))
+
+  ;; Post-increment register after address computation.
+  (SPPostIndexed (simm7 SImm7Scaled))
+))
+
 (type FPUOpRI extern (enum))
 (type FPUOpRIMod extern (enum))
 
 (type OperandSize extern
       (enum Size32
             Size64))
+
+(type TestBitAndBranchKind (enum (Z) (NZ)))
 
 ;; Helper for calculating the `OperandSize` corresponding to a type
 (decl operand_size (Type) OperandSize)
@@ -1629,8 +1683,14 @@
 ;; Keys for instruction address PACs
 (type APIKey
   (enum
-    (A)
-    (B)
+    ;; API key A with the modifier of SP
+    (ASP)
+    ;; API key B with the modifier of SP
+    (BSP)
+    ;; API key A with the modifier of zero
+    (AZ)
+    ;; API key B with the modifier of zero
+    (BZ)
 ))
 
 ;; Branch target types
@@ -1681,17 +1741,12 @@
 (decl u64_into_imm_logic (Type u64) ImmLogic)
 (extern constructor u64_into_imm_logic u64_into_imm_logic)
 
-(decl branch_target (VecMachLabel u8) BranchTarget)
+(decl branch_target (MachLabel) BranchTarget)
 (extern constructor branch_target branch_target)
+(convert MachLabel BranchTarget branch_target)
 
-(decl targets_jt_size (VecMachLabel) u32)
-(extern constructor targets_jt_size targets_jt_size)
-
-(decl targets_jt_space (VecMachLabel) CodeOffset)
+(decl targets_jt_space (BoxVecMachLabel) CodeOffset)
 (extern constructor targets_jt_space targets_jt_space)
-
-(decl targets_jt_info (VecMachLabel) BoxJTSequenceInfo)
-(extern constructor targets_jt_info targets_jt_info)
 
 ;; Calculate the minimum floating-point bound for a conversion to floating
 ;; point from an integer type.
@@ -1727,6 +1782,9 @@
 
 (decl pure partial lshl_from_u64 (Type u64) ShiftOpAndAmt)
 (extern constructor lshl_from_u64 lshl_from_u64)
+
+(decl pure partial ashr_from_u64 (Type u64) ShiftOpAndAmt)
+(extern constructor ashr_from_u64 ashr_from_u64)
 
 (decl integral_ty (Type) Type)
 (extern extractor integral_ty integral_ty)
@@ -1776,9 +1834,6 @@
 
 (decl cond_br_cond (Cond) CondBrKind)
 (extern constructor cond_br_cond cond_br_cond)
-
-(decl pair_amode (Value u32) PairAMode)
-(extern constructor pair_amode pair_amode)
 
 ;; Instruction creation helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1877,12 +1932,20 @@
             (_ Unit (emit (MInst.FpuRR op size dst src))))
        dst))
 
-;; Helper for emitting `MInst.VecRRR` instructions which use three registers,
+;; Helper for emitting `MInst.VecRRRMod` instructions which use three registers,
 ;; one of which is both source and output.
 (decl vec_rrr_mod (VecALUModOp Reg Reg Reg VectorSize) Reg)
 (rule (vec_rrr_mod op src1 src2 src3 size)
       (let ((dst WritableReg (temp_writable_reg $I8X16))
             (_1 Unit (emit (MInst.VecRRRMod op dst src1 src2 src3 size))))
+        dst))
+
+;; Helper for emitting `MInst.VecFmlaElem` instructions which use three registers,
+;; one of which is both source and output.
+(decl vec_fmla_elem (VecALUModOp Reg Reg Reg VectorSize u8) Reg)
+(rule (vec_fmla_elem op src1 src2 src3 size idx)
+      (let ((dst WritableReg (temp_writable_reg $I8X16))
+            (_1 Unit (emit (MInst.VecFmlaElem op dst src1 src2 src3 size idx))))
         dst))
 
 (decl fpu_rri (FPUOpRI Reg) Reg)
@@ -1975,6 +2038,15 @@
        (MInst.AluRRRShift (ALUOp.SubS) size (writable_zero_reg)
         src1 src2 shift)))
 
+;; Helper for emitting `cmp` instructions, setting flags, with an arithmetic right-shifted
+;; second operand register.
+(decl cmp_rr_shift_asr (OperandSize Reg Reg u64) ProducesFlags)
+(rule (cmp_rr_shift_asr size src1 src2 shift_amount)
+      (if-let shift (ashr_from_u64 $I64 shift_amount))
+      (ProducesFlags.ProducesFlagsSideEffect
+       (MInst.AluRRRShift (ALUOp.SubS) size (writable_zero_reg)
+        src1 src2 shift)))
+
 ;; Helper for emitting `MInst.AluRRRExtend` instructions.
 (decl alu_rrr_extend (ALUOp Type Reg Reg ExtendOp) Reg)
 (rule (alu_rrr_extend op ty src1 src2 extend)
@@ -1996,6 +2068,22 @@
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.AluRRRR op (operand_size ty) dst src1 src2 src3))))
         dst))
+
+;; Helper for emitting paired `MInst.AluRRR` instructions
+(decl alu_rrr_with_flags_paired (Type Reg Reg ALUOp) ProducesFlags)
+(rule (alu_rrr_with_flags_paired ty src1 src2 alu_op)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ProducesFlags.ProducesFlagsReturnsResultWithConsumer
+         (MInst.AluRRR alu_op (operand_size ty) dst src1 src2)
+         dst)))
+
+;; Should only be used for AdcS and SbcS
+(decl alu_rrr_with_flags_chained (Type Reg Reg ALUOp) ConsumesAndProducesFlags)
+(rule (alu_rrr_with_flags_chained ty src1 src2 alu_op)
+      (let ((dst WritableReg (temp_writable_reg $I64)))
+        (ConsumesAndProducesFlags.ReturnsReg
+         (MInst.AluRRR alu_op (operand_size ty) dst src1 src2)
+         dst)))
 
 ;; Helper for emitting `MInst.BitRR` instructions.
 (decl bit_rr (BitOp Type Reg) Reg)
@@ -2344,7 +2432,7 @@
 ;; immediately by the `MInst.CCmp` instruction.
 (decl ccmp (OperandSize Reg Reg NZCV Cond ProducesFlags) ProducesFlags)
 (rule (ccmp size rn rm nzcv cond inst_input)
-      (produces_flags_append inst_input (MInst.CCmp size rn rm nzcv cond)))
+      (produces_flags_concat inst_input (ProducesFlags.ProducesFlagsSideEffect (MInst.CCmp size rn rm nzcv cond))))
 
 ;; Helper for generating `MInst.CCmpImm` instructions.
 (decl ccmp_imm (OperandSize Reg UImm5 NZCV Cond) ConsumesFlags)
@@ -2419,6 +2507,14 @@
 
 (decl msub (Type Reg Reg Reg) Reg)
 (rule (msub ty x y z) (alu_rrrr (ALUOp3.MSub) ty x y z))
+
+;; Helpers for generating `umaddl` instructions
+(decl umaddl (Reg Reg Reg) Reg)
+(rule (umaddl x y z) (alu_rrrr (ALUOp3.UMAddL) $I32 x y z))
+
+;; Helpers for generating `smaddl` instructions
+(decl smaddl (Reg Reg Reg) Reg)
+(rule (smaddl x y z) (alu_rrrr (ALUOp3.SMAddL) $I32 x y z))
 
 ;; Helper for generating `uqadd` instructions.
 (decl uqadd (Reg Reg VectorSize) Reg)
@@ -2629,6 +2725,9 @@
 (decl orr_imm (Type Reg ImmLogic) Reg)
 (rule (orr_imm ty x y) (alu_rr_imm_logic (ALUOp.Orr) ty x y))
 
+(decl orr_shift (Type Reg Reg ShiftOpAndAmt) Reg)
+(rule (orr_shift ty x y shift) (alu_rrr_shift (ALUOp.Orr) ty x y shift))
+
 (decl orr_vec (Reg Reg VectorSize) Reg)
 (rule (orr_vec x y size) (vec_rrr (VecALUOp.Orr) x y size))
 
@@ -2644,6 +2743,9 @@
 (rule (and_vec x y size) (vec_rrr (VecALUOp.And) x y size))
 
 ;; Helpers for generating `eor` instructions.
+(decl eor (Type Reg Reg) Reg)
+(rule (eor ty x y) (alu_rrr (ALUOp.Eor) ty x y))
+
 (decl eor_vec (Reg Reg VectorSize) Reg)
 (rule (eor_vec x y size) (vec_rrr (VecALUOp.Eor) x y size))
 
@@ -2850,16 +2952,22 @@
 ;; are zero-extending the value.
 (rule 3 (imm (integral_ty ty) (ImmExtend.Zero) k)
       (if-let n (move_wide_const_from_u64 ty k))
-      (movz n (operand_size ty)))
+      (add_range_fact
+       (movz n (operand_size ty))
+       64 k k))
 (rule 2 (imm (integral_ty (ty_32_or_64 ty)) (ImmExtend.Zero) k)
       (if-let n (move_wide_const_from_inverted_u64 ty k))
-      (movn n (operand_size ty)))
+      (add_range_fact
+       (movn n (operand_size ty))
+       64 k k))
 
 ;; Weird logical-instruction immediate in ORI using zero register; to simplify,
 ;; we only match when we are zero-extending the value.
 (rule 1 (imm (integral_ty ty) (ImmExtend.Zero) k)
       (if-let n (imm_logic_from_u64 ty k))
-      (orr_imm ty (zero_reg) n))
+      (add_range_fact
+       (orr_imm ty (zero_reg) n)
+       64 k k))
 
 (decl load_constant64_full (Type ImmExtend u64) Reg)
 (extern constructor load_constant64_full load_constant64_full)
@@ -3018,39 +3126,128 @@
             (_ Unit (emit (MInst.LoadExtName dst extname offset))))
         dst))
 
-;; Helper for emitting `MInst.LoadAddr` instructions.
-(decl load_addr (AMode) Reg)
-
-(rule (load_addr (AMode.UnsignedOffset r imm))
-      (if (is_zero_uimm12 imm))
-      r)
-
-(rule (load_addr (AMode.Unscaled r imm))
-      (if (is_zero_simm9 imm))
-      r)
-
-(rule (load_addr (AMode.RegOffset r 0 _)) r)
-(rule (load_addr (AMode.FPOffset 0 _)) (fp_reg))
-(rule (load_addr (AMode.SPOffset 0 _)) (stack_reg))
-
-(rule -1 (load_addr addr)
-      (let ((dst WritableReg (temp_writable_reg $I64))
-            (_ Unit (emit (MInst.LoadAddr dst addr))))
-        dst))
-
 ;; Lower the address of a load or a store.
-(decl amode (Type Value u32) AMode)
-;; TODO: Port lower_address() to ISLE.
-(extern constructor amode amode)
+;;
+;; This will create an `AMode` representing the address of the `Value` provided
+;; at runtime plus the immediate offset `i32` provided. The `Type` here is used
+;; to represent the size of the value being loaded or stored for offset scaling
+;; if necessary.
+;;
+;; Note that this is broken up into two phases. In the first phase this attempts
+;; to find constants within the `val` provided and fold them in to the `offset`
+;; provided. Afterwards though the `amode_no_more_iconst` helper is used at
+;; which pointer constants are no longer pattern-matched and instead only
+;; various modes are generated. This in theory would not be necessary with
+;; mid-end optimizations that fold constants into load/store immediate offsets
+;; instead, but for now each backend needs to do this.
+(decl amode (Type Value i32) AMode)
+(rule 0 (amode ty val offset)
+        (amode_no_more_iconst ty val offset))
+(rule 1 (amode ty (iadd x (iconst (simm32 y))) offset)
+        (if-let new_offset (s32_add_fallible y offset))
+        (amode_no_more_iconst ty x new_offset))
+(rule 2 (amode ty (iadd (iconst (simm32 x)) y) offset)
+        (if-let new_offset (s32_add_fallible x offset))
+        (amode_no_more_iconst ty y new_offset))
 
-;; Lower the address of a stg instruction
-(decl amode_stg (Type Value u32) AMode)
-(extern constructor amode_stg amode_stg)
+(decl amode_no_more_iconst (Type Value i32) AMode)
+;; Base case: move the `offset` into a register and add it to `val` via the
+;; amode
+(rule 0 (amode_no_more_iconst ty val offset)
+        (AMode.RegReg val (imm $I64 (ImmExtend.Zero) (i64_as_u64 offset))))
 
-(decl sink_load_into_amode (Type Inst) AMode)
-(rule (sink_load_into_amode ty x @ (load _ addr offset))
+;; Optimize cases where the `offset` provided fits into a immediates of
+;; various kinds of addressing modes.
+(rule 1 (amode_no_more_iconst ty val offset)
+        (if-let simm9 (simm9_from_i64 offset))
+        (AMode.Unscaled val simm9))
+(rule 2 (amode_no_more_iconst ty val offset)
+        (if-let uimm12 (uimm12_scaled_from_i64 offset ty))
+        (AMode.UnsignedOffset val uimm12))
+
+;; Optimizations where addition can fold some operations into the `amode`.
+;;
+;; Note that here these take higher priority than constants because an
+;; add-of-extend can be folded into an amode, representing 2 otherwise emitted
+;; instructions. Constants on the other hand added to the amode represent only
+;; a single instruction folded in, so fewer instructions should be generated
+;; with these higher priority than the rules above.
+(rule 3 (amode_no_more_iconst ty (iadd x y) offset)
+        (AMode.RegReg (amode_add x offset) y))
+(rule 4 (amode_no_more_iconst ty (iadd x (uextend y @ (value_type $I32))) offset)
+        (AMode.RegExtended (amode_add x offset) y (ExtendOp.UXTW)))
+(rule 4 (amode_no_more_iconst ty (iadd x (sextend y @ (value_type $I32))) offset)
+        (AMode.RegExtended (amode_add x offset) y (ExtendOp.SXTW)))
+(rule 5 (amode_no_more_iconst ty (iadd (uextend x @ (value_type $I32)) y) offset)
+        (AMode.RegExtended (amode_add y offset) x (ExtendOp.UXTW)))
+(rule 5 (amode_no_more_iconst ty (iadd (sextend x @ (value_type $I32)) y) offset)
+        (AMode.RegExtended (amode_add y offset) x (ExtendOp.SXTW)))
+
+;; `RegScaled*` rules where this matches an addition of an "index register" to a
+;; base register. The index register is shifted by the size of the type loaded
+;; in bytes to enable this mode matching.
+;;
+;; Note that this can additionally bundle an extending operation but the
+;; extension must happen before the shift. This will pattern-match the shift
+;; first and then if that succeeds afterwards try to find an extend.
+(rule 6 (amode_no_more_iconst ty (iadd x (ishl y (iconst (u64_from_imm64 n)))) offset)
+        (if-let $true (u64_eq (ty_bytes ty) (u64_shl 1 n)))
+        (amode_reg_scaled (amode_add x offset) y ty))
+(rule 7 (amode_no_more_iconst ty (iadd (ishl y (iconst (u64_from_imm64 n))) x) offset)
+        (if-let $true (u64_eq (ty_bytes ty) (u64_shl 1 n)))
+        (amode_reg_scaled (amode_add x offset) y ty))
+
+(decl amode_reg_scaled (Reg Value Type) AMode)
+(rule 0 (amode_reg_scaled base index ty)
+        (AMode.RegScaled base index ty))
+(rule 1 (amode_reg_scaled base (uextend index @ (value_type $I32)) ty)
+        (AMode.RegScaledExtended base index ty (ExtendOp.UXTW)))
+(rule 2 (amode_reg_scaled base (sextend index @ (value_type $I32)) ty)
+        (AMode.RegScaledExtended base index ty (ExtendOp.SXTW)))
+
+;; Helper to add a 32-bit signed immediate to the register provided. This will
+;; select an appropriate `add` instruction to use.
+(decl amode_add (Reg i32) Reg)
+(rule 0 (amode_add x y)
+        (add $I64 x (imm $I64 (ImmExtend.Zero) (i64_as_u64 y))))
+(rule 1 (amode_add x y)
+        (if-let (imm12_from_u64 imm12) (i64_as_u64 y))
+        (add_imm $I64 x imm12))
+(rule 2 (amode_add x 0) x)
+
+;; Creates a `PairAMode` for the `Value` provided plus the `i32` constant
+;; offset provided.
+(decl pair_amode (Value i32) PairAMode)
+
+;; Base case where `val` and `offset` are combined with an `add`
+(rule 0 (pair_amode val offset)
+        (if-let simm7 (simm7_scaled_from_i64 0 $I64))
+        (PairAMode.SignedOffset (amode_add val offset) simm7))
+
+;; Optimization when `offset` can fit into a `SImm7Scaled`.
+(rule 1 (pair_amode val offset)
+        (if-let simm7 (simm7_scaled_from_i64 offset $I64))
+        (PairAMode.SignedOffset val simm7))
+
+(decl pure partial simm7_scaled_from_i64 (i64 Type) SImm7Scaled)
+(extern constructor simm7_scaled_from_i64 simm7_scaled_from_i64)
+
+(decl pure partial uimm12_scaled_from_i64 (i64 Type) UImm12Scaled)
+(extern constructor uimm12_scaled_from_i64 uimm12_scaled_from_i64)
+
+(decl pure partial simm9_from_i64 (i64) SImm9)
+(extern constructor simm9_from_i64 simm9_from_i64)
+
+
+(decl sink_load_into_addr (Type Inst) Reg)
+(rule (sink_load_into_addr ty x @ (load _ addr (offset32 offset)))
       (let ((_ Unit (sink_inst x)))
-           (amode ty addr offset)))
+        (add_imm_to_addr addr (i64_as_u64 offset))))
+
+(decl add_imm_to_addr (Reg u64) Reg)
+(rule 2 (add_imm_to_addr val 0) val)
+(rule 1 (add_imm_to_addr val (imm12_from_u64 imm)) (add_imm $I64 val imm))
+(rule 0 (add_imm_to_addr val offset) (add $I64 val (imm $I64 (ImmExtend.Zero) offset)))
 
 ;; Lower a constant f32.
 ;;
@@ -3158,17 +3355,6 @@
 ;; register.
 (rule (splat_const n size)
       (vec_dup (imm $I64 (ImmExtend.Zero) n) size))
-
-;; Each of these extractors tests whether the upper half of the input equals the
-;; lower half of the input
-(decl u128_replicated_u64 (u64) u128)
-(extern extractor u128_replicated_u64 u128_replicated_u64)
-(decl u64_replicated_u32 (u64) u64)
-(extern extractor u64_replicated_u32 u64_replicated_u32)
-(decl u32_replicated_u16 (u64) u64)
-(extern extractor u32_replicated_u16 u32_replicated_u16)
-(decl u16_replicated_u8 (u64) u64)
-(extern extractor u16_replicated_u8 u16_replicated_u8)
 
 ;; Lower a FloatCC to a Cond.
 (decl fp_cond_code (FloatCC) Cond)
@@ -3623,7 +3809,8 @@
 (decl elf_tls_get_addr (ExternalName) Reg)
 (rule (elf_tls_get_addr name)
       (let ((dst WritableReg (temp_writable_reg $I64))
-            (_ Unit (emit (MInst.ElfTlsGetAddr name dst))))
+            (tmp WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ElfTlsGetAddr (box_external_name name) dst tmp))))
         dst))
 
 (decl macho_tls_get_addr (ExternalName) Reg)
@@ -3672,12 +3859,12 @@
             (rm Reg (put_in_reg y)))
        (vec_cmp rn rm in_ty cond)))
 
-;; Determines the appropriate extend op given the value type and whether it is signed.
-(decl lower_extend_op (Type bool) ExtendOp)
-(rule (lower_extend_op $I8 $true) (ExtendOp.SXTB))
-(rule (lower_extend_op $I16 $true) (ExtendOp.SXTH))
-(rule (lower_extend_op $I8 $false) (ExtendOp.UXTB))
-(rule (lower_extend_op $I16 $false) (ExtendOp.UXTH))
+;; Determines the appropriate extend op given the value type and the given ArgumentExtension.
+(decl lower_extend_op (Type ArgumentExtension) ExtendOp)
+(rule (lower_extend_op $I8 (ArgumentExtension.Sext)) (ExtendOp.SXTB))
+(rule (lower_extend_op $I16 (ArgumentExtension.Sext)) (ExtendOp.SXTH))
+(rule (lower_extend_op $I8 (ArgumentExtension.Uext)) (ExtendOp.UXTB))
+(rule (lower_extend_op $I16 (ArgumentExtension.Uext)) (ExtendOp.UXTH))
 
 ;; Integers <= 64-bits.
 (rule -2 (lower_icmp_into_reg cond rn rm in_ty out_ty)
@@ -3688,13 +3875,13 @@
 (rule 1 (lower_icmp cond rn rm (fits_in_16 ty))
       (if (signed_cond_code cond))
       (let ((rn Reg (put_in_reg_sext32 rn)))
-      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty $true)) cond)))
+      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty (ArgumentExtension.Sext))) cond)))
 (rule -1 (lower_icmp cond rn (imm12_from_value rm) (fits_in_16 ty))
       (let ((rn Reg (put_in_reg_zext32 rn)))
       (flags_and_cc (cmp_imm (operand_size ty) rn rm) cond)))
 (rule -2 (lower_icmp cond rn rm (fits_in_16 ty))
       (let ((rn Reg (put_in_reg_zext32 rn)))
-      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty $false)) cond)))
+      (flags_and_cc (cmp_extend (operand_size ty) rn rm (lower_extend_op ty (ArgumentExtension.Uext))) cond)))
 (rule -3 (lower_icmp cond rn (u64_from_iconst c) ty)
       (if (ty_int_ref_scalar_64 ty))
       (lower_icmp_const cond rn c ty))
@@ -3923,18 +4110,33 @@
 ;; PC-rel offset to the jumptable would be incorrect.
 ;; (The alternative is to introduce a relocation pass
 ;; for inlined jumptables, which is much worse, IMHO.)
-(decl jt_sequence (Reg BoxJTSequenceInfo) ConsumesFlags)
-(rule (jt_sequence ridx info)
+(decl jt_sequence (Reg MachLabel BoxVecMachLabel) ConsumesFlags)
+(rule (jt_sequence ridx default targets)
       (let ((rtmp1 WritableReg (temp_writable_reg $I64))
             (rtmp2 WritableReg (temp_writable_reg $I64)))
        (ConsumesFlags.ConsumesFlagsSideEffect
-        (MInst.JTSequence info ridx rtmp1 rtmp2))))
+        (MInst.JTSequence default targets ridx rtmp1 rtmp2))))
 
 ;; Helper for emitting `MInst.CondBr` instructions.
 (decl cond_br (BranchTarget BranchTarget CondBrKind) ConsumesFlags)
 (rule (cond_br taken not_taken kind)
       (ConsumesFlags.ConsumesFlagsSideEffect
        (MInst.CondBr taken not_taken kind)))
+
+;; Helper for emitting `MInst.TestBitAndBranch` instructions.
+(decl test_branch (TestBitAndBranchKind BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (test_branch kind taken not_taken rn bit)
+      (SideEffectNoResult.Inst (MInst.TestBitAndBranch kind taken not_taken rn bit)))
+
+;; Helper for emitting `tbnz` instructions.
+(decl tbnz (BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (tbnz taken not_taken rn bit)
+      (test_branch (TestBitAndBranchKind.NZ) taken not_taken rn bit))
+
+;; Helper for emitting `tbz` instructions.
+(decl tbz (BranchTarget BranchTarget Reg u8) SideEffectNoResult)
+(rule (tbz taken not_taken rn bit)
+      (test_branch (TestBitAndBranchKind.Z) taken not_taken rn bit))
 
 ;; Helper for emitting `MInst.MovToNZCV` instructions.
 (decl mov_to_nzcv (Reg) ProducesFlags)
@@ -3949,18 +4151,16 @@
        (MInst.EmitIsland needed_space)))
 
 ;; Helper for emitting `br_table` sequences.
-(decl br_table_impl (u64 Reg VecMachLabel) Unit)
-(rule (br_table_impl (imm12_from_u64 jt_size) ridx targets)
-      (let ((jt_info BoxJTSequenceInfo (targets_jt_info targets)))
-       (emit_side_effect (with_flags_side_effect
-            (cmp_imm (OperandSize.Size32) ridx jt_size)
-            (jt_sequence ridx jt_info)))))
-(rule -1 (br_table_impl jt_size ridx targets)
-      (let ((jt_size Reg (imm $I64 (ImmExtend.Zero) jt_size))
-            (jt_info BoxJTSequenceInfo (targets_jt_info targets)))
+(decl br_table_impl (u64 Reg MachLabel BoxVecMachLabel) Unit)
+(rule (br_table_impl (imm12_from_u64 jt_size) ridx default targets)
+      (emit_side_effect (with_flags_side_effect
+           (cmp_imm (OperandSize.Size32) ridx jt_size)
+           (jt_sequence ridx default targets))))
+(rule -1 (br_table_impl jt_size ridx default targets)
+      (let ((jt_size Reg (imm $I64 (ImmExtend.Zero) jt_size)))
        (emit_side_effect (with_flags_side_effect
             (cmp (OperandSize.Size32) ridx jt_size)
-            (jt_sequence ridx jt_info)))))
+            (jt_sequence ridx default targets)))))
 
 ;; Helper for emitting the `uzp1` instruction
 (decl vec_uzp1 (Reg Reg VectorSize) Reg)

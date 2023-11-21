@@ -216,7 +216,7 @@ impl wasmtime_val_t {
             Val::V128(val) => wasmtime_val_t {
                 kind: crate::WASMTIME_V128,
                 of: wasmtime_val_union {
-                    v128: val.to_le_bytes(),
+                    v128: val.as_u128().to_le_bytes(),
                 },
             },
         }
@@ -228,7 +228,7 @@ impl wasmtime_val_t {
             crate::WASMTIME_I64 => Val::I64(self.of.i64),
             crate::WASMTIME_F32 => Val::F32(self.of.f32),
             crate::WASMTIME_F64 => Val::F64(self.of.f64),
-            crate::WASMTIME_V128 => Val::V128(u128::from_le_bytes(self.of.v128)),
+            crate::WASMTIME_V128 => Val::V128(u128::from_le_bytes(self.of.v128).into()),
             crate::WASMTIME_FUNCREF => {
                 let store = self.of.funcref.store_id;
                 let index = self.of.funcref.index;
@@ -296,17 +296,17 @@ pub extern "C" fn wasmtime_externref_delete(_val: Option<ExternRef>) {}
 pub unsafe extern "C" fn wasmtime_externref_to_raw(
     cx: CStoreContextMut<'_>,
     val: Option<ManuallyDrop<ExternRef>>,
-) -> usize {
+) -> *mut c_void {
     match val {
         Some(ptr) => ptr.to_raw(cx),
-        None => 0,
+        None => ptr::null_mut(),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wasmtime_externref_from_raw(
     _cx: CStoreContextMut<'_>,
-    val: usize,
+    val: *mut c_void,
 ) -> Option<ExternRef> {
     ExternRef::from_raw(val)
 }

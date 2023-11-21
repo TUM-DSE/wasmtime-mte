@@ -2,26 +2,10 @@
 
 #![deny(missing_docs, trivial_numeric_casts, unused_extern_crates)]
 #![warn(unused_import_braces)]
-#![cfg_attr(feature = "clippy", plugin(clippy(conf_file = "../../clippy.toml")))]
-#![cfg_attr(
-    feature = "cargo-clippy",
-    allow(clippy::new_without_default, clippy::new_without_default)
-)]
-#![cfg_attr(
-    feature = "cargo-clippy",
-    warn(
-        clippy::float_arithmetic,
-        clippy::mut_mut,
-        clippy::nonminimal_bool,
-        clippy::map_unwrap_or,
-        clippy::clippy::print_stdout,
-        clippy::unicode_not_nfc,
-        clippy::use_self
-    )
-)]
 
-use anyhow::Error;
+use anyhow::{Error, Result};
 use std::fmt;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use wasmtime_environ::{DefinedFuncIndex, DefinedMemoryIndex, HostPtr, VMOffsets};
@@ -39,12 +23,16 @@ mod memory;
 mod mmap;
 mod mmap_vec;
 mod parking_spot;
+mod send_sync_ptr;
+mod store_box;
 mod table;
 mod traphandlers;
 mod vmcontext;
 
+#[cfg(feature = "debug-builtins")]
 pub mod debug_builtins;
 pub mod libcalls;
+pub mod mpk;
 
 pub use wasmtime_jit_debug::gdb_jit_int::GdbJitImageRegistration;
 
@@ -52,8 +40,8 @@ pub use crate::export::*;
 pub use crate::externref::*;
 pub use crate::imports::Imports;
 pub use crate::instance::{
-    InstanceAllocationRequest, InstanceAllocator, InstanceHandle, OnDemandInstanceAllocator,
-    StorePtr,
+    Instance, InstanceAllocationRequest, InstanceAllocator, InstanceAllocatorImpl, InstanceHandle,
+    MemoryAllocationIndex, OnDemandInstanceAllocator, StorePtr, TableAllocationIndex,
 };
 #[cfg(feature = "pooling-allocator")]
 pub use crate::instance::{
@@ -64,18 +52,18 @@ pub use crate::memory::{
 };
 pub use crate::mmap::Mmap;
 pub use crate::mmap_vec::MmapVec;
+pub use crate::mpk::MpkEnabled;
+pub use crate::store_box::*;
 pub use crate::table::{Table, TableElement};
-pub use crate::trampolines::prepare_host_to_wasm_trampoline;
-pub use crate::traphandlers::{
-    catch_traps, init_traps, raise_lib_trap, raise_user_trap, resume_panic, tls_eager_initialize,
-    Backtrace, SignalHandler, TlsRestore, Trap, TrapReason,
-};
+pub use crate::traphandlers::*;
 pub use crate::vmcontext::{
-    VMCallerCheckedFuncRef, VMContext, VMFunctionBody, VMFunctionImport, VMGlobalDefinition,
-    VMGlobalImport, VMHostFuncContext, VMInvokeArgument, VMMemoryDefinition, VMMemoryImport,
-    VMOpaqueContext, VMRuntimeLimits, VMSharedSignatureIndex, VMTableDefinition, VMTableImport,
-    VMTrampoline, ValRaw,
+    VMArrayCallFunction, VMArrayCallHostFuncContext, VMContext, VMFuncRef, VMFunctionBody,
+    VMFunctionImport, VMGlobalDefinition, VMGlobalImport, VMInvokeArgument, VMMemoryDefinition,
+    VMMemoryImport, VMNativeCallFunction, VMNativeCallHostFuncContext, VMOpaqueContext,
+    VMRuntimeLimits, VMSharedSignatureIndex, VMTableDefinition, VMTableImport, VMWasmCallFunction,
+    ValRaw,
 };
+pub use send_sync_ptr::SendSyncPtr;
 
 mod module_id;
 pub use module_id::{CompiledModuleId, CompiledModuleIdAllocator};
@@ -130,7 +118,9 @@ pub unsafe trait Store {
     ) -> Result<bool, Error>;
     /// Callback invoked to notify the store's resource limiter that a memory
     /// grow operation has failed.
-    fn memory_grow_failed(&mut self, error: &Error);
+    ///
+    /// Note that this is not invoked if `memory_growing` returns an error.
+    fn memory_grow_failed(&mut self, error: Error) -> Result<()>;
     /// Callback invoked to allow the store's resource limiter to reject a
     /// table grow operation.
     fn table_growing(
@@ -141,7 +131,9 @@ pub unsafe trait Store {
     ) -> Result<bool, Error>;
     /// Callback invoked to notify the store's resource limiter that a table
     /// grow operation has failed.
-    fn table_grow_failed(&mut self, error: &Error);
+    ///
+    /// Note that this is not invoked if `table_growing` returns an error.
+    fn table_grow_failed(&mut self, error: Error) -> Result<()>;
     /// Callback invoked whenever fuel runs out by a wasm instance. If an error
     /// is returned that's raised as a trap. Otherwise wasm execution will
     /// continue as normal.
@@ -150,6 +142,10 @@ pub unsafe trait Store {
     /// number. Cannot fail; cooperative epoch-based yielding is
     /// completely semantically transparent. Returns the new deadline.
     fn new_epoch(&mut self) -> Result<u64, Error>;
+
+    /// Metadata required for resources for the component model.
+    #[cfg(feature = "component-model")]
+    fn component_calls(&mut self) -> &mut component::CallContexts;
 }
 
 /// Functionality required by this crate for a particular module. This
@@ -170,7 +166,31 @@ pub trait ModuleRuntimeInfo: Send + Sync + 'static {
     fn module(&self) -> &Arc<wasmtime_environ::Module>;
 
     /// Returns the address, in memory, that the function `index` resides at.
-    fn function(&self, index: DefinedFuncIndex) -> *mut VMFunctionBody;
+    fn function(&self, index: DefinedFuncIndex) -> NonNull<VMWasmCallFunction>;
+
+    /// Returns the address, in memory, of the trampoline that allows the given
+    /// defined Wasm function to be called by the native calling convention.
+    ///
+    /// Returns `None` for Wasm functions which do not escape, and therefore are
+    /// not callable from outside the Wasm module itself.
+    fn native_to_wasm_trampoline(
+        &self,
+        index: DefinedFuncIndex,
+    ) -> Option<NonNull<VMNativeCallFunction>>;
+
+    /// Returns the address, in memory, of the trampoline that allows the given
+    /// defined Wasm function to be called by the array calling convention.
+    ///
+    /// Returns `None` for Wasm functions which do not escape, and therefore are
+    /// not callable from outside the Wasm module itself.
+    fn array_to_wasm_trampoline(&self, index: DefinedFuncIndex) -> Option<VMArrayCallFunction>;
+
+    /// Return the address, in memory, of the trampoline that allows Wasm to
+    /// call a native function of the given signature.
+    fn wasm_to_native_trampoline(
+        &self,
+        signature: VMSharedSignatureIndex,
+    ) -> Option<NonNull<VMWasmCallFunction>>;
 
     /// Returns the `MemoryImage` structure used for copy-on-write
     /// initialization of the memory, if it's applicable.

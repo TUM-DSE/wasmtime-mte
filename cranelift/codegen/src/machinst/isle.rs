@@ -7,16 +7,15 @@ use std::cell::Cell;
 pub use super::MachLabel;
 use super::RetPair;
 pub use crate::ir::{
-    condcodes, condcodes::CondCode, dynamic_to_fixed, ArgumentExtension, ArgumentPurpose, Constant,
-    DynamicStackSlot, ExternalName, FuncRef, GlobalValue, Immediate, SigRef, StackSlot,
+    condcodes::CondCode, dynamic_to_fixed, Constant, DynamicStackSlot, ExternalName,
+    FuncRef, GlobalValue, Immediate, SigRef, StackSlot,
 };
-pub use crate::isa::unwind::UnwindInst;
-pub use crate::isa::TargetIsa;
+pub use crate::isa::{unwind::UnwindInst, TargetIsa};
 pub use crate::machinst::{
     ABIArg, ABIArgSlot, InputSourceInst, Lower, LowerBackend, RealReg, Reg, RelocDistance, Sig,
     VCodeInst, Writable,
 };
-pub use crate::settings::{OptLevel, TlsModel};
+pub use crate::settings::TlsModel;
 
 pub type Unit = ();
 pub type ValueSlice = (ValueList, usize);
@@ -32,6 +31,8 @@ pub type InstOutput = SmallVec<[ValueRegs; 2]>;
 pub type InstOutputBuilder = Cell<InstOutput>;
 pub type BoxExternalName = Box<ExternalName>;
 pub type Range = (usize, usize);
+pub type MachLabelSlice = [MachLabel];
+pub type BoxVecMachLabel = Box<Vec<MachLabel>>;
 
 pub enum RangeView {
     Empty,
@@ -59,6 +60,16 @@ macro_rules! isle_lower_prelude_methods {
         #[inline]
         fn value_regs(&mut self, r1: Reg, r2: Reg) -> ValueRegs {
             ValueRegs::two(r1, r2)
+        }
+
+        #[inline]
+        fn writable_value_regs(&mut self, r1: WritableReg, r2: WritableReg) -> WritableValueRegs {
+            WritableValueRegs::two(r1, r2)
+        }
+
+        #[inline]
+        fn writable_value_reg(&mut self, r: WritableReg) -> WritableValueRegs {
+            WritableValueRegs::one(r)
         }
 
         #[inline]
@@ -128,29 +139,6 @@ macro_rules! isle_lower_prelude_methods {
 
         #[inline]
         fn put_in_regs(&mut self, val: Value) -> ValueRegs {
-            // If the value is a constant, then (re)materialize it at each
-            // use. This lowers register pressure. (Only do this if we are
-            // not using egraph-based compilation; the egraph framework
-            // more efficiently rematerializes constants where needed.)
-            if !(self.backend.flags().use_egraphs()
-                && self.backend.flags().opt_level() != OptLevel::None)
-            {
-                let inputs = self.lower_ctx.get_value_as_source_or_const(val);
-                if inputs.constant.is_some() {
-                    let insn = match inputs.inst {
-                        InputSourceInst::UniqueUse(insn, 0) => Some(insn),
-                        InputSourceInst::Use(insn, 0) => Some(insn),
-                        _ => None,
-                    };
-                    if let Some(insn) = insn {
-                        if let Some(regs) = self.backend.lower(self.lower_ctx, insn) {
-                            assert!(regs.len() == 1);
-                            return regs[0];
-                        }
-                    }
-                }
-            }
-
             self.lower_ctx.put_value_in_regs(val)
         }
 
@@ -230,6 +218,15 @@ macro_rules! isle_lower_prelude_methods {
         #[inline]
         fn def_inst(&mut self, val: Value) -> Option<Inst> {
             self.lower_ctx.dfg().value_def(val).inst()
+        }
+
+        #[inline]
+        fn i64_from_iconst(&mut self, val: Value) -> Option<i64> {
+            let inst = self.def_inst(val)?;
+            let constant = self.lower_ctx.get_constant(inst)? as i64;
+            let ty = self.lower_ctx.output_ty(inst, 0);
+            let shift_amt = std::cmp::max(0, 64 - self.ty_bits(ty));
+            Some((constant << shift_amt) >> shift_amt)
         }
 
         fn zero_value(&mut self, value: Value) -> Option<Value> {
@@ -329,11 +326,12 @@ macro_rules! isle_lower_prelude_methods {
         #[inline]
         fn func_ref_data(&mut self, func_ref: FuncRef) -> (SigRef, ExternalName, RelocDistance) {
             let funcdata = &self.lower_ctx.dfg().ext_funcs[func_ref];
-            (
-                funcdata.signature,
-                funcdata.name.clone(),
-                funcdata.reloc_distance(),
-            )
+            let reloc_distance = if funcdata.colocated {
+                RelocDistance::Near
+            } else {
+                RelocDistance::Far
+            };
+            (funcdata.signature, funcdata.name.clone(), reloc_distance)
         }
 
         #[inline]
@@ -363,6 +361,13 @@ macro_rules! isle_lower_prelude_methods {
         fn u128_from_immediate(&mut self, imm: Immediate) -> Option<u128> {
             let bytes = self.lower_ctx.get_immediate_data(imm).as_slice();
             Some(u128::from_le_bytes(bytes.try_into().ok()?))
+        }
+
+        #[inline]
+        fn vconst_from_immediate(&mut self, imm: Immediate) -> Option<VCodeConstant> {
+            Some(self.lower_ctx.use_constant(VCodeConstantData::Generated(
+                self.lower_ctx.get_immediate_data(imm).clone(),
+            )))
         }
 
         #[inline]
@@ -643,6 +648,45 @@ macro_rules! isle_lower_prelude_methods {
                 Some(bits as u64)
             }
         }
+
+        fn single_target(&mut self, targets: &MachLabelSlice) -> Option<MachLabel> {
+            if targets.len() == 1 {
+                Some(targets[0])
+            } else {
+                None
+            }
+        }
+
+        fn two_targets(&mut self, targets: &MachLabelSlice) -> Option<(MachLabel, MachLabel)> {
+            if targets.len() == 2 {
+                Some((targets[0], targets[1]))
+            } else {
+                None
+            }
+        }
+
+        fn jump_table_targets(
+            &mut self,
+            targets: &MachLabelSlice,
+        ) -> Option<(MachLabel, BoxVecMachLabel)> {
+            use std::boxed::Box;
+            if targets.is_empty() {
+                return None;
+            }
+
+            let default_label = targets[0];
+            let jt_targets = Box::new(targets[1..].to_vec());
+            Some((default_label, jt_targets))
+        }
+
+        fn jump_table_size(&mut self, targets: &BoxVecMachLabel) -> u32 {
+            targets.len() as u32
+        }
+
+        fn add_range_fact(&mut self, reg: Reg, bits: u16, min: u64, max: u64) -> Reg {
+            self.lower_ctx.add_range_fact(reg, bits, min, max);
+            reg
+        }
     };
 }
 
@@ -682,7 +726,7 @@ pub fn shuffle_imm_as_le_lane_idx(size: u8, bytes: &[u8]) -> Option<u8> {
     Some(bytes[0] / size)
 }
 
-/// Helpers specifically for machines that use ABICaller.
+/// Helpers specifically for machines that use `abi::CallSite`.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! isle_prelude_caller_methods {
@@ -705,8 +749,7 @@ macro_rules! isle_prelude_caller_methods {
                 dist,
                 caller_conv,
                 self.backend.flags().clone(),
-            )
-            .unwrap();
+            );
 
             assert_eq!(
                 inputs.len(&self.lower_ctx.dfg().value_lists) - off,
@@ -734,8 +777,7 @@ macro_rules! isle_prelude_caller_methods {
                 Opcode::CallIndirect,
                 caller_conv,
                 self.backend.flags().clone(),
-            )
-            .unwrap();
+            );
 
             assert_eq!(
                 inputs.len(&self.lower_ctx.dfg().value_lists) - off,
@@ -753,16 +795,8 @@ macro_rules! isle_prelude_caller_methods {
 #[doc(hidden)]
 macro_rules! isle_prelude_method_helpers {
     ($abicaller:ty) => {
-        fn gen_call_common(
-            &mut self,
-            abi: Sig,
-            num_rets: usize,
-            mut caller: $abicaller,
-            (inputs, off): ValueSlice,
-        ) -> InstOutput {
-            caller.emit_stack_pre_adjust(self.lower_ctx);
-
-            let num_args = self.lower_ctx.sigs().num_args(abi);
+        fn gen_call_common_args(&mut self, call_site: &mut $abicaller, (inputs, off): ValueSlice) {
+            let num_args = call_site.num_args(self.lower_ctx.sigs());
 
             assert_eq!(
                 inputs.len(&self.lower_ctx.dfg().value_lists) - off,
@@ -776,13 +810,25 @@ macro_rules! isle_prelude_method_helpers {
                 arg_regs.push(self.put_in_regs(input));
             }
             for (i, arg_regs) in arg_regs.iter().enumerate() {
-                caller.emit_copy_regs_to_buffer(self.lower_ctx, i, *arg_regs);
+                call_site.emit_copy_regs_to_buffer(self.lower_ctx, i, *arg_regs);
             }
             for (i, arg_regs) in arg_regs.iter().enumerate() {
-                for inst in caller.gen_arg(self.lower_ctx, i, *arg_regs) {
+                for inst in call_site.gen_arg(self.lower_ctx, i, *arg_regs) {
                     self.lower_ctx.emit(inst);
                 }
             }
+        }
+
+        fn gen_call_common(
+            &mut self,
+            abi: Sig,
+            num_rets: usize,
+            mut caller: $abicaller,
+            args: ValueSlice,
+        ) -> InstOutput {
+            caller.emit_stack_pre_adjust(self.lower_ctx);
+
+            self.gen_call_common_args(&mut caller, args);
 
             // Handle retvals prior to emitting call, so the
             // constraints are on the call instruction; but buffer the

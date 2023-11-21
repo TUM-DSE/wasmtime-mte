@@ -1,5 +1,6 @@
 use crate::component::func::HostFunc;
-use crate::component::{Component, ComponentNamedList, Func, Lift, Lower, TypedFunc};
+use crate::component::matching::InstanceType;
+use crate::component::{Component, ComponentNamedList, Func, Lift, Lower, ResourceType, TypedFunc};
 use crate::instance::OwnedImports;
 use crate::linker::DefinitionType;
 use crate::store::{StoreOpaque, Stored};
@@ -7,14 +8,12 @@ use crate::{AsContextMut, Module, StoreContextMut};
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 use std::marker;
+use std::ptr::NonNull;
 use std::sync::Arc;
-use wasmtime_environ::component::{
-    AlwaysTrap, ComponentTypes, CoreDef, CoreExport, Export, ExportItem, ExtractMemory,
-    ExtractPostReturn, ExtractRealloc, GlobalInitializer, InstantiateModule, LowerImport,
-    RuntimeImportIndex, RuntimeInstanceIndex, RuntimeModuleIndex, Transcoder,
-};
-use wasmtime_environ::{EntityIndex, EntityType, Global, GlobalInit, PrimaryMap, WasmType};
+use wasmtime_environ::component::*;
+use wasmtime_environ::{EntityIndex, EntityType, Global, PrimaryMap, WasmType};
 use wasmtime_runtime::component::{ComponentInstance, OwnedComponentInstance};
+use wasmtime_runtime::VMFuncRef;
 
 /// An instantiated component.
 ///
@@ -28,20 +27,35 @@ pub struct Instance(pub(crate) Stored<Option<Box<InstanceData>>>);
 
 pub(crate) struct InstanceData {
     instances: PrimaryMap<RuntimeInstanceIndex, crate::Instance>,
-    // FIXME: shouldn't store the entire component here which keeps upvars
-    // alive and things like that, instead only the bare minimum necessary
-    // should be kept alive here (mostly just `wasmtime_environ::Component`).
+
+    // NB: in the future if necessary it would be possible to avoid storing an
+    // entire `Component` here and instead storing only information such as:
+    //
+    // * Some reference to `Arc<ComponentTypes>`
+    // * Necessary references to closed-over modules which are exported from the
+    //   component itself.
+    //
+    // Otherwise the full guts of this component should only ever be used during
+    // the instantiation of this instance, meaning that after instantiation much
+    // of the component can be thrown away (theoretically).
     component: Component,
-    exported_modules: PrimaryMap<RuntimeModuleIndex, Module>,
 
     state: OwnedComponentInstance,
 
-    /// Functions that this instance used during instantiation.
+    /// Arguments that this instance used to be instantiated.
     ///
-    /// Strong references are stored to these functions since pointers are saved
-    /// into the functions within the `OwnedComponentInstance` but it's our job
-    /// to keep them alive.
-    funcs: Vec<Arc<HostFunc>>,
+    /// Strong references are stored to these arguments since pointers are saved
+    /// into the structures such as functions within the
+    /// `OwnedComponentInstance` but it's our job to keep them alive.
+    ///
+    /// One purpose of this storage is to enable embedders to drop a `Linker`,
+    /// for example, after a component is instantiated. In that situation if the
+    /// arguments weren't held here then they might be dropped, and structures
+    /// such as `.lowering()` which point back into the original function would
+    /// become stale and use-after-free conditions when used. By preserving the
+    /// entire list here though we're guaranteed that nothing is lost for the
+    /// duration of the lifetime of this instance.
+    imports: Arc<PrimaryMap<RuntimeImportIndex, RuntimeImport>>,
 }
 
 impl Instance {
@@ -104,7 +118,7 @@ impl Instance {
     /// Looks up a module by name within this [`Instance`].
     ///
     /// The `store` specified must be the store that this instance lives within
-    /// and `name` is the name of the function to lookup. If the function is
+    /// and `name` is the name of the function to lookup. If the module is
     /// found `Some` is returned otherwise `None` is returned.
     ///
     /// # Panics
@@ -116,20 +130,28 @@ impl Instance {
             .module(name)
             .cloned()
     }
+
+    /// Looks up an exported resource type by name within this [`Instance`].
+    ///
+    /// The `store` specified must be the store that this instance lives within
+    /// and `name` is the name of the function to lookup. If the resource type
+    /// is found `Some` is returned otherwise `None` is returned.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `store` does not own this instance.
+    pub fn get_resource(&self, mut store: impl AsContextMut, name: &str) -> Option<ResourceType> {
+        self.exports(store.as_context_mut()).root().resource(name)
+    }
 }
 
 impl InstanceData {
     pub fn lookup_def(&self, store: &mut StoreOpaque, def: &CoreDef) -> wasmtime_runtime::Export {
         match def {
             CoreDef::Export(e) => self.lookup_export(store, e),
-            CoreDef::Lowered(idx) => {
+            CoreDef::Trampoline(idx) => {
                 wasmtime_runtime::Export::Function(wasmtime_runtime::ExportFunction {
-                    anyfunc: self.state.lowering_anyfunc(*idx),
-                })
-            }
-            CoreDef::AlwaysTrap(idx) => {
-                wasmtime_runtime::Export::Function(wasmtime_runtime::ExportFunction {
-                    anyfunc: self.state.always_trap_anyfunc(*idx),
+                    func_ref: self.state.trampoline_func_ref(*idx),
                 })
             }
             CoreDef::InstanceFlags(idx) => {
@@ -138,13 +160,7 @@ impl InstanceData {
                     global: Global {
                         wasm_ty: WasmType::I32,
                         mutability: true,
-                        initializer: GlobalInit::I32Const(0),
                     },
-                })
-            }
-            CoreDef::Transcoder(idx) => {
-                wasmtime_runtime::Export::Function(wasmtime_runtime::ExportFunction {
-                    anyfunc: self.state.transcoder_anyfunc(*idx),
                 })
             }
         }
@@ -178,12 +194,36 @@ impl InstanceData {
         instance.get_export_by_index(idx)
     }
 
+    #[inline]
     pub fn instance(&self) -> &ComponentInstance {
         &self.state
     }
 
+    #[inline]
+    pub fn instance_ptr(&self) -> *mut ComponentInstance {
+        self.state.instance_ptr()
+    }
+
+    #[inline]
     pub fn component_types(&self) -> &Arc<ComponentTypes> {
         self.component.types()
+    }
+
+    #[inline]
+    pub fn ty(&self) -> InstanceType<'_> {
+        InstanceType::new(self.instance())
+    }
+
+    // NB: This method is only intended to be called during the instantiation
+    // process because the `Arc::get_mut` here is fallible and won't generally
+    // succeed once the instance has been handed to the embedder. Before that
+    // though it should be guaranteed that the single owning reference currently
+    // lives within the `ComponentInstance` that's being built.
+    fn resource_types_mut(&mut self) -> &mut ImportedResources {
+        Arc::get_mut(self.state.resource_types_mut())
+            .unwrap()
+            .downcast_mut()
+            .unwrap()
     }
 }
 
@@ -194,20 +234,42 @@ struct Instantiator<'a> {
     imports: &'a PrimaryMap<RuntimeImportIndex, RuntimeImport>,
 }
 
-#[derive(Clone)]
-pub enum RuntimeImport {
+pub(crate) enum RuntimeImport {
     Func(Arc<HostFunc>),
     Module(Module),
+    Resource {
+        ty: ResourceType,
+
+        // A strong reference to the host function that represents the
+        // destructor for this resource. At this time all resources here are
+        // host-defined resources. Note that this is itself never read because
+        // the funcref below points to it.
+        //
+        // Also note that the `Arc` here is used to support the same host
+        // function being used across multiple instances simultaneously. Or
+        // otherwise this makes `InstancePre::instantiate` possible to create
+        // separate instances all sharing the same host function.
+        _dtor: Arc<crate::func::HostFunc>,
+
+        // A raw function which is filled out (including `wasm_call`) which
+        // points to the internals of the `_dtor` field. This is read and
+        // possibly executed by wasm.
+        dtor_funcref: VMFuncRef,
+    },
 }
+
+pub type ImportedResources = PrimaryMap<ResourceIndex, ResourceType>;
 
 impl<'a> Instantiator<'a> {
     fn new(
         component: &'a Component,
         store: &mut StoreOpaque,
-        imports: &'a PrimaryMap<RuntimeImportIndex, RuntimeImport>,
+        imports: &'a Arc<PrimaryMap<RuntimeImportIndex, RuntimeImport>>,
     ) -> Instantiator<'a> {
         let env_component = component.env_component();
         store.modules_mut().register_component(component);
+        let imported_resources: ImportedResources =
+            PrimaryMap::with_capacity(env_component.imported_resources.len());
         Instantiator {
             component,
             imports,
@@ -215,17 +277,54 @@ impl<'a> Instantiator<'a> {
             data: InstanceData {
                 instances: PrimaryMap::with_capacity(env_component.num_runtime_instances as usize),
                 component: component.clone(),
-                exported_modules: PrimaryMap::with_capacity(
-                    env_component.num_runtime_modules as usize,
+                state: OwnedComponentInstance::new(
+                    component.runtime_info(),
+                    Arc::new(imported_resources),
+                    store.traitobj(),
                 ),
-                state: OwnedComponentInstance::new(env_component, store.traitobj()),
-                funcs: Vec::new(),
+                imports: imports.clone(),
             },
         }
     }
 
     fn run<T>(&mut self, store: &mut StoreContextMut<'_, T>) -> Result<()> {
         let env_component = self.component.env_component();
+
+        // Before all initializers are processed configure all destructors for
+        // host-defined resources. No initializer will correspond to these and
+        // it's required to happen before they're needed, so execute this first.
+        for (idx, import) in env_component.imported_resources.iter() {
+            let (ty, func_ref) = match &self.imports[*import] {
+                RuntimeImport::Resource {
+                    ty, dtor_funcref, ..
+                } => (*ty, NonNull::from(dtor_funcref)),
+                _ => unreachable!(),
+            };
+            let i = self.data.resource_types_mut().push(ty);
+            assert_eq!(i, idx);
+            self.data.state.set_resource_destructor(idx, Some(func_ref));
+        }
+
+        // Next configure all `VMFuncRef`s for trampolines that this component
+        // will require. These functions won't actually get used until their
+        // associated state has been initialized through the global initializers
+        // below, but the funcrefs can all be configured here.
+        for (idx, sig) in env_component.trampolines.iter() {
+            let ptrs = self.component.trampoline_ptrs(idx);
+            let signature = self
+                .component
+                .signatures()
+                .shared_signature(*sig)
+                .expect("found unregistered signature");
+            self.data.state.set_trampoline(
+                idx,
+                ptrs.wasm_call,
+                ptrs.native_call,
+                ptrs.array_call,
+                signature,
+            );
+        }
+
         for initializer in env_component.initializers.iter() {
             match initializer {
                 GlobalInitializer::InstantiateModule(m) => {
@@ -273,9 +372,13 @@ impl<'a> Instantiator<'a> {
                     self.data.instances.push(i);
                 }
 
-                GlobalInitializer::LowerImport(import) => self.lower_import(import),
-
-                GlobalInitializer::AlwaysTrap(trap) => self.always_trap(trap),
+                GlobalInitializer::LowerImport { import, index } => {
+                    let func = match &self.imports[*import] {
+                        RuntimeImport::Func(func) => func,
+                        _ => unreachable!(),
+                    };
+                    self.data.state.set_lowering(*index, func.lowering());
+                }
 
                 GlobalInitializer::ExtractMemory(mem) => self.extract_memory(store.0, mem),
 
@@ -287,70 +390,29 @@ impl<'a> Instantiator<'a> {
                     self.extract_post_return(store.0, post_return)
                 }
 
-                GlobalInitializer::SaveStaticModule(idx) => {
-                    self.data
-                        .exported_modules
-                        .push(self.component.static_module(*idx).clone());
-                }
-
-                GlobalInitializer::SaveModuleImport(idx) => {
-                    self.data.exported_modules.push(match &self.imports[*idx] {
-                        RuntimeImport::Module(m) => m.clone(),
-                        _ => unreachable!(),
-                    });
-                }
-
-                GlobalInitializer::Transcoder(e) => self.transcoder(e),
+                GlobalInitializer::Resource(r) => self.resource(store.0, r),
             }
         }
         Ok(())
     }
 
-    fn lower_import(&mut self, import: &LowerImport) {
-        let func = match &self.imports[import.import] {
-            RuntimeImport::Func(func) => func,
+    fn resource(&mut self, store: &mut StoreOpaque, resource: &Resource) {
+        let dtor = resource
+            .dtor
+            .as_ref()
+            .map(|dtor| self.data.lookup_def(store, dtor));
+        let dtor = dtor.map(|export| match export {
+            wasmtime_runtime::Export::Function(f) => f.func_ref,
             _ => unreachable!(),
-        };
-        self.data.state.set_lowering(
-            import.index,
-            func.lowering(),
-            self.component.lowering_ptr(import.index),
-            self.component
-                .signatures()
-                .shared_signature(import.canonical_abi)
-                .expect("found unregistered signature"),
-        );
-
-        // The `func` provided here must be retained within the `Store` itself
-        // after instantiation. Otherwise it might be possible to drop the
-        // `Arc<HostFunc>` and possibly result in a use-after-free. This comes
-        // about because the `.lowering()` method returns a structure that
-        // points to an interior pointer within the `func`. By saving the list
-        // of host functions used we can ensure that the function lives long
-        // enough for the whole duration of this instance.
-        self.data.funcs.push(func.clone());
-    }
-
-    fn always_trap(&mut self, trap: &AlwaysTrap) {
-        self.data.state.set_always_trap(
-            trap.index,
-            self.component.always_trap_ptr(trap.index),
-            self.component
-                .signatures()
-                .shared_signature(trap.canonical_abi)
-                .expect("found unregistered signature"),
-        );
-    }
-
-    fn transcoder(&mut self, transcoder: &Transcoder) {
-        self.data.state.set_transcoder(
-            transcoder.index,
-            self.component.transcoder_ptr(transcoder.index),
-            self.component
-                .signatures()
-                .shared_signature(transcoder.signature)
-                .expect("found unregistered signature"),
-        );
+        });
+        let index = self
+            .component
+            .env_component()
+            .resource_index(resource.index);
+        self.data.state.set_resource_destructor(index, dtor);
+        let ty = ResourceType::guest(store.id(), &self.data.state, resource.index);
+        let i = self.data.resource_types_mut().push(ty);
+        debug_assert_eq!(i, index);
     }
 
     fn extract_memory(&mut self, store: &mut StoreOpaque, memory: &ExtractMemory) {
@@ -364,21 +426,21 @@ impl<'a> Instantiator<'a> {
     }
 
     fn extract_realloc(&mut self, store: &mut StoreOpaque, realloc: &ExtractRealloc) {
-        let anyfunc = match self.data.lookup_def(store, &realloc.def) {
-            wasmtime_runtime::Export::Function(f) => f.anyfunc,
+        let func_ref = match self.data.lookup_def(store, &realloc.def) {
+            wasmtime_runtime::Export::Function(f) => f.func_ref,
             _ => unreachable!(),
         };
-        self.data.state.set_runtime_realloc(realloc.index, anyfunc);
+        self.data.state.set_runtime_realloc(realloc.index, func_ref);
     }
 
     fn extract_post_return(&mut self, store: &mut StoreOpaque, post_return: &ExtractPostReturn) {
-        let anyfunc = match self.data.lookup_def(store, &post_return.def) {
-            wasmtime_runtime::Export::Function(f) => f.anyfunc,
+        let func_ref = match self.data.lookup_def(store, &post_return.def) {
+            wasmtime_runtime::Export::Function(f) => f.func_ref,
             _ => unreachable!(),
         };
         self.data
             .state
-            .set_runtime_post_return(post_return.index, anyfunc);
+            .set_runtime_post_return(post_return.index, func_ref);
     }
 
     fn build_imports<'b>(
@@ -416,7 +478,7 @@ impl<'a> Instantiator<'a> {
     }
 
     fn assert_type_matches(
-        &mut self,
+        &self,
         store: &mut StoreOpaque,
         module: &Module,
         arg: &CoreDef,
@@ -429,14 +491,10 @@ impl<'a> Instantiator<'a> {
         // there's no guarantee that there exists a trampoline for `f` so this
         // can't fall through to the case below
         if let wasmtime_runtime::Export::Function(f) = &export {
-            match expected {
-                EntityType::Function(expected) => {
-                    let actual = unsafe { f.anyfunc.as_ref().type_index };
-                    assert_eq!(module.signatures().shared_signature(expected), Some(actual));
-                    return;
-                }
-                _ => panic!("function not expected"),
-            }
+            let expected = expected.unwrap_func();
+            let actual = unsafe { f.func_ref.as_ref().type_index };
+            assert_eq!(module.signatures().shared_signature(expected), Some(actual));
+            return;
         }
 
         let val = unsafe { crate::Extern::from_wasmtime_export(export, store) };
@@ -461,7 +519,7 @@ impl<'a> Instantiator<'a> {
 /// method.
 pub struct InstancePre<T> {
     component: Component,
-    imports: PrimaryMap<RuntimeImportIndex, RuntimeImport>,
+    imports: Arc<PrimaryMap<RuntimeImportIndex, RuntimeImport>>,
     _marker: marker::PhantomData<fn() -> T>,
 }
 
@@ -489,7 +547,7 @@ impl<T> InstancePre<T> {
     ) -> InstancePre<T> {
         InstancePre {
             component,
-            imports,
+            imports: Arc::new(imports),
             _marker: marker::PhantomData,
         }
     }
@@ -533,10 +591,22 @@ impl<T> InstancePre<T> {
 
     fn instantiate_impl(&self, mut store: impl AsContextMut<Data = T>) -> Result<Instance> {
         let mut store = store.as_context_mut();
-        let mut i = Instantiator::new(&self.component, store.0, &self.imports);
-        i.run(&mut store)?;
-        let data = Box::new(i.data);
-        Ok(Instance(store.0.store_data_mut().insert(Some(data))))
+        store
+            .engine()
+            .allocator()
+            .increment_component_instance_count()?;
+        let mut instantiator = Instantiator::new(&self.component, store.0, &self.imports);
+        instantiator.run(&mut store).map_err(|e| {
+            store
+                .engine()
+                .allocator()
+                .decrement_component_instance_count();
+            e
+        })?;
+        let data = Box::new(instantiator.data);
+        let instance = Instance(store.0.store_data_mut().insert(Some(data)));
+        store.0.push_component_instance(instance);
+        Ok(instance)
     }
 }
 
@@ -625,7 +695,10 @@ impl<'a, 'store> ExportInstance<'a, 'store> {
                 func,
                 options,
             )),
-            Export::Module(_) | Export::Instance(_) | Export::Type(_) => None,
+            Export::ModuleStatic(_)
+            | Export::ModuleImport(_)
+            | Export::Instance(_)
+            | Export::Type(_) => None,
         }
     }
 
@@ -639,15 +712,31 @@ impl<'a, 'store> ExportInstance<'a, 'store> {
             .func(name)
             .ok_or_else(|| anyhow!("failed to find function export `{}`", name))?;
         Ok(func
-            ._typed::<Params, Results>(self.store)
+            ._typed::<Params, Results>(self.store, Some(self.data))
             .with_context(|| format!("failed to convert function `{}` to given type", name))?)
     }
 
     /// Same as [`Instance::get_module`]
     pub fn module(&mut self, name: &str) -> Option<&'a Module> {
         match self.exports.get(name)? {
-            Export::Module(idx) => Some(&self.data.exported_modules[*idx]),
+            Export::ModuleStatic(idx) => Some(&self.data.component.static_module(*idx)),
+            Export::ModuleImport(idx) => Some(match &self.data.imports[*idx] {
+                RuntimeImport::Module(m) => m,
+                _ => unreachable!(),
+            }),
             _ => None,
+        }
+    }
+
+    /// Same as [`Instance::get_resource`]
+    pub fn resource(&mut self, name: &str) -> Option<ResourceType> {
+        match self.exports.get(name)? {
+            Export::Type(TypeDef::Resource(id)) => Some(self.data.ty().resource_type(*id)),
+            Export::Type(_)
+            | Export::LiftedFunction { .. }
+            | Export::ModuleStatic(_)
+            | Export::ModuleImport(_)
+            | Export::Instance(_) => None,
         }
     }
 
@@ -664,12 +753,17 @@ impl<'a, 'store> ExportInstance<'a, 'store> {
     // For now this is just quick-and-dirty to get wast support for iterating
     // over exported modules to work.
     pub fn modules(&self) -> impl Iterator<Item = (&'a str, &'a Module)> + '_ {
-        self.exports
-            .iter()
-            .filter_map(|(name, export)| match *export {
-                Export::Module(idx) => Some((name.as_str(), &self.data.exported_modules[idx])),
-                _ => None,
-            })
+        self.exports.iter().filter_map(|(name, export)| {
+            let module = match *export {
+                Export::ModuleStatic(idx) => self.data.component.static_module(idx),
+                Export::ModuleImport(idx) => match &self.data.imports[idx] {
+                    RuntimeImport::Module(m) => m,
+                    _ => unreachable!(),
+                },
+                _ => return None,
+            };
+            Some((name.as_str(), module))
+        })
     }
 
     fn as_mut(&mut self) -> ExportInstance<'a, '_> {

@@ -9,8 +9,6 @@
 //! - *Unparking* refers to dequeuing a thread from a queue keyed by some address
 //! and resuming it.
 
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
 
@@ -279,6 +277,7 @@ mod tests {
             )* ) => {
                 $(
                 #[test]
+                #[cfg_attr(miri, ignore)]
                 fn $name() {
                     if std::env::var("WASMTIME_TEST_NO_HOG_MEMORY").is_ok() {
                         return;
@@ -490,7 +489,7 @@ mod tests {
             let atomic_key = addr_of!(atomic) as u64;
 
             const N: u64 = 5;
-            const M: u64 = 1000;
+            const M: u64 = if cfg!(miri) { 10 } else { 1000 };
 
             let thread = s.spawn(move || {
                 while atomic.load(Ordering::SeqCst) != N * M {

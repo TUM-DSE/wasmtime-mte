@@ -20,11 +20,11 @@
 //      memories: [*mut VMMemoryDefinition; module.num_defined_memories],
 //      owned_memories: [VMMemoryDefinition; module.num_owned_memories],
 //      globals: [VMGlobalDefinition; module.num_defined_globals],
-//      anyfuncs: [VMCallerCheckedFuncRef; module.num_escaped_funcs],
+//      func_refs: [VMFuncRef; module.num_escaped_funcs],
 // }
 
 use crate::{
-    AnyfuncIndex, DefinedGlobalIndex, DefinedMemoryIndex, DefinedTableIndex, FuncIndex,
+    DefinedGlobalIndex, DefinedMemoryIndex, DefinedTableIndex, FuncIndex, FuncRefIndex,
     GlobalIndex, MemoryIndex, Module, TableIndex,
 };
 use cranelift_entity::packed_option::ReservedValue;
@@ -68,7 +68,7 @@ pub struct VMOffsets<P> {
     pub num_owned_memories: u32,
     /// The number of defined globals in the module.
     pub num_defined_globals: u32,
-    /// The number of escaped functions in the module, the size of the anyfuncs
+    /// The number of escaped functions in the module, the size of the func_refs
     /// array.
     pub num_escaped_funcs: u32,
 
@@ -89,7 +89,7 @@ pub struct VMOffsets<P> {
     defined_memories: u32,
     owned_memories: u32,
     defined_globals: u32,
-    defined_anyfuncs: u32,
+    defined_func_refs: u32,
     size: u32,
 }
 
@@ -98,30 +98,49 @@ pub trait PtrSize {
     /// Returns the pointer size, in bytes, for the target.
     fn size(&self) -> u8;
 
-    /// The offset of the `func_ptr` field.
-    #[allow(clippy::erasing_op)]
+    /// The offset of the `VMContext::runtime_limits` field
+    fn vmcontext_runtime_limits(&self) -> u8 {
+        u8::try_from(align(
+            u32::try_from(std::mem::size_of::<u32>()).unwrap(),
+            u32::from(self.size()),
+        ))
+        .unwrap()
+    }
+
+    /// The offset of the `native_call` field.
     #[inline]
-    fn vmcaller_checked_func_ref_func_ptr(&self) -> u8 {
+    fn vm_func_ref_native_call(&self) -> u8 {
         0 * self.size()
     }
 
-    /// The offset of the `type_index` field.
-    #[allow(clippy::identity_op)]
+    /// The offset of the `array_call` field.
     #[inline]
-    fn vmcaller_checked_func_ref_type_index(&self) -> u8 {
+    fn vm_func_ref_array_call(&self) -> u8 {
         1 * self.size()
+    }
+
+    /// The offset of the `wasm_call` field.
+    #[inline]
+    fn vm_func_ref_wasm_call(&self) -> u8 {
+        2 * self.size()
+    }
+
+    /// The offset of the `type_index` field.
+    #[inline]
+    fn vm_func_ref_type_index(&self) -> u8 {
+        3 * self.size()
     }
 
     /// The offset of the `vmctx` field.
     #[inline]
-    fn vmcaller_checked_func_ref_vmctx(&self) -> u8 {
-        2 * self.size()
+    fn vm_func_ref_vmctx(&self) -> u8 {
+        4 * self.size()
     }
 
-    /// Return the size of `VMCallerCheckedFuncRef`.
+    /// Return the size of `VMFuncRef`.
     #[inline]
-    fn size_of_vmcaller_checked_func_ref(&self) -> u8 {
-        3 * self.size()
+    fn size_of_vm_func_ref(&self) -> u8 {
+        5 * self.size()
     }
 
     /// Return the size of `VMGlobalDefinition`; this is the size of the largest value type (i.e. a
@@ -169,14 +188,12 @@ pub trait PtrSize {
     // Offsets within `VMMemoryDefinition`
 
     /// The offset of the `base` field.
-    #[allow(clippy::erasing_op)]
     #[inline]
     fn vmmemory_definition_base(&self) -> u8 {
         0 * self.size()
     }
 
     /// The offset of the `current_length` field.
-    #[allow(clippy::identity_op)]
     #[inline]
     fn vmmemory_definition_current_length(&self) -> u8 {
         1 * self.size()
@@ -192,6 +209,19 @@ pub trait PtrSize {
     #[inline]
     fn size_of_vmmemory_pointer(&self) -> u8 {
         self.size()
+    }
+
+    // Offsets within `VMArrayCallHostFuncContext`.
+
+    // Offsets within `VMNativeCallHostFuncContext`.
+
+    /// Return the offset of `VMNativeCallHostFuncContext::func_ref`.
+    fn vmnative_call_host_func_context_func_ref(&self) -> u8 {
+        u8::try_from(align(
+            u32::try_from(std::mem::size_of::<u32>()).unwrap(),
+            u32::from(self.size()),
+        ))
+        .unwrap()
     }
 }
 
@@ -233,8 +263,8 @@ pub struct VMOffsetsFields<P> {
     pub num_owned_memories: u32,
     /// The number of defined globals in the module.
     pub num_defined_globals: u32,
-    /// The number of escaped functions in the module, the size of the funcref
-    /// array.
+    /// The number of escaped functions in the module, the size of the function
+    /// references array.
     pub num_escaped_funcs: u32,
 }
 
@@ -316,7 +346,7 @@ impl<P: PtrSize> VMOffsets<P> {
         }
 
         calculate_sizes! {
-            defined_anyfuncs: "module functions",
+            defined_func_refs: "module functions",
             defined_globals: "defined globals",
             owned_memories: "owned memories",
             defined_memories: "defined memories",
@@ -366,7 +396,7 @@ impl<P: PtrSize> From<VMOffsetsFields<P>> for VMOffsets<P> {
             defined_memories: 0,
             owned_memories: 0,
             defined_globals: 0,
-            defined_anyfuncs: 0,
+            defined_func_refs: 0,
             size: 0,
         };
 
@@ -426,9 +456,9 @@ impl<P: PtrSize> From<VMOffsetsFields<P>> for VMOffsets<P> {
             align(16),
             size(defined_globals)
                 = cmul(ret.num_defined_globals, ret.ptr.size_of_vmglobal_definition()),
-            size(defined_anyfuncs) = cmul(
+            size(defined_func_refs) = cmul(
                 ret.num_escaped_funcs,
-                ret.ptr.size_of_vmcaller_checked_func_ref(),
+                ret.ptr.size_of_vm_func_ref(),
             ),
         }
 
@@ -444,31 +474,40 @@ impl<P: PtrSize> From<VMOffsetsFields<P>> for VMOffsets<P> {
 }
 
 impl<P: PtrSize> VMOffsets<P> {
-    /// The offset of the `body` field.
-    #[allow(clippy::erasing_op)]
+    /// The offset of the `wasm_call` field.
     #[inline]
-    pub fn vmfunction_import_body(&self) -> u8 {
+    pub fn vmfunction_import_wasm_call(&self) -> u8 {
         0 * self.pointer_size()
     }
 
+    /// The offset of the `native_call` field.
+    #[inline]
+    pub fn vmfunction_import_native_call(&self) -> u8 {
+        1 * self.pointer_size()
+    }
+
+    /// The offset of the `array_call` field.
+    #[inline]
+    pub fn vmfunction_import_array_call(&self) -> u8 {
+        2 * self.pointer_size()
+    }
+
     /// The offset of the `vmctx` field.
-    #[allow(clippy::identity_op)]
     #[inline]
     pub fn vmfunction_import_vmctx(&self) -> u8 {
-        1 * self.pointer_size()
+        3 * self.pointer_size()
     }
 
     /// Return the size of `VMFunctionImport`.
     #[inline]
     pub fn size_of_vmfunction_import(&self) -> u8 {
-        2 * self.pointer_size()
+        4 * self.pointer_size()
     }
 }
 
 /// Offsets for `*const VMFunctionBody`.
 impl<P: PtrSize> VMOffsets<P> {
     /// The size of the `current_elements` field.
-    #[allow(clippy::identity_op)]
     pub fn size_of_vmfunction_body_ptr(&self) -> u8 {
         1 * self.pointer_size()
     }
@@ -477,14 +516,12 @@ impl<P: PtrSize> VMOffsets<P> {
 /// Offsets for `VMTableImport`.
 impl<P: PtrSize> VMOffsets<P> {
     /// The offset of the `from` field.
-    #[allow(clippy::erasing_op)]
     #[inline]
     pub fn vmtable_import_from(&self) -> u8 {
         0 * self.pointer_size()
     }
 
     /// The offset of the `vmctx` field.
-    #[allow(clippy::identity_op)]
     #[inline]
     pub fn vmtable_import_vmctx(&self) -> u8 {
         1 * self.pointer_size()
@@ -500,14 +537,12 @@ impl<P: PtrSize> VMOffsets<P> {
 /// Offsets for `VMTableDefinition`.
 impl<P: PtrSize> VMOffsets<P> {
     /// The offset of the `base` field.
-    #[allow(clippy::erasing_op)]
     #[inline]
     pub fn vmtable_definition_base(&self) -> u8 {
         0 * self.pointer_size()
     }
 
     /// The offset of the `current_elements` field.
-    #[allow(clippy::identity_op)]
     pub fn vmtable_definition_current_elements(&self) -> u8 {
         1 * self.pointer_size()
     }
@@ -528,14 +563,12 @@ impl<P: PtrSize> VMOffsets<P> {
 /// Offsets for `VMMemoryImport`.
 impl<P: PtrSize> VMOffsets<P> {
     /// The offset of the `from` field.
-    #[allow(clippy::erasing_op)]
     #[inline]
     pub fn vmmemory_import_from(&self) -> u8 {
         0 * self.pointer_size()
     }
 
     /// The offset of the `vmctx` field.
-    #[allow(clippy::identity_op)]
     #[inline]
     pub fn vmmemory_import_vmctx(&self) -> u8 {
         1 * self.pointer_size()
@@ -551,14 +584,12 @@ impl<P: PtrSize> VMOffsets<P> {
 /// Offsets for `VMGlobalImport`.
 impl<P: PtrSize> VMOffsets<P> {
     /// The offset of the `from` field.
-    #[allow(clippy::erasing_op)]
     #[inline]
     pub fn vmglobal_import_from(&self) -> u8 {
         0 * self.pointer_size()
     }
 
     /// Return the size of `VMGlobalImport`.
-    #[allow(clippy::identity_op)]
     #[inline]
     pub fn size_of_vmglobal_import(&self) -> u8 {
         1 * self.pointer_size()
@@ -619,14 +650,12 @@ impl<P: PtrSize> VMOffsets<P> {
     }
 
     /// The offset of the `tables` array.
-    #[allow(clippy::erasing_op)]
     #[inline]
     pub fn vmctx_imported_functions_begin(&self) -> u32 {
         self.imported_functions
     }
 
     /// The offset of the `tables` array.
-    #[allow(clippy::identity_op)]
     #[inline]
     pub fn vmctx_imported_tables_begin(&self) -> u32 {
         self.imported_tables
@@ -668,10 +697,10 @@ impl<P: PtrSize> VMOffsets<P> {
         self.defined_globals
     }
 
-    /// The offset of the `anyfuncs` array.
+    /// The offset of the `func_refs` array.
     #[inline]
-    pub fn vmctx_anyfuncs_begin(&self) -> u32 {
-        self.defined_anyfuncs
+    pub fn vmctx_func_refs_begin(&self) -> u32 {
+        self.defined_func_refs
     }
 
     /// The offset of the builtin functions array.
@@ -749,20 +778,31 @@ impl<P: PtrSize> VMOffsets<P> {
             + index.as_u32() * u32::from(self.ptr.size_of_vmglobal_definition())
     }
 
-    /// Return the offset to the `VMCallerCheckedFuncRef` for the given function
+    /// Return the offset to the `VMFuncRef` for the given function
     /// index (either imported or defined).
     #[inline]
-    pub fn vmctx_anyfunc(&self, index: AnyfuncIndex) -> u32 {
+    pub fn vmctx_func_ref(&self, index: FuncRefIndex) -> u32 {
         assert!(!index.is_reserved_value());
         assert!(index.as_u32() < self.num_escaped_funcs);
-        self.vmctx_anyfuncs_begin()
-            + index.as_u32() * u32::from(self.ptr.size_of_vmcaller_checked_func_ref())
+        self.vmctx_func_refs_begin() + index.as_u32() * u32::from(self.ptr.size_of_vm_func_ref())
     }
 
-    /// Return the offset to the `body` field in `*const VMFunctionBody` index `index`.
+    /// Return the offset to the `wasm_call` field in `*const VMFunctionBody` index `index`.
     #[inline]
-    pub fn vmctx_vmfunction_import_body(&self, index: FuncIndex) -> u32 {
-        self.vmctx_vmfunction_import(index) + u32::from(self.vmfunction_import_body())
+    pub fn vmctx_vmfunction_import_wasm_call(&self, index: FuncIndex) -> u32 {
+        self.vmctx_vmfunction_import(index) + u32::from(self.vmfunction_import_wasm_call())
+    }
+
+    /// Return the offset to the `native_call` field in `*const VMFunctionBody` index `index`.
+    #[inline]
+    pub fn vmctx_vmfunction_import_native_call(&self, index: FuncIndex) -> u32 {
+        self.vmctx_vmfunction_import(index) + u32::from(self.vmfunction_import_native_call())
+    }
+
+    /// Return the offset to the `array_call` field in `*const VMFunctionBody` index `index`.
+    #[inline]
+    pub fn vmctx_vmfunction_import_array_call(&self, index: FuncIndex) -> u32 {
+        self.vmctx_vmfunction_import(index) + u32::from(self.vmfunction_import_array_call())
     }
 
     /// Return the offset to the `vmctx` field in `*const VMFunctionBody` index `index`.
@@ -845,11 +885,22 @@ impl<P: PtrSize> VMOffsets<P> {
     }
 }
 
-/// Equivalent of `VMCONTEXT_MAGIC` except for host functions.
+/// Magic value for core Wasm VM contexts.
 ///
-/// This is stored at the start of all `VMHostFuncContext` structures and
-/// double-checked on `VMHostFuncContext::from_opaque`.
-pub const VM_HOST_FUNC_MAGIC: u32 = u32::from_le_bytes(*b"host");
+/// This is stored at the start of all `VMContext` structures.
+pub const VMCONTEXT_MAGIC: u32 = u32::from_le_bytes(*b"core");
+
+/// Equivalent of `VMCONTEXT_MAGIC` except for array-call host functions.
+///
+/// This is stored at the start of all `VMArrayCallHostFuncContext` structures
+/// and double-checked on `VMArrayCallHostFuncContext::from_opaque`.
+pub const VM_ARRAY_CALL_HOST_FUNC_MAGIC: u32 = u32::from_le_bytes(*b"ACHF");
+
+/// Equivalent of `VMCONTEXT_MAGIC` except for native-call host functions.
+///
+/// This is stored at the start of all `VMNativeCallHostFuncContext` structures
+/// and double-checked on `VMNativeCallHostFuncContext::from_opaque`.
+pub const VM_NATIVE_CALL_HOST_FUNC_MAGIC: u32 = u32::from_le_bytes(*b"NCHF");
 
 #[cfg(test)]
 mod tests {

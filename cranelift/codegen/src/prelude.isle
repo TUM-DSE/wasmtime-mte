@@ -47,9 +47,9 @@
 (decl u32_nonnegative (u32) u32)
 (extern extractor u32_nonnegative u32_nonnegative)
 
-;; Extractor that pulls apart an Offset32 into a u32 with the raw
+;; Extractor that pulls apart an Offset32 into a i32 with the raw
 ;; signed-32-bit twos-complement bits.
-(decl offset32 (u32) Offset32)
+(decl offset32 (i32) Offset32)
 (extern extractor infallible offset32 offset32)
 
 ;; Pure/fallible constructor that tests if one u32 is less than or
@@ -68,7 +68,7 @@
 (extern constructor u8_lt u8_lt)
 
 ;; Get a signed 32-bit immediate in an u32 from an Imm64, if possible.
-(decl simm32 (u32) Imm64)
+(decl simm32 (i32) Imm64)
 (extern extractor simm32 simm32)
 
 ;; Get an unsigned 8-bit immediate in a u8 from an Imm64, if possible.
@@ -77,18 +77,28 @@
 
 ;;;; Primitive Type Conversions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(decl pure u8_as_i8 (u8) i8)
+(extern constructor u8_as_i8 u8_as_i8)
+
 (decl pure u8_as_u32 (u8) u32)
 (extern constructor u8_as_u32 u8_as_u32)
+(convert u8 u32 u8_as_u32)
 
 (decl pure u8_as_u64 (u8) u64)
 (extern constructor u8_as_u64 u8_as_u64)
+(convert u8 u64 u8_as_u64)
 
 (decl pure u16_as_u64 (u16) u64)
 (extern constructor u16_as_u64 u16_as_u64)
+(convert u16 u64 u16_as_u64)
 
 (decl pure u32_as_u64 (u32) u64)
 (extern constructor u32_as_u64 u32_as_u64)
 (convert u32 u64 u32_as_u64)
+
+(decl pure i32_as_i64 (i32) i64)
+(extern constructor i32_as_i64 i32_as_i64)
+(convert i32 i64 i32_as_i64)
 
 (decl pure i64_as_u64 (i64) u64)
 (extern constructor i64_as_u64 i64_as_u64)
@@ -110,12 +120,27 @@
 (decl pure u8_and (u8 u8) u8)
 (extern constructor u8_and u8_and)
 
+(decl pure u8_shl (u8 u8) u8)
+(extern constructor u8_shl u8_shl)
+
+(decl pure u8_shr (u8 u8) u8)
+(extern constructor u8_shr u8_shr)
+
+(decl pure u8_sub (u8 u8) u8)
+(extern constructor u8_sub u8_sub)
+
 (decl pure u32_add (u32 u32) u32)
 (extern constructor u32_add u32_add)
 
+(decl pure u32_sub (u32 u32) u32)
+(extern constructor u32_sub u32_sub)
+
+(decl pure u32_and (u32 u32) u32)
+(extern constructor u32_and u32_and)
+
 ;; Pure/fallible constructor that tries to add two `u32`s, interpreted
 ;; as signed values, and fails to match on overflow.
-(decl pure partial s32_add_fallible (u32 u32) u32)
+(decl pure partial s32_add_fallible (i32 i32) i32)
 (extern constructor s32_add_fallible s32_add_fallible)
 
 (decl pure u64_add (u64 u64) u64)
@@ -166,6 +191,16 @@
 (decl pure u64_lt (u64 u64) bool)
 (extern constructor u64_lt u64_lt)
 
+(decl pure i64_shr (i64 i64) i64)
+(extern constructor i64_shr i64_shr)
+
+(decl pure i64_ctz (i64) i64)
+(extern constructor i64_ctz i64_ctz)
+
+;; Sign extends a u64 from ty bits up to 64bits
+(decl pure i64_sextend_u64 (Type u64) i64)
+(extern constructor i64_sextend_u64 i64_sextend_u64)
+
 (decl pure i64_sextend_imm64 (Type Imm64) i64)
 (extern constructor i64_sextend_imm64 i64_sextend_imm64)
 
@@ -178,14 +213,31 @@
 (decl u64_is_zero (bool) u64)
 (extern extractor infallible u64_is_zero u64_is_zero)
 
+(decl i64_is_zero (bool) i64)
+(extern extractor infallible i64_is_zero i64_is_zero)
+
 (decl u64_zero () u64)
 (extractor (u64_zero) (u64_is_zero $true))
 
 (decl u64_nonzero (u64) u64)
 (extractor (u64_nonzero x) (and (u64_is_zero $false) x))
 
+(decl i64_nonzero (i64) i64)
+(extractor (i64_nonzero x) (and (i64_is_zero $false) x))
+
 (decl pure u64_is_odd (u64) bool)
 (extern constructor u64_is_odd u64_is_odd)
+
+;; Each of these extractors tests whether the upper half of the input equals the
+;; lower half of the input
+(decl u128_replicated_u64 (u64) u128)
+(extern extractor u128_replicated_u64 u128_replicated_u64)
+(decl u64_replicated_u32 (u64) u64)
+(extern extractor u64_replicated_u32 u64_replicated_u32)
+(decl u32_replicated_u16 (u64) u64)
+(extern extractor u32_replicated_u16 u32_replicated_u16)
+(decl u16_replicated_u8 (u8) u64)
+(extern extractor u16_replicated_u8 u16_replicated_u8)
 
 ;;;; `cranelift_codegen::ir::Type` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -247,6 +299,14 @@
 (decl pure ty_mask (Type) u64)
 (extern constructor ty_mask ty_mask)
 
+;; Get a mask that is set for each lane in a given type.
+(decl pure ty_lane_mask (Type) u64)
+(extern constructor ty_lane_mask ty_lane_mask)
+
+;; Get the number of lanes for a given type.
+(decl pure ty_lane_count (Type) u64)
+(extern constructor ty_lane_count ty_lane_count)
+
 ;; Get the byte width of a given type.
 (decl pure ty_bytes (Type) u16)
 (extern constructor ty_bytes ty_bytes)
@@ -254,6 +314,22 @@
 ;; Get the type of each lane in the given type.
 (decl pure lane_type (Type) Type)
 (extern constructor lane_type lane_type)
+
+;; Get a type with the same element type, but half the number of lanes.
+(decl pure partial ty_half_lanes (Type) Type)
+(extern constructor ty_half_lanes ty_half_lanes)
+
+;; Get a type with the same number of lanes but a lane type that is half as small.
+(decl pure partial ty_half_width (Type) Type)
+(extern constructor ty_half_width ty_half_width)
+
+;; Generate a mask for the maximum shift amount for a given type. i.e 31 for I32.
+(decl pure ty_shift_mask (Type) u64)
+(rule (ty_shift_mask ty) (u64_sub (ty_bits (lane_type ty)) 1))
+
+;; Compare two types for equality.
+(decl pure ty_equal (Type Type) bool)
+(extern constructor ty_equal ty_equal)
 
 ;;;; `cranelift_codegen::ir::MemFlags ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -263,21 +339,27 @@
 
 ;;;; Helpers for Working with Flags ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Reverse an IntCC flag.
-(decl intcc_reverse (IntCC) IntCC)
-(extern constructor intcc_reverse intcc_reverse)
+;; Swap args of an IntCC flag.
+(decl intcc_swap_args (IntCC) IntCC)
+(extern constructor intcc_swap_args intcc_swap_args)
 
-;; Invert an IntCC flag.
-(decl intcc_inverse (IntCC) IntCC)
-(extern constructor intcc_inverse intcc_inverse)
+;; Complement an IntCC flag.
+(decl intcc_complement (IntCC) IntCC)
+(extern constructor intcc_complement intcc_complement)
 
-;; Reverse an FloatCC flag.
-(decl floatcc_reverse (FloatCC) FloatCC)
-(extern constructor floatcc_reverse floatcc_reverse)
+;; This is a direct import of `IntCC::without_equal`.
+;; Get the corresponding IntCC with the equal component removed.
+;; For conditions without a zero component, this is a no-op.
+(decl pure intcc_without_eq (IntCC) IntCC)
+(extern constructor intcc_without_eq intcc_without_eq)
 
-;; Invert an FloatCC flag.
-(decl floatcc_inverse (FloatCC) FloatCC)
-(extern constructor floatcc_inverse floatcc_inverse)
+;; Swap args of a FloatCC flag.
+(decl floatcc_swap_args (FloatCC) FloatCC)
+(extern constructor floatcc_swap_args floatcc_swap_args)
+
+;; Complement a FloatCC flag.
+(decl floatcc_complement (FloatCC) FloatCC)
+(extern constructor floatcc_complement floatcc_complement)
 
 ;; True when this FloatCC involves an unordered comparison.
 (decl pure floatcc_unordered (FloatCC) bool)
@@ -339,10 +421,11 @@
 (decl ty_64 (Type) Type)
 (extern extractor ty_64 ty_64)
 
-;; A pure constructor that only matches scalar integers, and references that can
-;; fit in 64 bits.
+;; A pure constructor/extractor that only matches scalar integers, and
+;; references that can fit in 64 bits.
 (decl pure partial ty_int_ref_scalar_64 (Type) Type)
 (extern constructor ty_int_ref_scalar_64 ty_int_ref_scalar_64)
+(extern extractor ty_int_ref_scalar_64 ty_int_ref_scalar_64_extract)
 
 ;; An extractor that matches 32- and 64-bit types only.
 (decl ty_32_or_64 (Type) Type)
@@ -352,6 +435,10 @@
 (decl ty_8_or_16 (Type) Type)
 (extern extractor ty_8_or_16 ty_8_or_16)
 
+;; An extractor that matches 16- and 32-bit types only.
+(decl ty_16_or_32 (Type) Type)
+(extern extractor ty_16_or_32 ty_16_or_32)
+
 ;; An extractor that matches int types that fit in 32 bits.
 (decl int_fits_in_32 (Type) Type)
 (extern extractor int_fits_in_32 int_fits_in_32)
@@ -360,9 +447,17 @@
 (decl ty_int_ref_64 (Type) Type)
 (extern extractor ty_int_ref_64 ty_int_ref_64)
 
+;; An extractor that matches int or reference types bigger than 16 bits but at most 64 bits.
+(decl ty_int_ref_16_to_64 (Type) Type)
+(extern extractor ty_int_ref_16_to_64 ty_int_ref_16_to_64)
+
 ;; An extractor that only matches integers.
 (decl ty_int (Type) Type)
 (extern extractor ty_int ty_int)
+
+;; An extractor that only matches scalar types, float or int or ref's.
+(decl ty_scalar (Type) Type)
+(extern extractor ty_scalar ty_scalar)
 
 ;; An extractor that only matches scalar floating-point types--F32 or F64.
 (decl ty_scalar_float (Type) Type)
@@ -489,12 +584,12 @@
 (extern extractor ty_dyn128_int ty_dyn128_int)
 
 ;; Convert an `Offset32` to a primitive number.
-(decl pure offset32_to_u32 (Offset32) u32)
-(extern constructor offset32_to_u32 offset32_to_u32)
+(decl pure offset32_to_i32 (Offset32) i32)
+(extern constructor offset32_to_i32 offset32_to_i32)
 
 ;; Convert a number to an `Offset32`
-(decl pure u32_to_offset32 (u32) Offset32)
-(extern constructor u32_to_offset32 u32_to_offset32)
+(decl pure i32_to_offset32 (i32) Offset32)
+(extern constructor i32_to_offset32 i32_to_offset32)
 
 ;; This is a direct import of `IntCC::unsigned`.
 ;; Get the corresponding IntCC with the signed component removed.
@@ -547,5 +642,5 @@
 
 ;;;; Automatic conversions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(convert Offset32 u32 offset32_to_u32)
-(convert u32 Offset32 u32_to_offset32)
+(convert Offset32 i32 offset32_to_i32)
+(convert i32 Offset32 i32_to_offset32)

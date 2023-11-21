@@ -39,36 +39,38 @@
 
 ;; function u0:0:
 ;; block0:
-;;   slli t0,a0,32
-;;   srli t2,t0,32
-;;   ld t1,0(a2)
-;;   add t1,t1,t2
-;;   lui t0,1
-;;   add a0,t1,t0
-;;   lui t4,65535
-;;   addi t4,t4,4092
-;;   ugt t2,t2,t4##ty=i64
-;;   li a2,0
-;;   selectif_spectre_guard t1,a2,a0##test=t2
-;;   sw a1,0(t1)
+;;   slli a3,a0,32
+;;   srli a4,a3,32
+;;   lui a3,65535
+;;   addi a5,a3,-4
+;;   sltu a3,a5,a4
+;;   ld a5,0(a2)
+;;   add a4,a5,a4
+;;   lui a5,1
+;;   add a4,a4,a5
+;;   sub a2,zero,a3
+;;   not a3,a2
+;;   and a5,a4,a3
+;;   sw a1,0(a5)
 ;;   j label1
 ;; block1:
 ;;   ret
 ;;
 ;; function u0:1:
 ;; block0:
-;;   slli t0,a0,32
-;;   srli t2,t0,32
-;;   ld t1,0(a1)
-;;   add t1,t1,t2
-;;   lui t0,1
-;;   add a0,t1,t0
-;;   lui t4,65535
-;;   addi t4,t4,4092
-;;   ugt t2,t2,t4##ty=i64
-;;   li a1,0
-;;   selectif_spectre_guard t1,a1,a0##test=t2
-;;   lw a0,0(t1)
+;;   slli a2,a0,32
+;;   srli a4,a2,32
+;;   lui a2,65535
+;;   addi a5,a2,-4
+;;   sltu a3,a5,a4
+;;   ld a5,0(a1)
+;;   add a4,a5,a4
+;;   lui a5,1
+;;   add a4,a4,a5
+;;   sub a1,zero,a3
+;;   not a3,a1
+;;   and a5,a4,a3
+;;   lw a0,0(a5)
 ;;   j label1
 ;; block1:
 ;;   ret

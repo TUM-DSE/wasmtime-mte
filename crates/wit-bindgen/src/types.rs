@@ -23,6 +23,9 @@ pub struct TypeInfo {
 
     /// Whether or not this type (transitively) has a list.
     pub has_list: bool,
+
+    /// Whether or not this type (transitively) has a handle.
+    pub has_handle: bool,
 }
 
 impl std::ops::BitOrAssign for TypeInfo {
@@ -31,6 +34,7 @@ impl std::ops::BitOrAssign for TypeInfo {
         self.owned |= rhs.owned;
         self.error |= rhs.error;
         self.has_list |= rhs.has_list;
+        self.has_handle |= rhs.has_handle;
     }
 }
 
@@ -69,11 +73,13 @@ impl Types {
             live.add_type(resolve, ty);
         }
         for id in live.iter() {
-            let info = self.type_info.get_mut(&id).unwrap();
-            if import {
-                info.owned = true;
-            } else {
-                info.borrowed = true;
+            if resolve.types[id].name.is_some() {
+                let info = self.type_info.get_mut(&id).unwrap();
+                if import {
+                    info.owned = true;
+                } else {
+                    info.borrowed = true;
+                }
             }
         }
         let mut live = LiveTypes::default();
@@ -82,7 +88,9 @@ impl Types {
             live.add_type(resolve, ty);
         }
         for id in live.iter() {
-            self.type_info.get_mut(&id).unwrap().owned = true;
+            if resolve.types[id].name.is_some() {
+                self.type_info.get_mut(&id).unwrap().owned = true;
+            }
         }
 
         for ty in func.results.iter_types() {
@@ -95,6 +103,7 @@ impl Types {
                 _ => continue,
             };
             if let Some(Type::Id(id)) = err {
+                let id = super::resolve_type_definition_id(resolve, *id);
                 self.type_info.get_mut(&id).unwrap().error = true;
             }
         }
@@ -141,11 +150,6 @@ impl Types {
                 info = self.optional_type_info(resolve, r.ok.as_ref());
                 info |= self.optional_type_info(resolve, r.err.as_ref());
             }
-            TypeDefKind::Union(u) => {
-                for case in u.cases.iter() {
-                    info |= self.type_info(resolve, &case.ty);
-                }
-            }
             TypeDefKind::Future(ty) => {
                 info = self.optional_type_info(resolve, ty.as_ref());
             }
@@ -153,6 +157,8 @@ impl Types {
                 info = self.optional_type_info(resolve, stream.element.as_ref());
                 info |= self.optional_type_info(resolve, stream.end.as_ref());
             }
+            TypeDefKind::Handle(_) => info.has_handle = true,
+            TypeDefKind::Resource => {}
             TypeDefKind::Unknown => unreachable!(),
         }
         self.type_info.insert(ty, info);
@@ -174,5 +180,15 @@ impl Types {
             Some(ty) => self.type_info(resolve, ty),
             None => TypeInfo::default(),
         }
+    }
+}
+
+impl TypeInfo {
+    pub fn is_copy(&self) -> bool {
+        !self.has_list && !self.has_handle
+    }
+
+    pub fn is_clone(&self) -> bool {
+        !self.has_handle
     }
 }

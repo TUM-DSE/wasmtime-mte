@@ -12,7 +12,7 @@
 ;; blocks while we lower, the fallthrough in the new order is not (necessarily)
 ;; the same as the fallthrough in CLIF. So, we use the explicitly-provided
 ;; target.
-(decl partial lower_branch (Inst VecMachLabel) Unit)
+(decl partial lower_branch (Inst MachLabelSlice) Unit)
 
 ;;;; Rules for `iconst` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -339,7 +339,7 @@
 
 ;;;; Rules for `iabs` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(rule (lower (has_type ty @ (multi_lane _ _) (iabs x)))
+(rule -1 (lower (has_type ty @ (multi_lane _ _) (iabs x)))
       (vec_abs x (vector_size ty)))
 
 (rule 2 (lower (has_type $I64 (iabs x)))
@@ -347,6 +347,24 @@
 
 (rule 1 (lower (has_type (fits_in_32 ty) (iabs x)))
       (abs (OperandSize.Size32) (put_in_reg_sext32 x)))
+
+; `rustc` implementation.
+; - create a bitmask of all 1s if negative, or 0s if positive.
+; - xor all bits by bitmask. then subtract bitmask from xor'd values.
+; - if `x` is positive, the xor'd bits = x and the mask = 0, so we end up with
+;   `x - 0`.
+; - if `x` is negative, the xor'd bits = ~x and the mask = -1, so we end up with
+;   `~x - (-1) = ~x + 1`, which is exactly `abs(x)`.
+(rule (lower (has_type $I128 (iabs x)))
+      (let ((x_regs ValueRegs x)
+            (x_lo Reg (value_regs_get x_regs 0))
+            (x_hi Reg (value_regs_get x_regs 1))
+            (asr_reg Reg (asr_imm $I64 x_hi (imm_shift_from_u8 63)))
+            (eor_hi Reg (eor $I64 x_hi asr_reg))
+            (eor_lo Reg (eor $I64 x_lo asr_reg))
+            (subs_lo ProducesFlags (sub_with_flags_paired $I64 eor_lo asr_reg))
+            (sbc_hi ConsumesFlags (sbc_paired $I64 eor_hi asr_reg)))
+       (with_flags subs_lo sbc_hi)))
 
 ;;;; Rules for `avg_round` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -414,24 +432,6 @@
 
 (rule (lower (has_type (ty_scalar_float ty) (fmax rn rm)))
       (fpu_rrr (FPUOp2.Max) rn rm (scalar_size ty)))
-
-;;;; Rules for `fmin_pseudo` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(rule -1 (lower (has_type ty @ (multi_lane _ _) (fmin_pseudo rm rn)))
-      (bsl ty (vec_rrr (VecALUOp.Fcmgt) rm rn (vector_size ty)) rn rm))
-
-(rule (lower (has_type (ty_scalar_float ty) (fmin_pseudo rm rn)))
-      (with_flags (fpu_cmp (scalar_size ty) rm rn)
-                  (fpu_csel ty (Cond.Gt) rn rm)))
-
-;;;; Rules for `fmax_pseudo` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(rule -1 (lower (has_type ty @ (multi_lane _ _) (fmax_pseudo rm rn)))
-      (bsl ty (vec_rrr (VecALUOp.Fcmgt) rn rm (vector_size ty)) rn rm))
-
-(rule (lower (has_type (ty_scalar_float ty) (fmax_pseudo rm rn)))
-      (with_flags (fpu_cmp (scalar_size ty) rn rm)
-                  (fpu_csel ty (Cond.Gt) rn rm)))
 
 ;;;; Rules for `sqrt` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -513,17 +513,62 @@
 
 ;;;; Rules for `fma` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(rule (lower (has_type ty @ (multi_lane _ _) (fma x y z)))
-      (vec_rrr_mod (VecALUModOp.Fmla) z x y (vector_size ty)))
+(rule (lower (has_type (ty_scalar_float ty) (fma x y z)))
+       (fpu_rrrr (FPUOp3.MAdd) (scalar_size ty) x y z))
 
-(rule 1 (lower (has_type ty @ (multi_lane _ _) (fma (fneg x) y z)))
-      (vec_rrr_mod (VecALUModOp.Fmls) z x y (vector_size ty)))
+;; Delegate vector-based lowerings to helpers below
+(rule 1 (lower (has_type ty @ (multi_lane _ _) (fma x y z)))
+        (lower_fmla (VecALUModOp.Fmla) x y z (vector_size ty)))
 
-(rule 2 (lower (has_type ty @ (multi_lane _ _) (fma x (fneg y) z)))
-      (vec_rrr_mod (VecALUModOp.Fmls) z x y (vector_size ty)))
+;; Lowers a fused-multiply-add operation handling various forms of the
+;; instruction to get maximal coverage of what's available on AArch64.
+(decl lower_fmla (VecALUModOp Value Value Value VectorSize) Reg)
 
-(rule 3 (lower (has_type (ty_scalar_float ty) (fma x y z)))
-      (fpu_rrrr (FPUOp3.MAdd) (scalar_size ty) x y z))
+;; Base case, emit the op requested.
+(rule (lower_fmla op x y z size)
+      (vec_rrr_mod op z x y size))
+
+;; Special case: if one of the multiplicands are a splat then the element-based
+;; fma can be used instead with 0 as the element index.
+(rule 1 (lower_fmla op (splat x) y z size)
+        (vec_fmla_elem op z y x size 0))
+(rule 2 (lower_fmla op x (splat y) z size)
+        (vec_fmla_elem op z x y size 0))
+
+;; Special case: if one of the multiplicands is a shuffle to broadcast a
+;; single element of a vector then the element-based fma can be used like splat
+;; above.
+;;
+;; Note that in Cranelift shuffle always has i8x16 inputs and outputs so
+;; a `bitcast` is matched here explicitly since that's the main way a shuffle
+;; output will be fed into this instruction.
+(rule 3 (lower_fmla op (bitcast _ (shuffle x x (shuffle32_from_imm n n n n))) y z size @ (VectorSize.Size32x4))
+        (if-let $true (u64_lt n 4))
+        (vec_fmla_elem op z y x size n))
+(rule 4 (lower_fmla op x (bitcast _ (shuffle y y (shuffle32_from_imm n n n n))) z size @ (VectorSize.Size32x4))
+        (if-let $true (u64_lt n 4))
+        (vec_fmla_elem op z x y size n))
+(rule 3 (lower_fmla op (bitcast _ (shuffle x x (shuffle64_from_imm n n))) y z size @ (VectorSize.Size64x2))
+        (if-let $true (u64_lt n 2))
+        (vec_fmla_elem op z y x size n))
+(rule 4 (lower_fmla op x (bitcast _ (shuffle y y (shuffle64_from_imm n n))) z size @ (VectorSize.Size64x2))
+        (if-let $true (u64_lt n 2))
+        (vec_fmla_elem op z x y size n))
+
+;; Special case: if one of the multiplicands is `fneg` then peel that away,
+;; reverse the operation being performed, and then recurse on `lower_fmla`
+;; again to generate the actual instruction.
+;;
+;; Note that these are the highest priority cases for `lower_fmla` to peel
+;; away as many `fneg` operations as possible.
+(rule 5 (lower_fmla op (fneg x) y z size)
+        (lower_fmla (neg_fmla op) x y z size))
+(rule 6 (lower_fmla op x (fneg y) z size)
+        (lower_fmla (neg_fmla op) x y z size))
+
+(decl neg_fmla (VecALUModOp) VecALUModOp)
+(rule (neg_fmla (VecALUModOp.Fmla)) (VecALUModOp.Fmls))
+(rule (neg_fmla (VecALUModOp.Fmls)) (VecALUModOp.Fmla))
 
 ;;;; Rules for `fcopysign` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -1988,9 +2033,8 @@
 
 (rule (lower (has_type ty (splat x @ (load flags _ _))))
       (if-let mem_op (is_sinkable_inst x))
-      (let ((addr AMode (sink_load_into_amode (lane_type ty) mem_op))
-             (address Reg (load_addr addr)))
-            (ld1r address (vector_size ty) flags)))
+      (let ((addr Reg (sink_load_into_addr (lane_type ty) mem_op)))
+            (ld1r addr (vector_size ty) flags)))
 
 ;;;; Rules for `AtomicLoad` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (rule (lower (has_type (valid_atomic_transaction ty) (atomic_load flags addr)))
@@ -2222,7 +2266,15 @@
 
 ;; N.B.: the Ret itself is generated by the ABI.
 (rule (lower (return args))
-      (lower_return (range 0 (value_slice_len args)) args))
+      (lower_return args))
+
+;;;; Rules for `return_call` and `return_call_indirect` ;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (return_call (func_ref_data sig_ref extname dist) args))
+      (gen_return_call sig_ref extname dist args))
+
+(rule (lower (return_call_indirect sig_ref callee args))
+      (gen_return_call_indirect sig_ref callee args))
 
 ;;;; Rules for loads ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -2253,7 +2305,7 @@
 (rule -1 (lower
        (has_type (ty_vec64 _)
                         (load flags address offset)))
-      (aarch64_fpuload128 (amode $F64 address offset) flags))
+      (aarch64_fpuload64 (amode $F64 address offset) flags))
 (rule -3 (lower
        (has_type (ty_vec128 _)
                         (load flags address offset)))
@@ -2530,47 +2582,254 @@
             (lower_msb Reg (lsr_imm $I64 lower_msb (imm_shift_from_u8 63))))
         (add_shift $I64 lower_msb upper_msb (lshl_from_u64 $I64 1))))
 
-;;; Rules for `iadd_cout` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; For values smaller than a register, we do a normal `add` with both arguments
-;; sign extended. We then check if the output sign bit has flipped.
-(rule 0 (lower (has_type (fits_in_16 ty) (iadd_cout a b)))
-      (let ((extend ExtendOp (lower_extend_op ty $true))
-
-            ;; Instead of emitting two `sxt{b,h}` we do one as an instruction and
-            ;; the other as an extend operation in the `add` instruction.
-            ;;
-            ;; sxtb    a_sext, a
-            ;; add     out, a_sext, b, sxtb
-            ;; cmp     out, out, sxtb
-            ;; cset    out_carry, ne
-            (a_sext Reg (put_in_reg_sext32 a))
-            (out Reg (add_extend_op ty a_sext b extend))
-            (out_carry Reg (with_flags_reg
-                  (cmp_extend (OperandSize.Size32) out out extend)
-                  (cset (Cond.Ne)))))
-      (output_pair
-            (value_reg out)
-            (value_reg out_carry))))
-
-
-;; For register sized add's we just emit a adds+cset, without further masking.
-;;
-;; adds out, a, b
-;; cset carry, vs
-(rule 1 (lower (has_type (ty_32_or_64 ty) (iadd_cout a b)))
-      (let ((out ValueRegs
-              (with_flags
-                  (add_with_flags_paired ty a b)
-                  (cset_paired (Cond.Vs)))))
-      (output_pair
-            (value_regs_get out 0)
-            (value_regs_get out 1))))
-
 ;;; Rules for `uadd_overflow_trap` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule (lower (has_type (fits_in_64 ty) (uadd_overflow_trap a b tc)))
       (trap_if_overflow (add_with_flags_paired ty a b) tc))
+
+;;;; Helpers for `*_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; put a narrow value into a register and sign-/zero-extend depending on the ArgumentExtension
+(decl put_in_reg_ext32 (Value ArgumentExtension) Reg)
+(rule (put_in_reg_ext32 val (ArgumentExtension.Sext))
+      (put_in_reg_sext32 val))
+(rule (put_in_reg_ext32 val (ArgumentExtension.Uext))
+      (put_in_reg_zext32 val))
+
+;; For narrow values emit a normal op with both arguments zero/sign extended.
+;; Then check if the output is the same as itself zero/sign extended from the narrower width.
+(decl overflow_op_small (Type Value Value ArgumentExtension ALUOp) InstOutput)
+(rule (overflow_op_small ty a b arg_ext alu_op)
+      (let ((extend ExtendOp (lower_extend_op ty arg_ext))
+
+            ;; Instead of emitting two `{u,s}xt{b,h}` we do one as an instruction and
+            ;; the other as an extend operation in the alu_op.
+            ;;
+            ;; uxtb    a_ext, a
+            ;; alu_op  out, a_ext, b, {u,s}xtb
+            ;; cmp     out, out, {u,s}xtb
+            ;; cset    out_of, ne
+            (a_ext Reg (put_in_reg_ext32 a arg_ext))
+            (out Reg (alu_rrr_extend alu_op ty a_ext b extend))
+            (out_of Reg (with_flags_reg
+                  (cmp_extend (OperandSize.Size32) out out extend)
+                  (cset (Cond.Ne)))))
+      (output_pair
+            (value_reg out)
+            (value_reg out_of))))
+
+;; For register sized op's just emit a op+cset, without further masking.
+;;
+;; op out, a, b
+;; cset out_of, cond
+;;
+;; conds expected:
+;; Hs: Carry set, unsigned overflow; Vs: Signed Over-/Underflow;
+;; Lo: Carry clear, meaning no unsigned overflow.
+;; (this is because subtraction is implemented as an add with the two's complement value on aarch64, meaning there is a sub-overflow if the add does not overflow)
+(decl overflow_op_normal (Type Value Value ALUOp Cond) InstOutput)
+(rule (overflow_op_normal ty a b alu_op cond)
+      (let ((out ValueRegs
+              (with_flags
+                  (alu_rrr_with_flags_paired ty a b alu_op)
+                  (cset_paired cond))))
+      (output_pair
+            (value_regs_get out 0)
+            (value_regs_get out 1))))
+
+;; For 128bit integers emit, for example, add+adcs+cset
+(decl overflow_op_128 (Value Value ALUOp ALUOp Cond) InstOutput)
+(rule (overflow_op_128 x y alu_op1 alu_op2 cond)
+      (let
+          ;; Get the high/low registers for `x`.
+          ((x_regs ValueRegs x)
+           (x_lo Reg (value_regs_get x_regs 0))
+           (x_hi Reg (value_regs_get x_regs 1))
+
+           ;; Get the high/low registers for `y`.
+           (y_regs ValueRegs y)
+           (y_lo Reg (value_regs_get y_regs 0))
+           (y_hi Reg (value_regs_get y_regs 1)))
+        ;; cannot use the with_flags helper here but it should be fine right now
+        (let
+            ((lo_inst ProducesFlags (alu_rrr_with_flags_paired $I64 x_lo y_lo alu_op1))
+             (hi_inst ConsumesAndProducesFlags (alu_rrr_with_flags_chained $I64 x_hi y_hi alu_op2))
+             (of_inst ConsumesFlags (cset_paired cond))
+
+             (result MultiReg (with_flags_chained lo_inst hi_inst of_inst)))
+            (multi_reg_to_pair_and_single result)))
+)
+
+;;;; Rules for `uadd_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; For values smaller than a register, we do a normal `add` with both arguments
+;; zero extended. We then check if the output is the same as itself zero extended.
+(rule 1 (lower (has_type (fits_in_16 ty) (uadd_overflow a b)))
+      (overflow_op_small ty a b (ArgumentExtension.Uext) (ALUOp.Add)))
+
+;; For register sized add's we just emit a adds+cset, without further masking.
+(rule 2 (lower (has_type (ty_32_or_64 ty) (uadd_overflow a b)))
+      (overflow_op_normal ty a b (ALUOp.AddS) (Cond.Hs)))
+
+;; For 128bit integers we emit add+adcs+cset
+(rule 0 (lower (has_type $I128 (uadd_overflow x y)))
+      (overflow_op_128 x y (ALUOp.AddS) (ALUOp.AdcS) (Cond.Hs)))
+
+;;;; Rules for `sadd_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; sxt{b,h} a_ext, a
+;; add out, a_ext, b, sxt{b,h}
+;; cmp out, out, sxt{b,h}
+;; cset of, ne
+(rule 1 (lower (has_type (fits_in_16 ty) (sadd_overflow a b)))
+      (overflow_op_small ty a b (ArgumentExtension.Sext) (ALUOp.Add)))
+
+;; adds a, b
+;; cset of, vs
+(rule 2 (lower (has_type (ty_32_or_64 ty) (sadd_overflow a b)))
+      (overflow_op_normal ty a b (ALUOp.AddS) (Cond.Vs)))
+
+;; adds x_lo, y_lo
+;; addcs x_hi, y_hi
+;; cset of, vs
+(rule 0 (lower (has_type $I128 (sadd_overflow x y)))
+      (overflow_op_128 x y (ALUOp.AddS) (ALUOp.AdcS) (Cond.Vs)))
+
+;;;; Rules for `usub_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; uxt{b,h} a_ext, a
+;; sub out, a_ext, b, ext{b,h}
+;; cmp out, out, uxt{b,h}
+;; cset of, ne
+(rule 1 (lower (has_type (fits_in_16 ty) (usub_overflow a b)))
+      (overflow_op_small ty a b (ArgumentExtension.Uext) (ALUOp.Sub)))
+
+;; subs a, b
+;; cset of, lo
+(rule 2 (lower (has_type (ty_32_or_64 ty) (usub_overflow a b)))
+      (overflow_op_normal ty a b (ALUOp.SubS) (Cond.Lo)))
+
+;; subs x_lo, y_lo
+;; sbcs x_hi, y_hi
+;; cset of, lo
+(rule 0 (lower (has_type $I128 (usub_overflow x y)))
+      (overflow_op_128 x y (ALUOp.SubS) (ALUOp.SbcS) (Cond.Lo)))
+
+;;;; Rules for `ssub_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; sxt{b,h} a_ext, a
+;; sub out, a_ext, b, sxt{b,h}
+;; cmp out, out, sxt{b,h}
+;; cset of, ne
+(rule 1 (lower (has_type (fits_in_16 ty) (ssub_overflow a b)))
+      (overflow_op_small ty a b (ArgumentExtension.Sext) (ALUOp.Sub)))
+
+;; subs a, b
+;; cset of, vs
+(rule 2 (lower (has_type (ty_32_or_64 ty) (ssub_overflow a b)))
+      (overflow_op_normal ty a b (ALUOp.SubS) (Cond.Vs)))
+
+;; subs x_lo, y_lo
+;; sbcs x_hi, y_hi
+;; cset of, vs
+(rule 0 (lower (has_type $I128 (ssub_overflow x y)))
+      (overflow_op_128 x y (ALUOp.SubS) (ALUOp.SbcS) (Cond.Vs)))
+
+;;;; Rules for `umul_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; uxt{b,h} a_ext, a
+;; uxt{b,h} b_ext, b
+;; mul out, a_ext, b_ext
+;; cmp out, out, uxt{b,h}
+;; cset of, ne
+(rule 1 (lower (has_type (fits_in_16 ty) (umul_overflow a b)))
+       (let ((extend ExtendOp (lower_extend_op ty (ArgumentExtension.Uext)))
+
+             (a_uext Reg (put_in_reg_zext32 a))
+             (b_uext Reg (put_in_reg_zext32 b))
+             (out Reg (madd ty a_uext b_uext (zero_reg)))
+             (out_of Reg (with_flags_reg
+                   (cmp_extend (OperandSize.Size32) out out extend)
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
+
+;; umull out, a, b
+;; cmp out, out, uxtw
+;; cset of, ne
+(rule 2 (lower (has_type $I32 (umul_overflow a b)))
+       (let (
+             (out Reg (umaddl a b (zero_reg)))
+             (out_of Reg (with_flags_reg
+                   (cmp_extend (OperandSize.Size64) out out (ExtendOp.UXTW))
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
+
+;; mul out, a, b
+;; umulh tmp, a, b
+;; cmp tmp, #0
+;; cset of, ne
+(rule 2 (lower (has_type $I64 (umul_overflow a b)))
+       (let (
+             (out Reg (madd $I64 a b (zero_reg)))
+             (tmp Reg (umulh $I64 a b))
+             (out_of Reg (with_flags_reg
+                   (cmp64_imm tmp (u8_into_imm12 0))
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
+
+;;;; Rules for `smul_overflow` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; sxt{b,h} a_ext, a
+;; sxt{b,h} b_ext, b
+;; mul out, a_ext, b_ext
+;; cmp out, out, sxt{b,h}
+;; cset of, ne
+(rule 1 (lower (has_type (fits_in_16 ty) (smul_overflow a b)))
+       (let ((extend ExtendOp (lower_extend_op ty (ArgumentExtension.Sext)))
+
+             (a_sext Reg (put_in_reg_sext32 a))
+             (b_sext Reg (put_in_reg_sext32 b))
+             (out Reg (madd ty a_sext b_sext (zero_reg)))
+             (out_of Reg (with_flags_reg
+                   (cmp_extend (OperandSize.Size32) out out extend)
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
+
+;; smull out, a, b
+;; cmp out, out, sxtw
+;; cset of, ne
+(rule 2 (lower (has_type $I32 (smul_overflow a b)))
+       (let (
+             (out Reg (smaddl a b (zero_reg)))
+             (out_of Reg (with_flags_reg
+                   (cmp_extend (OperandSize.Size64) out out (ExtendOp.SXTW))
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
+
+;; mul out, a, b
+;; smulh tmp, a, b
+;; cmp tmp, out, ASR #63
+;; cset of, ne
+(rule 2 (lower (has_type $I64 (smul_overflow a b)))
+       (let (
+             (out Reg (madd $I64 a b (zero_reg)))
+             (tmp Reg (smulh $I64 a b))
+             (out_of Reg (with_flags_reg
+                   (cmp_rr_shift_asr (OperandSize.Size64) tmp out 63)
+                   (cset (Cond.Ne)))))
+       (output_pair
+             (value_reg out)
+             (value_reg out_of))))
 
 ;;; Rules for `tls_value` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -2580,13 +2839,6 @@
 (rule (lower (has_type (tls_model (TlsModel.Macho)) (tls_value (symbol_value_data name _ _))))
       (macho_tls_get_addr name))
 
-;;; Rules for `fcvt_low_from_sint` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(rule (lower (has_type $F64X2 (fcvt_low_from_sint val)))
-      (let ((extended Reg (vec_extend (VecExtendOp.Sxtl) val $false (ScalarSize.Size64)))
-            (converted Reg (vec_misc (VecMisc2.Scvtf) extended (VectorSize.Size64x2))))
-        converted))
-
 ;;; Rules for `fvpromote_low` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule (lower (fvpromote_low val))
@@ -2595,11 +2847,9 @@
 ;;; Rules for `brif` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; `brif` following `icmp`
-(rule (lower_branch (brif (maybe_uextend (icmp cc x @ (value_type ty) y)) _ _) targets)
+(rule (lower_branch (brif (maybe_uextend (icmp cc x @ (value_type ty) y)) _ _) (two_targets taken not_taken))
       (let ((comparison FlagsAndCC (lower_icmp_into_flags cc x y ty))
-            (cond Cond (cond_code (flags_and_cc_cc comparison)))
-            (taken BranchTarget (branch_target targets 0))
-            (not_taken BranchTarget (branch_target targets 1)))
+            (cond Cond (cond_code (flags_and_cc_cc comparison))))
         (emit_side_effect
          (with_flags_side_effect (flags_and_cc_flags comparison)
                                  (cond_br taken
@@ -2607,52 +2857,64 @@
                                           (cond_br_cond cond))))))
 
 ;; `brif` following `fcmp`
-(rule (lower_branch (brif (maybe_uextend (fcmp cc x @ (value_type (ty_scalar_float ty)) y)) _ _) targets)
-      (let ((cond Cond (fp_cond_code cc))
-            (taken BranchTarget (branch_target targets 0))
-            (not_taken BranchTarget (branch_target targets 1)))
+(rule (lower_branch (brif (maybe_uextend (fcmp cc x @ (value_type (ty_scalar_float ty)) y)) _ _) (two_targets taken not_taken))
+      (let ((cond Cond (fp_cond_code cc)))
        (emit_side_effect
         (with_flags_side_effect (fpu_cmp (scalar_size ty) x y)
                                 (cond_br taken not_taken
                                  (cond_br_cond cond))))))
 
 ;; standard `brif`
-(rule -1 (lower_branch (brif c @ (value_type $I128) _ _) targets)
+(rule -1 (lower_branch (brif c @ (value_type $I128) _ _) (two_targets taken not_taken))
       (let ((flags ProducesFlags (flags_to_producesflags c))
             (c ValueRegs (put_in_regs c))
             (c_lo Reg (value_regs_get c 0))
             (c_hi Reg (value_regs_get c 1))
-            (rt Reg (orr $I64 c_lo c_hi))
-            (taken BranchTarget (branch_target targets 0))
-            (not_taken BranchTarget (branch_target targets 1)))
+            (rt Reg (orr $I64 c_lo c_hi)))
        (emit_side_effect
         (with_flags_side_effect flags
          (cond_br taken not_taken (cond_br_not_zero rt))))))
-(rule -2 (lower_branch (brif c @ (value_type ty) _ _) targets)
+(rule -2 (lower_branch (brif c @ (value_type ty) _ _) (two_targets taken not_taken))
       (if (ty_int_ref_scalar_64 ty))
       (let ((flags ProducesFlags (flags_to_producesflags c))
-            (rt Reg (put_in_reg_zext64 c))
-            (taken BranchTarget (branch_target targets 0))
-            (not_taken BranchTarget (branch_target targets 1)))
+            (rt Reg (put_in_reg_zext64 c)))
        (emit_side_effect
         (with_flags_side_effect flags
          (cond_br taken not_taken (cond_br_not_zero rt))))))
+
+;; Special lowerings for `tbnz` - "Test bit and Branch if Nonzero"
+(rule 1 (lower_branch (brif (band x @ (value_type ty) (u64_from_iconst n)) _ _)
+                     (two_targets taken not_taken))
+  (if-let bit (test_and_compare_bit_const ty n))
+  (emit_side_effect (tbnz taken not_taken x bit)))
+
+;; Special lowering for `tbz` - "Test bit and Branch if Zero"
+(rule 1 (lower_branch (brif (icmp (IntCC.Equal)
+                                  (band x @ (value_type (fits_in_64 ty))
+                                        (u64_from_iconst n))
+                                  (u64_from_iconst 0)) _ _)
+                     (two_targets taken not_taken))
+  (if-let bit (test_and_compare_bit_const ty n))
+  (emit_side_effect (tbz taken not_taken x bit)))
+
+(decl pure partial test_and_compare_bit_const (Type u64) u8)
+(extern constructor test_and_compare_bit_const test_and_compare_bit_const)
 
 ;;; Rules for `jump` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(rule (lower_branch (jump _) targets)
-      (emit_side_effect (aarch64_jump (branch_target targets 0))))
+(rule (lower_branch (jump _) (single_target label))
+      (emit_side_effect (aarch64_jump label)))
 
 ;;; Rules for `br_table` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; `targets` contains the default target with the list of branch targets
 ;; concatenated.
-(rule (lower_branch (br_table idx _) targets)
-      (let ((jt_size u32 (targets_jt_size targets))
+(rule (lower_branch (br_table idx _) (jump_table_targets default targets))
+      (let ((jt_size u32 (jump_table_size targets))
             (_ InstOutput (side_effect
                   (emit_island (targets_jt_space targets))))
             (ridx Reg (put_in_reg_zext32 idx)))
-       (br_table_impl (u32_as_u64 jt_size) ridx targets)))
+       (br_table_impl (u32_as_u64 jt_size) ridx default targets)))
 
 ;;; Rules for MTE ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; Rules for stores ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2669,10 +2931,10 @@
 
 
 (rule (lower (arm64_stg src dst))
-      (side_effect (emit_arm64_stg src (amode_stg $I32 dst 0))))
+      (side_effect (emit_arm64_stg src (amode $I32 dst 0))))
 
 (rule (lower (arm64_st2g src dst))
-      (side_effect (emit_arm64_st2g src (amode_stg $I32 dst 0))))
+      (side_effect (emit_arm64_st2g src (amode $I32 dst 0))))
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))

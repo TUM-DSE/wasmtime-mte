@@ -31,18 +31,22 @@
 
 #![allow(unused_macros)]
 
-use crate::RunResult;
+use crate::{RunResult, RuntimeFiberStack};
 use std::cell::Cell;
 use std::io;
+use std::ops::Range;
 use std::ptr;
 
-#[derive(Debug)]
-pub struct FiberStack {
-    // The top of the stack; for stacks allocated by the fiber implementation itself,
-    // the base address of the allocation will be `top.sub(len.unwrap())`
-    top: *mut u8,
-    // The length of the stack; `None` when the stack was not created by this implementation.
-    len: Option<usize>,
+pub enum FiberStack {
+    Default {
+        // The top of the stack; for stacks allocated by the fiber implementation itself,
+        // the base address of the allocation will be `top.sub(len.unwrap())`
+        top: *mut u8,
+        // The length of the stack
+        len: usize,
+        mmap: bool,
+    },
+    Custom(Box<dyn RuntimeFiberStack>),
 }
 
 impl FiberStack {
@@ -72,27 +76,86 @@ impl FiberStack {
                 rustix::mm::MprotectFlags::READ | rustix::mm::MprotectFlags::WRITE,
             )?;
 
-            Ok(Self {
+            Ok(Self::Default {
                 top: mmap.cast::<u8>().add(mmap_len),
-                len: Some(mmap_len),
+                len: mmap_len,
+                mmap: true,
             })
         }
     }
 
-    pub unsafe fn from_top_ptr(top: *mut u8) -> io::Result<Self> {
-        Ok(Self { top, len: None })
+    pub unsafe fn from_raw_parts(base: *mut u8, len: usize) -> io::Result<Self> {
+        Ok(Self::Default {
+            top: base.add(len),
+            len,
+            mmap: false,
+        })
+    }
+
+    pub fn from_custom(custom: Box<dyn RuntimeFiberStack>) -> io::Result<Self> {
+        Ok(Self::Custom(custom))
     }
 
     pub fn top(&self) -> Option<*mut u8> {
-        Some(self.top)
+        Some(match self {
+            FiberStack::Default {
+                top,
+                len: _,
+                mmap: _,
+            } => *top,
+            FiberStack::Custom(r) => {
+                let top = r.top();
+                let page_size = rustix::param::page_size();
+                assert!(
+                    top.align_offset(page_size) == 0,
+                    "expected fiber stack top ({}) to be page aligned ({})",
+                    top as usize,
+                    page_size
+                );
+                top
+            }
+        })
+    }
+
+    pub fn range(&self) -> Option<Range<usize>> {
+        Some(match self {
+            FiberStack::Default { top, len, mmap: _ } => {
+                let base = unsafe { top.sub(*len) as usize };
+                base..base + len
+            }
+            FiberStack::Custom(s) => {
+                let range = s.range();
+                let page_size = rustix::param::page_size();
+                let start_ptr = range.start as *const u8;
+                assert!(
+                    start_ptr.align_offset(page_size) == 0,
+                    "expected fiber stack end ({}) to be page aligned ({})",
+                    range.start as usize,
+                    page_size
+                );
+                let end_ptr = range.end as *const u8;
+                assert!(
+                    end_ptr.align_offset(page_size) == 0,
+                    "expected fiber stack start ({}) to be page aligned ({})",
+                    range.end as usize,
+                    page_size
+                );
+                range
+            }
+        })
     }
 }
 
 impl Drop for FiberStack {
     fn drop(&mut self) {
         unsafe {
-            if let Some(len) = self.len {
-                let ret = rustix::mm::munmap(self.top.sub(len) as _, len);
+            if let FiberStack::Default {
+                top,
+                len,
+                mmap: true,
+            } = self
+            {
+                let ret = rustix::mm::munmap(top.sub(*len) as _, *len);
                 debug_assert!(ret.is_ok());
             }
         }
@@ -104,13 +167,16 @@ pub struct Fiber;
 pub struct Suspend(*mut u8);
 
 extern "C" {
+    #[wasmtime_versioned_export_macros::versioned_link]
     fn wasmtime_fiber_init(
         top_of_stack: *mut u8,
         entry: extern "C" fn(*mut u8, *mut u8),
         entry_arg0: *mut u8,
     );
+    #[wasmtime_versioned_export_macros::versioned_link]
     fn wasmtime_fiber_switch(top_of_stack: *mut u8);
     #[allow(dead_code)] // only used in inline assembly for some platforms
+    #[wasmtime_versioned_export_macros::versioned_link]
     fn wasmtime_fiber_start();
 }
 
@@ -132,7 +198,7 @@ impl Fiber {
     {
         unsafe {
             let data = Box::into_raw(Box::new(func)).cast();
-            wasmtime_fiber_init(stack.top, fiber_start::<F, A, B, C>, data);
+            wasmtime_fiber_init(stack.top().unwrap(), fiber_start::<F, A, B, C>, data);
         }
 
         Ok(Self)
@@ -144,10 +210,10 @@ impl Fiber {
             // stack, otherwise known as our reserved slot for this information.
             //
             // In the diagram above this is updating address 0xAff8
-            let addr = stack.top.cast::<usize>().offset(-1);
+            let addr = stack.top().unwrap().cast::<usize>().offset(-1);
             addr.write(result as *const _ as usize);
 
-            wasmtime_fiber_switch(stack.top);
+            wasmtime_fiber_switch(stack.top().unwrap());
 
             // null this out to help catch use-after-free
             addr.write(0);

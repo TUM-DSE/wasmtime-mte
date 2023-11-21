@@ -465,7 +465,6 @@ impl Mutator for RemoveUnusedEntities {
         4
     }
 
-    #[allow(clippy::cognitive_complexity)]
     fn mutate(&mut self, mut func: Function) -> Option<(Function, String, ProgressStatus)> {
         let name = match self.kind {
             0 => {
@@ -1041,9 +1040,11 @@ impl<'a> CrashCheckContext<'a> {
         std::panic::set_hook(Box::new(|_| {})); // silence panics
 
         let res = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = self
-                .context
-                .compile_and_emit(self.isa, &mut self.code_memory);
+            let _ = self.context.compile_and_emit(
+                self.isa,
+                &mut self.code_memory,
+                &mut Default::default(),
+            );
         })) {
             Ok(()) => CheckResult::Succeed,
             Err(err) => CheckResult::Crash(get_panic_string(err)),

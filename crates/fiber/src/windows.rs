@@ -1,7 +1,8 @@
-use crate::RunResult;
+use crate::{RunResult, RuntimeFiberStack};
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::io;
+use std::ops::Range;
 use std::ptr;
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::System::Threading::*;
@@ -14,11 +15,19 @@ impl FiberStack {
         Ok(Self(size))
     }
 
-    pub unsafe fn from_top_ptr(_top: *mut u8) -> io::Result<Self> {
+    pub unsafe fn from_raw_parts(_base: *mut u8, _len: usize) -> io::Result<Self> {
+        Err(io::Error::from_raw_os_error(ERROR_NOT_SUPPORTED as i32))
+    }
+
+    pub fn from_custom(_custom: Box<dyn RuntimeFiberStack>) -> io::Result<Self> {
         Err(io::Error::from_raw_os_error(ERROR_NOT_SUPPORTED as i32))
     }
 
     pub fn top(&self) -> Option<*mut u8> {
+        None
+    }
+
+    pub fn range(&self) -> Option<Range<usize>> {
         None
     }
 }
@@ -41,6 +50,7 @@ struct StartState {
 const FIBER_FLAG_FLOAT_SWITCH: u32 = 1;
 
 extern "C" {
+    #[wasmtime_versioned_export_macros::versioned_link]
     fn wasmtime_fiber_get_current() -> *mut c_void;
 }
 

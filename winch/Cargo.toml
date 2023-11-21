@@ -13,14 +13,13 @@ path = "src/main.rs"
 
 [dependencies]
 winch-codegen = { workspace = true }
-winch-environ = { workspace = true }
 winch-filetests = { workspace = true }
 winch-test-macros = { workspace = true }
 wasmtime-environ = { workspace = true }
 target-lexicon = { workspace = true }
 anyhow = { workspace = true }
 wasmparser = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ['default'] }
 wat = { workspace = true }
 cranelift-codegen = { workspace = true }
 capstone = { workspace = true }

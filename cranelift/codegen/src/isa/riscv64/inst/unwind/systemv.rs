@@ -16,7 +16,7 @@ pub fn create_cie() -> CommonInformationEntry {
             format: Format::Dwarf32,
             version: 1,
         },
-        4,  // Code alignment factor
+        2,  // Code alignment factor
         -8, // Data alignment factor
         Register(regs::link_reg().to_real_reg().unwrap().hw_enc() as u16),
     );
@@ -30,16 +30,14 @@ pub fn create_cie() -> CommonInformationEntry {
 
 /// Map Cranelift registers to their corresponding Gimli registers.
 pub fn map_reg(reg: Reg) -> Result<Register, RegisterMappingError> {
-    match reg.class() {
-        RegClass::Int => {
-            let reg = reg.to_real_reg().unwrap().hw_enc() as u16;
-            Ok(Register(reg))
-        }
-        RegClass::Float => {
-            let reg = reg.to_real_reg().unwrap().hw_enc() as u16;
-            Ok(Register(32 + reg))
-        }
-    }
+    let reg_offset = match reg.class() {
+        RegClass::Int => 0,
+        RegClass::Float => 32,
+        RegClass::Vector => 64,
+    };
+
+    let reg = reg.to_real_reg().unwrap().hw_enc() as u16;
+    Ok(Register(reg_offset + reg))
 }
 
 pub(crate) struct RegisterMapper;
@@ -74,7 +72,6 @@ mod tests {
     use crate::settings::{builder, Flags};
     use crate::Context;
     use gimli::write::Address;
-    use std::str::FromStr;
     use target_lexicon::triple;
 
     #[test]
@@ -89,7 +86,9 @@ mod tests {
             Some(StackSlotData::new(StackSlotKind::ExplicitSlot, 64)),
         ));
 
-        let code = context.compile(&*isa).expect("expected compilation");
+        let code = context
+            .compile(&*isa, &mut Default::default())
+            .expect("expected compilation");
 
         let fde = match code
             .create_unwind_info(isa.as_ref())
@@ -129,7 +128,9 @@ mod tests {
 
         let mut context = Context::for_function(create_multi_return_function(CallConv::SystemV));
 
-        let code = context.compile(&*isa).expect("expected compilation");
+        let code = context
+            .compile(&*isa, &mut Default::default())
+            .expect("expected compilation");
 
         let fde = match code
             .create_unwind_info(isa.as_ref())
@@ -143,7 +144,7 @@ mod tests {
 
         assert_eq!(
             format!("{:?}", fde),
-            "FrameDescriptionEntry { address: Constant(4321), length: 20, lsda: None, instructions: [] }"
+            "FrameDescriptionEntry { address: Constant(4321), length: 16, lsda: None, instructions: [] }"
         );
     }
 

@@ -54,19 +54,6 @@ pub(crate) fn define() -> SettingGroup {
     );
 
     settings.add_bool(
-        "use_egraphs",
-        "Enable egraph-based optimization.",
-        r#"
-            This enables an optimization phase that converts CLIF to an egraph (equivalence graph)
-            representation, performs various rewrites, and then converts it back. This should result in
-            better optimization, but the traditional optimization pass structure is also still
-            available by setting this to `false`. The `false` setting will eventually be
-            deprecated and removed.
-        "#,
-        true,
-    );
-
-    settings.add_bool(
         "enable_verifier",
         "Run the Cranelift IR verifier at strategic times during compilation.",
         r#"
@@ -74,6 +61,20 @@ pub(crate) fn define() -> SettingGroup {
             default, which is useful during development.
         "#,
         true,
+    );
+
+    settings.add_bool(
+        "enable_pcc",
+        "Enable proof-carrying code translation validation.",
+        r#"
+            This adds a proof-carrying-code mode. Proof-carrying code (PCC) is a strategy to verify
+            that the compiler preserves certain properties or invariants in the compiled code.
+            For example, a frontend that translates WebAssembly to CLIF can embed PCC facts in
+            the CLIF, and Cranelift will verify that the final machine code satisfies the stated
+            facts at each intermediate computed value. Loads and stores can be marked as "checked"
+            and their memory effects can be verified as safe.
+        "#,
+        false,
     );
 
     // Note that Cranelift doesn't currently need an is_pie flag, because PIE is
@@ -125,13 +126,6 @@ pub(crate) fn define() -> SettingGroup {
             the end-user. It is possible to read it via the get_pinned_reg instruction, and to set it
             with the set_pinned_reg instruction.
         "#,
-        false,
-    );
-
-    settings.add_bool(
-        "enable_simd",
-        "Enable the use of SIMD instructions.",
-        "",
         false,
     );
 
@@ -336,6 +330,23 @@ pub(crate) fn define() -> SettingGroup {
             feature in cranelift-codegen.
         "#,
         false,
+    );
+
+    settings.add_num(
+        "bb_padding_log2_minus_one",
+        "The log2 of the size to insert dummy padding between basic blocks",
+        r#"
+            This is a debugging option for stressing various cases during code
+            generation without requiring large functions. This will insert
+            0-byte padding between basic blocks of the specified size.
+
+            The amount of padding inserted two raised to the power of this value
+            minus one. If this value is 0 then no padding is inserted.
+
+            The default for this option is 0 to insert no padding as it's only
+            intended for testing and development.
+        "#,
+        0,
     );
 
     // When adding new settings please check if they can also be added

@@ -13,6 +13,7 @@ pub struct UnionFind<Idx: EntityRef> {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Val<Idx>(Idx);
+
 impl<Idx: EntityRef + ReservedValue> Default for Val<Idx> {
     fn default() -> Self {
         Self(Idx::reserved_value())
@@ -48,7 +49,7 @@ impl<Idx: EntityRef + Hash + std::fmt::Display + Ord + ReservedValue> UnionFind<
     /// (and others in its chain up to the root of the equivalence
     /// class) will be faster.
     pub fn find_and_update(&mut self, mut node: Idx) -> Idx {
-        // "Path splitting" mutating find (Tarjan and Van Leeuwen).
+        // "Path halving" mutating find (Tarjan and Van Leeuwen).
         debug_assert!(node != Idx::reserved_value());
         while node != self.parent[node].0 {
             let next = self.parent[self.parent[node].0].0;

@@ -1,6 +1,9 @@
+#![cfg(not(miri))]
+
 use anyhow::{anyhow, bail, Result};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use wasmtime::*;
 
@@ -272,7 +275,7 @@ async fn cancel_during_run() {
                 // SetOnDrop is not destroyed when dropping the reference of it
                 // here. Instead, it is moved into the future where it's forced
                 // to live in and will be destroyed at the end of the future.
-                drop(&dtor);
+                let _ = &dtor;
                 tokio::task::yield_now().await;
                 Ok(())
             })
@@ -308,7 +311,8 @@ async fn cancel_during_run() {
 async fn iloop_with_fuel() {
     let engine = Engine::new(Config::new().async_support(true).consume_fuel(true)).unwrap();
     let mut store = Store::new(&engine, ());
-    store.out_of_fuel_async_yield(1_000, 10);
+    store.set_fuel(10_000).unwrap();
+    store.fuel_async_yield_interval(Some(100)).unwrap();
     let module = Module::new(
         &engine,
         "
@@ -323,14 +327,15 @@ async fn iloop_with_fuel() {
 
     // This should yield a bunch of times but eventually finish
     let (_, pending) = CountPending::new(Box::pin(instance)).await;
-    assert!(pending > 100);
+    assert_eq!(pending, 99);
 }
 
 #[tokio::test]
 async fn fuel_eventually_finishes() {
     let engine = Engine::new(Config::new().async_support(true).consume_fuel(true)).unwrap();
     let mut store = Store::new(&engine, ());
-    store.out_of_fuel_async_yield(u64::max_value(), 10);
+    store.set_fuel(u64::MAX).unwrap();
+    store.fuel_async_yield_interval(Some(10)).unwrap();
     let module = Module::new(
         &engine,
         "
@@ -357,10 +362,8 @@ async fn fuel_eventually_finishes() {
 
 #[tokio::test]
 async fn async_with_pooling_stacks() {
-    let mut pool = PoolingAllocationConfig::default();
-    pool.instance_count(1)
-        .instance_memory_pages(1)
-        .instance_table_elements(0);
+    let mut pool = crate::small_pool_config();
+    pool.total_stacks(1).memory_pages(1).table_elements(0);
     let mut config = Config::new();
     config.async_support(true);
     config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
@@ -382,11 +385,8 @@ async fn async_with_pooling_stacks() {
 
 #[tokio::test]
 async fn async_host_func_with_pooling_stacks() -> Result<()> {
-    let mut pooling = PoolingAllocationConfig::default();
-    pooling
-        .instance_count(1)
-        .instance_memory_pages(1)
-        .instance_table_elements(0);
+    let mut pooling = crate::small_pool_config();
+    pooling.total_stacks(1).memory_pages(1).table_elements(0);
     let mut config = Config::new();
     config.async_support(true);
     config.allocation_strategy(InstanceAllocationStrategy::Pooling(pooling));
@@ -409,12 +409,25 @@ async fn async_host_func_with_pooling_stacks() -> Result<()> {
     Ok(())
 }
 
-async fn execute_across_threads<F: Future + Send + 'static>(future: F) {
-    let future = PollOnce::new(Box::pin(future)).await;
-
-    tokio::task::spawn_blocking(move || future)
-        .await
-        .expect("shouldn't panic");
+/// This will execute the `future` provided to completion and each invocation of
+/// `poll` for the future will be executed on a separate thread.
+pub async fn execute_across_threads<F>(future: F) -> F::Output
+where
+    F: Future + Send + 'static,
+    F::Output: Send,
+{
+    let mut future = Box::pin(future);
+    loop {
+        let once = PollOnce::new(future);
+        let handle = tokio::runtime::Handle::current();
+        let result = std::thread::spawn(move || handle.block_on(once))
+            .join()
+            .unwrap();
+        match result {
+            Ok(val) => break val,
+            Err(f) => future = f,
+        }
+    }
 }
 
 #[tokio::test]
@@ -539,6 +552,7 @@ async fn resume_separate_thread3() {
 
 #[tokio::test]
 async fn recursive_async() -> Result<()> {
+    let _ = env_logger::try_init();
     let mut store = async_store();
     let m = Module::new(
         store.engine(),
@@ -688,13 +702,13 @@ impl<F> Future for PollOnce<F>
 where
     F: Future + Unpin,
 {
-    type Output = F;
+    type Output = Result<F::Output, F>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut future = self.0.take().unwrap();
         match Pin::new(&mut future).poll(cx) {
-            Poll::Pending => Poll::Ready(future),
-            Poll::Ready(_) => panic!("should not be ready"),
+            Poll::Pending => Poll::Ready(Err(future)),
+            Poll::Ready(val) => Poll::Ready(Ok(val)),
         }
     }
 }
@@ -704,4 +718,199 @@ fn noop_waker() -> Waker {
         RawWakerVTable::new(|ptr| RawWaker::new(ptr, &VTABLE), |_| {}, |_| {}, |_| {});
     const RAW: RawWaker = RawWaker::new(0 as *const (), &VTABLE);
     unsafe { Waker::from_raw(RAW) }
+}
+
+#[tokio::test]
+async fn non_stacky_async_activations() -> Result<()> {
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+    let mut store1: Store<Option<Pin<Box<dyn Future<Output = Result<()>> + Send>>>> =
+        Store::new(&engine, None);
+    let mut linker1 = Linker::new(&engine);
+
+    let module1 = Module::new(
+        &engine,
+        r#"
+            (module $m1
+                (import "" "host_capture_stack" (func $host_capture_stack))
+                (import "" "start_async_instance" (func $start_async_instance))
+                (func $capture_stack (export "capture_stack")
+                    call $host_capture_stack
+                )
+                (func $run_sync (export "run_sync")
+                    call $start_async_instance
+                )
+            )
+        "#,
+    )?;
+
+    let module2 = Module::new(
+        &engine,
+        r#"
+            (module $m2
+                (import "" "yield" (func $yield))
+
+                (func $run_async (export "run_async")
+                    call $yield
+                )
+            )
+        "#,
+    )?;
+
+    let stacks = Arc::new(Mutex::new(vec![]));
+    fn capture_stack(stacks: &Arc<Mutex<Vec<WasmBacktrace>>>, store: impl AsContext) {
+        let mut stacks = stacks.lock().unwrap();
+        stacks.push(wasmtime::WasmBacktrace::force_capture(store));
+    }
+
+    linker1.func_wrap0_async("", "host_capture_stack", {
+        let stacks = stacks.clone();
+        move |caller| {
+            capture_stack(&stacks, &caller);
+            Box::new(async { Ok(()) })
+        }
+    })?;
+
+    linker1.func_wrap0_async("", "start_async_instance", {
+        let stacks = stacks.clone();
+        move |mut caller| {
+            let stacks = stacks.clone();
+            capture_stack(&stacks, &caller);
+
+            let module2 = module2.clone();
+            let mut store2 = Store::new(caller.engine(), ());
+            let mut linker2 = Linker::new(caller.engine());
+            linker2
+                .func_wrap0_async("", "yield", {
+                    let stacks = stacks.clone();
+                    move |caller| {
+                        let stacks = stacks.clone();
+                        Box::new(async move {
+                            capture_stack(&stacks, &caller);
+                            tokio::task::yield_now().await;
+                            capture_stack(&stacks, &caller);
+                            Ok(())
+                        })
+                    }
+                })
+                .unwrap();
+
+            Box::new(async move {
+                let future = PollOnce::new(Box::pin({
+                    let stacks = stacks.clone();
+                    async move {
+                        let instance2 = linker2.instantiate_async(&mut store2, &module2).await?;
+
+                        instance2
+                            .get_func(&mut store2, "run_async")
+                            .unwrap()
+                            .call_async(&mut store2, &[], &mut [])
+                            .await?;
+
+                        capture_stack(&stacks, &store2);
+                        Ok(())
+                    }
+                }) as _)
+                .await
+                .err()
+                .unwrap();
+                capture_stack(&stacks, &caller);
+                *caller.data_mut() = Some(future);
+                Ok(())
+            })
+        }
+    })?;
+
+    let instance1 = linker1.instantiate_async(&mut store1, &module1).await?;
+    instance1
+        .get_typed_func::<(), ()>(&mut store1, "run_sync")?
+        .call_async(&mut store1, ())
+        .await?;
+    let future = store1.data_mut().take().unwrap();
+    future.await?;
+
+    instance1
+        .get_typed_func::<(), ()>(&mut store1, "capture_stack")?
+        .call_async(&mut store1, ())
+        .await?;
+
+    let stacks = stacks.lock().unwrap();
+    eprintln!("stacks = {stacks:#?}");
+
+    assert_eq!(stacks.len(), 6);
+    for (actual, expected) in stacks.iter().zip(vec![
+        vec!["run_sync"],
+        vec!["run_async"],
+        vec!["run_sync"],
+        vec!["run_async"],
+        vec![],
+        vec!["capture_stack"],
+    ]) {
+        eprintln!("expected = {expected:?}");
+        eprintln!("actual = {actual:?}");
+        assert_eq!(actual.frames().len(), expected.len());
+        for (actual, expected) in actual.frames().iter().zip(expected) {
+            assert_eq!(actual.func_name(), Some(expected));
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn gc_preserves_externref_on_historical_async_stacks() -> Result<()> {
+    let mut config = Config::new();
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+
+    let module = Module::new(
+        &engine,
+        r#"
+            (module $m1
+                (import "" "gc" (func $gc))
+                (import "" "recurse" (func $recurse (param i32)))
+                (import "" "test" (func $test (param i32 externref)))
+                (func (export "run") (param i32 externref)
+                    local.get 0
+                    if
+                        local.get 0
+                        i32.const -1
+                        i32.add
+                        call $recurse
+                    else
+                        call $gc
+                    end
+
+                    local.get 0
+                    local.get 1
+                    call $test
+                )
+            )
+        "#,
+    )?;
+
+    type F = TypedFunc<(i32, Option<ExternRef>), ()>;
+
+    let mut store = Store::new(&engine, None);
+    let mut linker = Linker::<Option<F>>::new(&engine);
+    linker.func_wrap("", "gc", |mut cx: Caller<'_, _>| cx.gc())?;
+    linker.func_wrap("", "test", |val: i32, handle: Option<ExternRef>| {
+        assert_eq!(handle.unwrap().data().downcast_ref(), Some(&val));
+    })?;
+    linker.func_wrap1_async("", "recurse", |mut cx: Caller<'_, _>, val: i32| {
+        let func = cx.data().unwrap();
+        Box::new(async move {
+            func.call_async(&mut cx, (val, Some(ExternRef::new(val))))
+                .await
+        })
+    })?;
+    let instance = linker.instantiate_async(&mut store, &module).await?;
+    let func: F = instance.get_typed_func(&mut store, "run")?;
+    *store.data_mut() = Some(func);
+
+    func.call_async(&mut store, (5, Some(ExternRef::new(5))))
+        .await?;
+
+    Ok(())
 }

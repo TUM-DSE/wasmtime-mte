@@ -1,21 +1,24 @@
 use crate::code::CodeObject;
 use crate::signatures::SignatureCollection;
-use crate::{Engine, Module};
+use crate::{Engine, Module, ResourcesRequired};
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use serde_derive::{Deserialize, Serialize};
 use std::fs;
 use std::mem;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use wasmtime_environ::component::{
-    ComponentTypes, GlobalInitializer, LoweredIndex, RuntimeAlwaysTrapIndex,
-    RuntimeTranscoderIndex, StaticModuleIndex, Translator,
+    AllCallFunc, ComponentTypes, GlobalInitializer, InstantiateModule, StaticModuleIndex,
+    TrampolineIndex, Translator, VMComponentOffsets,
 };
-use wasmtime_environ::{EntityRef, FunctionLoc, ObjectKind, PrimaryMap, ScopeVec, SignatureIndex};
+use wasmtime_environ::{FunctionLoc, HostPtr, ObjectKind, PrimaryMap, ScopeVec};
 use wasmtime_jit::{CodeMemory, CompiledModuleInfo};
-use wasmtime_runtime::{MmapVec, VMFunctionBody, VMTrampoline};
+use wasmtime_runtime::component::ComponentRuntimeInfo;
+use wasmtime_runtime::{
+    MmapVec, VMArrayCallFunction, VMFuncRef, VMFunctionBody, VMNativeCallFunction,
+    VMWasmCallFunction,
+};
 
 /// A compiled WebAssembly Component.
 //
@@ -49,27 +52,25 @@ struct CompiledComponentInfo {
     /// Where lowered function trampolines are located within the `text`
     /// section of `code_memory`.
     ///
-    /// These trampolines are the function pointer within the
-    /// `VMCallerCheckedFuncRef` and will delegate indirectly to a host function
-    /// pointer when called.
-    lowerings: PrimaryMap<LoweredIndex, FunctionLoc>,
-
-    /// Where the "always trap" functions are located within the `text` section
-    /// of `code_memory`.
+    /// These are the
     ///
-    /// These functions are "degenerate functions" here solely to implement
-    /// functions that are `canon lift`'d then immediately `canon lower`'d. The
-    /// `u32` value here is the offset of the trap instruction from the start fo
-    /// the function.
-    always_trap: PrimaryMap<RuntimeAlwaysTrapIndex, FunctionLoc>,
+    /// 1. Wasm-call,
+    /// 2. array-call, and
+    /// 3. native-call
+    ///
+    /// function pointers that end up in a `VMFuncRef` for each
+    /// lowering.
+    trampolines: PrimaryMap<TrampolineIndex, AllCallFunc<FunctionLoc>>,
 
-    /// Where all the cranelift-generated transcode functions are located in the
-    /// compiled image of this component.
-    transcoders: PrimaryMap<RuntimeTranscoderIndex, FunctionLoc>,
+    /// The location of the wasm-to-native trampoline for the `resource.drop`
+    /// intrinsic.
+    resource_drop_wasm_to_native_trampoline: Option<FunctionLoc>,
+}
 
-    /// Extra trampolines other than those contained in static modules
-    /// necessary for this component.
-    trampolines: Vec<(SignatureIndex, FunctionLoc)>,
+pub(crate) struct AllCallFuncPointers {
+    pub wasm_call: NonNull<VMWasmCallFunction>,
+    pub array_call: VMArrayCallFunction,
+    pub native_call: NonNull<VMNativeCallFunction>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,8 +85,8 @@ impl Component {
     /// provided.
     //
     // FIXME: need to write more docs here.
-    #[cfg(compiler)]
-    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))] // see build.rs
+    #[cfg(any(feature = "cranelift", feature = "winch"))]
+    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))]
     pub fn new(engine: &Engine, bytes: impl AsRef<[u8]>) -> Result<Component> {
         let bytes = bytes.as_ref();
         #[cfg(feature = "wat")]
@@ -97,8 +98,8 @@ impl Component {
     /// by `file`.
     //
     // FIXME: need to write more docs here.
-    #[cfg(compiler)]
-    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))] // see build.rs
+    #[cfg(any(feature = "cranelift", feature = "winch"))]
+    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))]
     pub fn from_file(engine: &Engine, file: impl AsRef<Path>) -> Result<Component> {
         match Self::new(
             engine,
@@ -123,8 +124,8 @@ impl Component {
     /// provided.
     //
     // FIXME: need to write more docs here.
-    #[cfg(compiler)]
-    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))] // see build.rs
+    #[cfg(any(feature = "cranelift", feature = "winch"))]
+    #[cfg_attr(nightlydoc, doc(cfg(any(feature = "cranelift", feature = "winch"))))]
     pub fn from_binary(engine: &Engine, binary: &[u8]) -> Result<Component> {
         engine
             .check_compatible_with_native_host()
@@ -168,11 +169,13 @@ impl Component {
     /// any necessary extra functions required for operation with components.
     /// The output artifact here is the serialized object file contained within
     /// an owned mmap along with metadata about the compilation itself.
-    #[cfg(compiler)]
+    #[cfg(any(feature = "cranelift", feature = "winch"))]
     pub(crate) fn build_artifacts(
         engine: &Engine,
         binary: &[u8],
     ) -> Result<(MmapVec, ComponentArtifacts)> {
+        use crate::compiler::CompileInputs;
+
         let tunables = &engine.config().tunables;
         let compiler = engine.compiler();
 
@@ -180,231 +183,48 @@ impl Component {
         let mut validator =
             wasmparser::Validator::new_with_features(engine.config().features.clone());
         let mut types = Default::default();
-        let (component, mut modules) =
+        let (component, mut module_translations) =
             Translator::new(tunables, &mut validator, &mut types, &scope)
                 .translate(binary)
                 .context("failed to parse WebAssembly module")?;
         let types = types.finish();
 
-        // Compile all core wasm modules, in parallel, which will internally
-        // compile all their functions in parallel as well.
-        let module_funcs = engine.run_maybe_parallel(modules.values_mut().collect(), |module| {
-            Module::compile_functions(engine, module, types.module_types())
-        })?;
-
-        // Compile all host-to-wasm trampolines where the required set of
-        // trampolines is unioned from all core wasm modules plus what the
-        // component itself needs.
-        let module_trampolines = modules
-            .iter()
-            .flat_map(|(_, m)| m.exported_signatures.iter().copied())
-            .collect::<BTreeSet<_>>();
-        let trampolines = module_trampolines
-            .iter()
-            .copied()
-            .chain(
-                // All lowered functions will require a trampoline to be available in
-                // case they're used when entering wasm. For example a lowered function
-                // could be immediately lifted in which case we'll need a trampoline to
-                // call that lowered function.
-                //
-                // Most of the time trampolines can come from the core wasm modules
-                // since lifted functions come from core wasm. For these esoteric cases
-                // though we may have to compile trampolines specifically into the
-                // component object as well in case core wasm doesn't provide the
-                // necessary trampoline.
-                component.initializers.iter().filter_map(|init| match init {
-                    GlobalInitializer::LowerImport(i) => Some(i.canonical_abi),
-                    GlobalInitializer::AlwaysTrap(i) => Some(i.canonical_abi),
-                    _ => None,
-                }),
-            )
-            .collect::<BTreeSet<_>>();
-        let compiled_trampolines = engine
-            .run_maybe_parallel(trampolines.iter().cloned().collect(), |i| {
-                compiler.compile_host_to_wasm_trampoline(&types[i])
-            })?;
-
-        // Compile all transcoders required which adapt from a
-        // core-wasm-specific ABI (e.g. 32 or 64-bit) into the host transcoder
-        // ABI through an indirect libcall.
-        let transcoders = component
-            .initializers
-            .iter()
-            .filter_map(|init| match init {
-                GlobalInitializer::Transcoder(i) => Some(i),
-                _ => None,
-            })
-            .collect();
-        let transcoders = engine.run_maybe_parallel(transcoders, |info| {
-            compiler
-                .component_compiler()
-                .compile_transcoder(&component, info, &types)
-        })?;
-
-        // Compile all "always trap" functions which are small typed shims that
-        // exits to solely trap immediately for components.
-        let always_trap = component
-            .initializers
-            .iter()
-            .filter_map(|init| match init {
-                GlobalInitializer::AlwaysTrap(i) => Some(i),
-                _ => None,
-            })
-            .collect();
-        let always_trap = engine.run_maybe_parallel(always_trap, |info| {
-            compiler
-                .component_compiler()
-                .compile_always_trap(&types[info.canonical_abi])
-        })?;
-
-        // Compile all "lowerings" which are adapters that go from core wasm
-        // into the host which will process the canonical ABI.
-        let lowerings = component
-            .initializers
-            .iter()
-            .filter_map(|init| match init {
-                GlobalInitializer::LowerImport(i) => Some(i),
-                _ => None,
-            })
-            .collect();
-        let lowerings = engine.run_maybe_parallel(lowerings, |lowering| {
-            compiler
-                .component_compiler()
-                .compile_lowered_trampoline(&component, lowering, &types)
-        })?;
-
-        // Collect the results of all of the function-based compilations above
-        // into one large list of functions to get appended into the text
-        // section of the final module.
-        let mut funcs = Vec::new();
-        let mut module_func_start_index = Vec::new();
-        let mut func_index_to_module_index = Vec::new();
-        let mut func_infos = Vec::new();
-        for (i, list) in module_funcs.into_iter().enumerate() {
-            module_func_start_index.push(func_index_to_module_index.len());
-            let mut infos = Vec::new();
-            for (j, (info, func)) in list.into_iter().enumerate() {
-                func_index_to_module_index.push(i);
-                let name = format!("_wasm{i}_function{j}");
-                funcs.push((name, func));
-                infos.push(info);
-            }
-            func_infos.push(infos);
-        }
-        for (sig, func) in trampolines.iter().zip(compiled_trampolines) {
-            let name = format!("_wasm_trampoline{}", sig.as_u32());
-            funcs.push((name, func));
-        }
-        let ntranscoders = transcoders.len();
-        for (i, func) in transcoders.into_iter().enumerate() {
-            let name = format!("_wasm_component_transcoder{i}");
-            funcs.push((name, func));
-        }
-        let nalways_trap = always_trap.len();
-        for (i, func) in always_trap.into_iter().enumerate() {
-            let name = format!("_wasm_component_always_trap{i}");
-            funcs.push((name, func));
-        }
-        let nlowerings = lowerings.len();
-        for (i, func) in lowerings.into_iter().enumerate() {
-            let name = format!("_wasm_component_lowering{i}");
-            funcs.push((name, func));
-        }
+        let compile_inputs = CompileInputs::for_component(
+            &types,
+            &component,
+            module_translations.iter_mut().map(|(i, translation)| {
+                let functions = mem::take(&mut translation.function_body_inputs);
+                (i, &*translation, functions)
+            }),
+        );
+        let unlinked_compile_outputs = compile_inputs.compile(&engine)?;
+        let (compiled_funcs, function_indices) = unlinked_compile_outputs.pre_link();
 
         let mut object = compiler.object(ObjectKind::Component)?;
-        let locs = compiler.append_code(&mut object, &funcs, tunables, &|i, idx| {
-            // Map from the `i`th function which is requesting the relocation to
-            // the index in `modules` that the function belongs to. Using that
-            // metadata we can resolve `idx: FuncIndex` to a `DefinedFuncIndex`
-            // to the index of that module's function that's being called.
-            //
-            // Note that this will panic if `i` is a function beyond the initial
-            // set of core wasm module functions. That's intentional, however,
-            // since trampolines and otherwise should not have relocations to
-            // resolve.
-            let module_index = func_index_to_module_index[i];
-            let defined_index = modules[StaticModuleIndex::new(module_index)]
-                .module
-                .defined_func_index(idx)
-                .unwrap();
-            // Additionally use the module index to determine where that
-            // module's list of functions started at to factor in as an offset
-            // as well.
-            let offset = module_func_start_index[module_index];
-            defined_index.index() + offset
-        })?;
         engine.append_compiler_info(&mut object);
         engine.append_bti(&mut object);
 
-        // Disassemble the result of the appending to the text section, where
-        // each function is in the module, into respective maps.
-        let mut locs = locs.into_iter().map(|(_sym, loc)| loc);
-        let funcs = func_infos
-            .into_iter()
-            .map(|infos| {
-                infos
-                    .into_iter()
-                    .zip(&mut locs)
-                    .collect::<PrimaryMap<_, _>>()
-            })
-            .collect::<Vec<_>>();
-        let signature_to_trampoline = trampolines
-            .iter()
-            .cloned()
-            .zip(&mut locs)
-            .collect::<HashMap<_, _>>();
-        let transcoders = locs
-            .by_ref()
-            .take(ntranscoders)
-            .collect::<PrimaryMap<RuntimeTranscoderIndex, _>>();
-        let always_trap = locs
-            .by_ref()
-            .take(nalways_trap)
-            .collect::<PrimaryMap<RuntimeAlwaysTrapIndex, _>>();
-        let lowerings = locs
-            .by_ref()
-            .take(nlowerings)
-            .collect::<PrimaryMap<LoweredIndex, _>>();
-        assert!(locs.next().is_none());
-
-        // Convert all `ModuleTranslation` instances into `CompiledModuleInfo`
-        // through an `ObjectBuilder` here. This is then used to create the
-        // final `mmap` which is the final compilation artifact.
-        let mut builder = wasmtime_jit::ObjectBuilder::new(object, tunables);
-        let mut static_modules = PrimaryMap::new();
-        for ((_, module), funcs) in modules.into_iter().zip(funcs) {
-            // Build the list of trampolines for this module from its set of
-            // exported signatures, which is the list of expected trampolines,
-            // from the set of trampolines that were compiled for everything
-            // within this component.
-            let trampolines = module
-                .exported_signatures
-                .iter()
-                .map(|sig| (*sig, signature_to_trampoline[sig]))
-                .collect();
-            let info = builder.append(module, funcs, trampolines)?;
-            static_modules.push(info);
-        }
+        let (mut object, compilation_artifacts) = function_indices.link_and_append_code(
+            object,
+            engine,
+            compiled_funcs,
+            module_translations,
+        )?;
 
         let info = CompiledComponentInfo {
-            always_trap,
-            component,
-            lowerings,
-            trampolines: trampolines
-                .difference(&module_trampolines)
-                .map(|i| (*i, signature_to_trampoline[i]))
-                .collect(),
-            transcoders,
+            component: component.component,
+            trampolines: compilation_artifacts.trampolines,
+            resource_drop_wasm_to_native_trampoline: compilation_artifacts
+                .resource_drop_wasm_to_native_trampoline,
         };
         let artifacts = ComponentArtifacts {
             info,
             types,
-            static_modules,
+            static_modules: compilation_artifacts.modules,
         };
-        builder.serialize_info(&artifacts);
+        object.serialize_info(&artifacts);
 
-        let mmap = builder.finish()?;
+        let mmap = object.finish()?;
         Ok((mmap, artifacts))
     }
 
@@ -426,23 +246,19 @@ impl Component {
             None => bincode::deserialize(code_memory.wasmtime_info())?,
         };
 
+        // Validate that the component can be used with the current instance
+        // allocator.
+        engine.allocator().validate_component(
+            &info.component,
+            &VMComponentOffsets::new(HostPtr, &info.component),
+            &|module_index| &static_modules[module_index].module,
+        )?;
+
         // Create a signature registration with the `Engine` for all trampolines
         // and core wasm types found within this component, both for the
         // component and for all included core wasm modules.
-        let signatures = SignatureCollection::new_for_module(
-            engine.signatures(),
-            types.module_types(),
-            static_modules
-                .iter()
-                .flat_map(|(_, m)| m.trampolines.iter().copied())
-                .chain(info.trampolines.iter().copied())
-                .map(|(sig, loc)| {
-                    let trampoline = code_memory.text()[loc.start as usize..].as_ptr();
-                    (sig, unsafe {
-                        mem::transmute::<*const u8, VMTrampoline>(trampoline)
-                    })
-                }),
-        );
+        let signatures =
+            SignatureCollection::new_for_module(engine.signatures(), types.module_types());
 
         // Assemble the `CodeObject` artifact which is shared by all core wasm
         // modules as well as the final component.
@@ -474,13 +290,9 @@ impl Component {
         &self.inner.static_modules[idx]
     }
 
+    #[inline]
     pub(crate) fn types(&self) -> &Arc<ComponentTypes> {
-        match self.inner.code.types() {
-            crate::code::Types::Component(types) => types,
-            // The only creator of a `Component` is itself which uses the other
-            // variant, so this shouldn't be possible.
-            crate::code::Types::Module(_) => unreachable!(),
-        }
+        self.inner.component_types()
     }
 
     pub(crate) fn signatures(&self) -> &SignatureCollection {
@@ -491,19 +303,21 @@ impl Component {
         self.inner.code.code_memory().text()
     }
 
-    pub(crate) fn lowering_ptr(&self, index: LoweredIndex) -> NonNull<VMFunctionBody> {
-        let info = &self.inner.info.lowerings[index];
-        self.func(info)
-    }
-
-    pub(crate) fn always_trap_ptr(&self, index: RuntimeAlwaysTrapIndex) -> NonNull<VMFunctionBody> {
-        let loc = &self.inner.info.always_trap[index];
-        self.func(loc)
-    }
-
-    pub(crate) fn transcoder_ptr(&self, index: RuntimeTranscoderIndex) -> NonNull<VMFunctionBody> {
-        let info = &self.inner.info.transcoders[index];
-        self.func(info)
+    pub(crate) fn trampoline_ptrs(&self, index: TrampolineIndex) -> AllCallFuncPointers {
+        let AllCallFunc {
+            wasm_call,
+            array_call,
+            native_call,
+        } = &self.inner.info.trampolines[index];
+        AllCallFuncPointers {
+            wasm_call: self.func(wasm_call).cast(),
+            array_call: unsafe {
+                mem::transmute::<NonNull<VMFunctionBody>, VMArrayCallFunction>(
+                    self.func(array_call),
+                )
+            },
+            native_call: self.func(native_call).cast(),
+        }
     }
 
     fn func(&self, loc: &FunctionLoc) -> NonNull<VMFunctionBody> {
@@ -526,5 +340,166 @@ impl Component {
     /// [`Module`]: crate::Module
     pub fn serialize(&self) -> Result<Vec<u8>> {
         Ok(self.code_object().code_memory().mmap().to_vec())
+    }
+
+    pub(crate) fn runtime_info(&self) -> Arc<dyn ComponentRuntimeInfo> {
+        self.inner.clone()
+    }
+
+    /// Creates a new `VMFuncRef` with all fields filled out for the destructor
+    /// specified.
+    ///
+    /// The `dtor`'s own `VMFuncRef` won't have `wasm_call` filled out but this
+    /// component may have `resource_drop_wasm_to_native_trampoline` filled out
+    /// if necessary in which case it's filled in here.
+    pub(crate) fn resource_drop_func_ref(&self, dtor: &crate::func::HostFunc) -> VMFuncRef {
+        // Host functions never have their `wasm_call` filled in at this time.
+        assert!(dtor.func_ref().wasm_call.is_none());
+
+        // Note that if `resource_drop_wasm_to_native_trampoline` is not present
+        // then this can't be called by the component, so it's ok to leave it
+        // blank.
+        let wasm_call = self
+            .inner
+            .info
+            .resource_drop_wasm_to_native_trampoline
+            .as_ref()
+            .map(|i| self.func(i).cast());
+        VMFuncRef {
+            wasm_call,
+            ..*dtor.func_ref()
+        }
+    }
+
+    /// Returns a summary of the resources required to instantiate this
+    /// [`Component`][crate::component::Component].
+    ///
+    /// Note that when a component imports and instantiates another component or
+    /// core module, we cannot determine ahead of time how many resources
+    /// instantiating this component will require, and therefore this method
+    /// will return `None` in these scenarios.
+    ///
+    /// Potential uses of the returned information:
+    ///
+    /// * Determining whether your pooling allocator configuration supports
+    ///   instantiating this component.
+    ///
+    /// * Deciding how many of which `Component` you want to instantiate within
+    ///   a fixed amount of resources, e.g. determining whether to create 5
+    ///   instances of component X or 10 instances of component Y.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn main() -> wasmtime::Result<()> {
+    /// use wasmtime::{Config, Engine, component::Component};
+    ///
+    /// let mut config = Config::new();
+    /// config.wasm_multi_memory(true);
+    /// config.wasm_component_model(true);
+    /// let engine = Engine::new(&config)?;
+    ///
+    /// let component = Component::new(&engine, &r#"
+    ///     (component
+    ///         ;; Define a core module that uses two memories.
+    ///         (core module $m
+    ///             (memory 1)
+    ///             (memory 6)
+    ///         )
+    ///
+    ///         ;; Instantiate that core module three times.
+    ///         (core instance $i1 (instantiate (module $m)))
+    ///         (core instance $i2 (instantiate (module $m)))
+    ///         (core instance $i3 (instantiate (module $m)))
+    ///     )
+    /// "#)?;
+    ///
+    /// let resources = component.resources_required()
+    ///     .expect("this component does not import any core modules or instances");
+    ///
+    /// // Instantiating the component will require allocating two memories per
+    /// // core instance, and there are three instances, so six total memories.
+    /// assert_eq!(resources.num_memories, 6);
+    /// assert_eq!(resources.max_initial_memory_size, Some(6));
+    ///
+    /// // The component doesn't need any tables.
+    /// assert_eq!(resources.num_tables, 0);
+    /// assert_eq!(resources.max_initial_table_size, None);
+    /// # Ok(()) }
+    /// ```
+    pub fn resources_required(&self) -> Option<ResourcesRequired> {
+        let mut resources = ResourcesRequired {
+            num_memories: 0,
+            max_initial_memory_size: None,
+            num_tables: 0,
+            max_initial_table_size: None,
+        };
+        for init in &self.env_component().initializers {
+            match init {
+                GlobalInitializer::InstantiateModule(inst) => match inst {
+                    InstantiateModule::Static(index, _) => {
+                        let module = self.static_module(*index);
+                        resources.add(&module.resources_required());
+                    }
+                    InstantiateModule::Import(_, _) => {
+                        // We can't statically determine the resources required
+                        // to instantiate this component.
+                        return None;
+                    }
+                },
+                GlobalInitializer::LowerImport { .. }
+                | GlobalInitializer::ExtractMemory(_)
+                | GlobalInitializer::ExtractRealloc(_)
+                | GlobalInitializer::ExtractPostReturn(_)
+                | GlobalInitializer::Resource(_) => {}
+            }
+        }
+        Some(resources)
+    }
+}
+
+impl ComponentRuntimeInfo for ComponentInner {
+    fn component(&self) -> &wasmtime_environ::component::Component {
+        &self.info.component
+    }
+
+    fn component_types(&self) -> &Arc<ComponentTypes> {
+        match self.code.types() {
+            crate::code::Types::Component(types) => types,
+            // The only creator of a `Component` is itself which uses the other
+            // variant, so this shouldn't be possible.
+            crate::code::Types::Module(_) => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::component::Component;
+    use crate::{Config, Engine};
+    use wasmtime_environ::MemoryInitialization;
+
+    #[test]
+    fn cow_on_by_default() {
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config).unwrap();
+        let component = Component::new(
+            &engine,
+            r#"
+                (component
+                    (core module
+                        (memory 1)
+                        (data (i32.const 100) "abcd")
+                    )
+                )
+            "#,
+        )
+        .unwrap();
+
+        for (_, module) in component.inner.static_modules.iter() {
+            let init = &module.env_module().memory_initialization;
+            assert!(matches!(init, MemoryInitialization::Static { .. }));
+        }
     }
 }

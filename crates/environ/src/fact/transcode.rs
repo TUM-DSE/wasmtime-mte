@@ -1,6 +1,6 @@
 use crate::fact::core_types::CoreTypes;
 use crate::MemoryIndex;
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use wasm_encoder::{EntityType, ValType};
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
@@ -17,7 +17,7 @@ pub struct Transcoder {
 /// Note that each transcoding operation may have a unique signature depending
 /// on the precise operation.
 #[allow(missing_docs)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum Transcode {
     Copy(FixedEncoding),
     Latin1ToUtf16,
@@ -29,6 +29,28 @@ pub enum Transcode {
     Utf8ToCompactUtf16,
     Utf8ToLatin1,
     Utf8ToUtf16,
+}
+
+impl Transcode {
+    /// Get this transcoding's symbol fragment.
+    pub fn symbol_fragment(&self) -> &'static str {
+        match self {
+            Transcode::Copy(x) => match x {
+                FixedEncoding::Utf8 => "copy_utf8",
+                FixedEncoding::Utf16 => "copy_utf16",
+                FixedEncoding::Latin1 => "copy_latin1",
+            },
+            Transcode::Latin1ToUtf16 => "latin1_to_utf16",
+            Transcode::Latin1ToUtf8 => "latin1_to_utf8",
+            Transcode::Utf16ToCompactProbablyUtf16 => "utf16_to_compact_probably_utf16",
+            Transcode::Utf16ToCompactUtf16 => "utf16_to_compact_utf16",
+            Transcode::Utf16ToLatin1 => "utf16_to_latin1",
+            Transcode::Utf16ToUtf8 => "utf16_to_utf8",
+            Transcode::Utf8ToCompactUtf16 => "utf8_to_compact_utf16",
+            Transcode::Utf8ToLatin1 => "utf8_to_latin1",
+            Transcode::Utf8ToUtf16 => "utf8_to_utf16",
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]

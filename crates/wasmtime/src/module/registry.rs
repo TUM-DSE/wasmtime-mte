@@ -8,10 +8,11 @@ use once_cell::sync::Lazy;
 use std::collections::btree_map::Entry;
 use std::{
     collections::BTreeMap,
+    ptr::NonNull,
     sync::{Arc, RwLock},
 };
 use wasmtime_jit::CodeMemory;
-use wasmtime_runtime::{ModuleInfo, VMCallerCheckedFuncRef, VMTrampoline};
+use wasmtime_runtime::{ModuleInfo, VMSharedSignatureIndex, VMWasmCallFunction};
 
 /// Used for registering modules with a store.
 ///
@@ -43,10 +44,33 @@ struct LoadedCode {
     modules: BTreeMap<usize, Module>,
 }
 
+/// An identifier of a module that has previously been inserted into a
+/// `ModuleRegistry`.
+#[derive(Clone, Copy)]
+pub enum RegisteredModuleId {
+    /// Index into `ModuleRegistry::modules_without_code`.
+    WithoutCode(usize),
+    /// Start address of the module's code so that we can get it again via
+    /// `ModuleRegistry::lookup_module`.
+    LoadedCode(usize),
+}
+
 impl ModuleRegistry {
+    /// Get a previously-registered module by id.
+    pub fn lookup_module_by_id(&self, id: RegisteredModuleId) -> Option<&Module> {
+        match id {
+            RegisteredModuleId::WithoutCode(idx) => self.modules_without_code.get(idx),
+            RegisteredModuleId::LoadedCode(pc) => {
+                let (module, _) = self.module_and_offset(pc)?;
+                Some(module)
+            }
+        }
+    }
+
     /// Fetches information about a registered module given a program counter value.
-    pub fn lookup_module(&self, pc: usize) -> Option<&dyn ModuleInfo> {
-        self.module(pc).map(|(m, _)| m.module_info())
+    pub fn lookup_module_info(&self, pc: usize) -> Option<&dyn ModuleInfo> {
+        let (module, _) = self.module_and_offset(pc)?;
+        Some(module.module_info())
     }
 
     fn code(&self, pc: usize) -> Option<(&LoadedCode, usize)> {
@@ -57,23 +81,35 @@ impl ModuleRegistry {
         Some((code, pc - *start))
     }
 
-    fn module(&self, pc: usize) -> Option<(&Module, usize)> {
+    fn module_and_offset(&self, pc: usize) -> Option<(&Module, usize)> {
         let (code, offset) = self.code(pc)?;
         Some((code.module(pc)?, offset))
     }
 
+    /// Gets an iterator over all modules in the registry.
+    pub fn all_modules(&self) -> impl Iterator<Item = &'_ Module> + '_ {
+        self.loaded_code
+            .values()
+            .flat_map(|(_, code)| code.modules.values())
+            .chain(self.modules_without_code.iter())
+    }
+
     /// Registers a new module with the registry.
-    pub fn register_module(&mut self, module: &Module) {
-        self.register(module.code_object(), Some(module))
+    pub fn register_module(&mut self, module: &Module) -> RegisteredModuleId {
+        self.register(module.code_object(), Some(module)).unwrap()
     }
 
     #[cfg(feature = "component-model")]
     pub fn register_component(&mut self, component: &Component) {
-        self.register(component.code_object(), None)
+        self.register(component.code_object(), None);
     }
 
     /// Registers a new module with the registry.
-    fn register(&mut self, code: &Arc<CodeObject>, module: Option<&Module>) {
+    fn register(
+        &mut self,
+        code: &Arc<CodeObject>,
+        module: Option<&Module>,
+    ) -> Option<RegisteredModuleId> {
         let text = code.code_memory().text();
 
         // If there's not actually any functions in this module then we may
@@ -83,14 +119,18 @@ impl ModuleRegistry {
         // module in the future. For that reason we continue to register empty
         // modules and retain them.
         if text.is_empty() {
-            self.modules_without_code.extend(module.cloned());
-            return;
+            return module.map(|module| {
+                let id = RegisteredModuleId::WithoutCode(self.modules_without_code.len());
+                self.modules_without_code.push(module.clone());
+                id
+            });
         }
 
         // The module code range is exclusive for end, so make it inclusive as
         // it may be a valid PC value
         let start_addr = text.as_ptr() as usize;
         let end_addr = start_addr + text.len() - 1;
+        let id = module.map(|_| RegisteredModuleId::LoadedCode(start_addr));
 
         // If this module is already present in the registry then that means
         // it's either an overlapping image, for example for two modules
@@ -101,7 +141,7 @@ impl ModuleRegistry {
             if let Some(module) = module {
                 prev.push_module(module);
             }
-            return;
+            return id;
         }
 
         // Assert that this module's code doesn't collide with any other
@@ -122,12 +162,7 @@ impl ModuleRegistry {
         }
         let prev = self.loaded_code.insert(end_addr, (start_addr, item));
         assert!(prev.is_none());
-    }
-
-    /// Looks up a trampoline from an anyfunc.
-    pub fn lookup_trampoline(&self, anyfunc: &VMCallerCheckedFuncRef) -> Option<VMTrampoline> {
-        let (code, _offset) = self.code(anyfunc.func_ptr.as_ptr() as usize)?;
-        code.code.signatures().trampoline(anyfunc.type_index)
+        id
     }
 
     /// Fetches trap information about a program counter in a backtrace.
@@ -145,9 +180,30 @@ impl ModuleRegistry {
     /// boolean indicates whether the engine used to compile this module is
     /// using environment variables to control debuginfo parsing.
     pub(crate) fn lookup_frame_info(&self, pc: usize) -> Option<(FrameInfo, &Module)> {
-        let (module, offset) = self.module(pc)?;
-        let info = FrameInfo::new(module, offset)?;
+        let (module, offset) = self.module_and_offset(pc)?;
+        let info = FrameInfo::new(module.clone(), offset)?;
         Some((info, module))
+    }
+
+    pub fn wasm_to_native_trampoline(
+        &self,
+        sig: VMSharedSignatureIndex,
+    ) -> Option<NonNull<VMWasmCallFunction>> {
+        // TODO: We are doing a linear search over each module. This is fine for
+        // now because we typically have very few modules per store (almost
+        // always one, in fact). If this linear search ever becomes a
+        // bottleneck, we could avoid it by incrementally and lazily building a
+        // `VMSharedSignatureIndex` to `SignatureIndex` map.
+        //
+        // See also the comment in `ModuleInner::wasm_to_native_trampoline`.
+        for (_, code) in self.loaded_code.values() {
+            for module in code.modules.values() {
+                if let Some(trampoline) = module.runtime_info().wasm_to_native_trampoline(sig) {
+                    return Some(trampoline);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -258,6 +314,7 @@ pub fn unregister_code(code: &Arc<CodeMemory>) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_frame_info() -> Result<(), anyhow::Error> {
     use crate::*;
     let mut store = Store::<()>::default();

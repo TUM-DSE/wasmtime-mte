@@ -12,13 +12,13 @@ use crate::ir::{
     Block, DataFlowGraph, Function, Inst, InstructionData, Type, Value, ValueDef, ValueListPool,
 };
 use crate::loop_analysis::LoopAnalysis;
-use crate::opts::generated_code::ContextIter;
 use crate::opts::IsleContext;
 use crate::scoped_hash_map::{Entry as ScopedEntry, ScopedHashMap};
 use crate::trace;
 use crate::unionfind::UnionFind;
 use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::SecondaryMap;
+use smallvec::SmallVec;
 use std::hash::Hasher;
 
 mod cost;
@@ -69,6 +69,9 @@ pub struct EgraphPass<'a> {
     eclasses: UnionFind<Value>,
 }
 
+// The maximum number of rewrites we will take from a single call into ISLE.
+const MATCHES_LIMIT: usize = 5;
+
 /// Context passed through node insertion and optimization.
 pub(crate) struct OptimizeCtx<'opt, 'analysis>
 where
@@ -87,6 +90,7 @@ where
     // Held locally during optimization of one node (recursively):
     pub(crate) rewrite_depth: usize,
     pub(crate) subsume_values: FxHashSet<Value>,
+    optimized_values: SmallVec<[Value; MATCHES_LIMIT]>,
 }
 
 /// For passing to `insert_pure_enode`. Sometimes the enode already
@@ -162,6 +166,7 @@ where
                 let result = self.func.dfg.first_result(inst);
                 self.value_to_opt_value[result] = orig_result;
                 self.eclasses.union(result, orig_result);
+                self.func.dfg.merge_facts(result, orig_result);
                 self.stats.union += 1;
                 result
             } else {
@@ -212,6 +217,7 @@ where
         // A pure node always has exactly one result.
         let orig_value = self.func.dfg.first_result(inst);
 
+        let mut optimized_values = std::mem::take(&mut self.optimized_values);
         let mut isle_ctx = IsleContext { ctx: self };
 
         // Limit rewrite depth. When we apply optimization rules, they
@@ -229,19 +235,35 @@ where
             return orig_value;
         }
         isle_ctx.ctx.rewrite_depth += 1;
+        trace!(
+            "Incrementing rewrite depth; now {}",
+            isle_ctx.ctx.rewrite_depth
+        );
 
         // Invoke the ISLE toplevel constructor, getting all new
         // values produced as equivalents to this value.
         trace!("Calling into ISLE with original value {}", orig_value);
         isle_ctx.ctx.stats.rewrite_rule_invoked += 1;
-        let mut optimized_values =
-            crate::opts::generated_code::constructor_simplify(&mut isle_ctx, orig_value);
+        debug_assert!(optimized_values.is_empty());
+        crate::opts::generated_code::constructor_simplify(
+            &mut isle_ctx,
+            orig_value,
+            &mut optimized_values,
+        );
+        trace!(
+            "  -> returned from ISLE, generated {} optimized values",
+            optimized_values.len()
+        );
+        if optimized_values.len() > MATCHES_LIMIT {
+            trace!("Reached maximum matches limit; too many optimized values, ignoring rest.");
+            optimized_values.truncate(MATCHES_LIMIT);
+        }
 
         // Create a union of all new values with the original (or
         // maybe just one new value marked as "subsuming" the
         // original, if present.)
         let mut union_value = orig_value;
-        while let Some(optimized_value) = optimized_values.next(&mut isle_ctx) {
+        for optimized_value in optimized_values.drain(..) {
             trace!(
                 "Returned from ISLE for {}, got {:?}",
                 orig_value,
@@ -256,6 +278,11 @@ where
                 // still works, but take *only* the subsuming
                 // value, and break now.
                 isle_ctx.ctx.eclasses.union(optimized_value, union_value);
+                isle_ctx
+                    .ctx
+                    .func
+                    .dfg
+                    .merge_facts(optimized_value, union_value);
                 union_value = optimized_value;
                 break;
             }
@@ -273,10 +300,18 @@ where
                 .ctx
                 .eclasses
                 .union(old_union_value, optimized_value);
+            isle_ctx
+                .ctx
+                .func
+                .dfg
+                .merge_facts(old_union_value, optimized_value);
             isle_ctx.ctx.eclasses.union(old_union_value, union_value);
         }
 
         isle_ctx.ctx.rewrite_depth -= 1;
+
+        debug_assert!(isle_ctx.ctx.optimized_values.is_empty());
+        isle_ctx.ctx.optimized_values = optimized_values;
 
         union_value
     }
@@ -342,6 +377,7 @@ where
                 new_result
             );
             self.value_to_opt_value[result] = new_result;
+            self.func.dfg.merge_facts(result, new_result);
             true
         }
         // Otherwise, generic side-effecting op -- always keep it, and
@@ -396,7 +432,7 @@ impl<'a> EgraphPass<'a> {
                 }
             }
         }
-        trace!("stats: {:?}", self.stats);
+        trace!("stats: {:#?}", self.stats);
         self.elaborate();
     }
 
@@ -522,6 +558,7 @@ impl<'a> EgraphPass<'a> {
                             stats: &mut self.stats,
                             alias_analysis: self.alias_analysis,
                             alias_analysis_state: &mut alias_analysis_state,
+                            optimized_values: Default::default(),
                         };
 
                         if is_pure_for_egraph(ctx.func, inst) {
@@ -658,7 +695,7 @@ pub(crate) struct Stats {
     pub(crate) elaborate_visit_node: u64,
     pub(crate) elaborate_memoize_hit: u64,
     pub(crate) elaborate_memoize_miss: u64,
-    pub(crate) elaborate_memoize_miss_remat: u64,
+    pub(crate) elaborate_remat: u64,
     pub(crate) elaborate_licm_hoist: u64,
     pub(crate) elaborate_func: u64,
     pub(crate) elaborate_func_pre_insts: u64,

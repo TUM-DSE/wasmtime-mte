@@ -15,9 +15,11 @@ mod instance;
 mod macros;
 mod nested;
 mod post_return;
+mod resources;
 mod strings;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn components_importing_modules() -> Result<()> {
     let engine = engine();
 
@@ -178,6 +180,12 @@ fn make_echo_component_with_params(type_definition: &str, params: &[Param]) -> S
         )
     };
 
+    let type_section = if type_definition.contains("(type ") {
+        type_definition.to_string()
+    } else {
+        format!("(type $Foo' {type_definition})")
+    };
+
     format!(
         r#"
         (component
@@ -190,7 +198,8 @@ fn make_echo_component_with_params(type_definition: &str, params: &[Param]) -> S
 
             (core instance $i (instantiate $m))
 
-            (type $Foo {type_definition})
+            {type_section}
+            (export $Foo "foo" (type $Foo'))
 
             (func (export "echo") (param "a" $Foo) (result "b" $Foo)
                 (canon lift

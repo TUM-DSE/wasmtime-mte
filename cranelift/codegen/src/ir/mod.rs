@@ -18,6 +18,8 @@ pub(crate) mod known_symbol;
 pub mod layout;
 pub(crate) mod libcall;
 mod memflags;
+mod memtype;
+pub mod pcc;
 mod progpoint;
 mod sourceloc;
 pub mod stackslot;
@@ -26,7 +28,7 @@ mod trapcode;
 pub mod types;
 
 #[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 pub use crate::ir::atomic_rmw_op::AtomicRmwOp;
 pub use crate::ir::builder::{
@@ -37,13 +39,13 @@ pub use crate::ir::dfg::{BlockData, DataFlowGraph, ValueDef};
 pub use crate::ir::dynamic_type::{dynamic_to_fixed, DynamicTypeData, DynamicTypes};
 pub use crate::ir::entities::{
     Block, Constant, DynamicStackSlot, DynamicType, FuncRef, GlobalValue, Immediate, Inst,
-    JumpTable, SigRef, StackSlot, Table, UserExternalNameRef, Value,
+    JumpTable, MemoryType, SigRef, StackSlot, Table, UserExternalNameRef, Value,
 };
 pub use crate::ir::extfunc::{
     AbiParam, ArgumentExtension, ArgumentPurpose, ExtFuncData, Signature,
 };
 pub use crate::ir::extname::{ExternalName, UserExternalName, UserFuncName};
-pub use crate::ir::function::{DisplayFunctionAnnotations, Function};
+pub use crate::ir::function::Function;
 pub use crate::ir::globalvalue::GlobalValueData;
 pub use crate::ir::instructions::{
     BlockCall, InstructionData, Opcode, ValueList, ValueListPool, VariableArgs,
@@ -53,6 +55,8 @@ pub use crate::ir::known_symbol::KnownSymbol;
 pub use crate::ir::layout::Layout;
 pub use crate::ir::libcall::{get_probestack_funcref, LibCall};
 pub use crate::ir::memflags::{Endianness, MemFlags};
+pub use crate::ir::memtype::{MemoryTypeData, MemoryTypeField};
+pub use crate::ir::pcc::{BaseExpr, Expr, Fact, FactContext, PccError, PccResult};
 pub use crate::ir::progpoint::ProgramPoint;
 pub use crate::ir::sourceloc::RelSourceLoc;
 pub use crate::ir::sourceloc::SourceLoc;
@@ -62,7 +66,6 @@ pub use crate::ir::stackslot::{
 pub use crate::ir::table::TableData;
 pub use crate::ir::trapcode::TrapCode;
 pub use crate::ir::types::Type;
-pub use crate::value_label::LabelValueLoc;
 
 use crate::entity::{entity_impl, PrimaryMap, SecondaryMap};
 
@@ -89,7 +92,7 @@ pub struct ValueLabelStart {
     pub label: ValueLabel,
 }
 
-/// Value label assignements: label starts or value aliases.
+/// Value label assignments: label starts or value aliases.
 #[derive(Debug, Clone, PartialEq, Hash)]
 #[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
 pub enum ValueLabelAssignments {

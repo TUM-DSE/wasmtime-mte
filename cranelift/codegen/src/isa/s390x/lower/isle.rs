@@ -16,10 +16,10 @@ use crate::machinst::isle::*;
 use crate::machinst::{MachLabel, Reg};
 use crate::{
     ir::{
-        condcodes::*, immediates::*, types::*, ArgumentPurpose, AtomicRmwOp, BlockCall, Endianness,
-        Inst, InstructionData, KnownSymbol, LibCall, MemFlags, Opcode, TrapCode, Value, ValueList,
+        condcodes::*, immediates::*, types::*, ArgumentExtension, ArgumentPurpose, AtomicRmwOp,
+        BlockCall, Endianness, Inst, InstructionData, KnownSymbol, LibCall, MemFlags, Opcode,
+        TrapCode, Value, ValueList,
     },
-    isa::unwind::UnwindInst,
     isa::CallConv,
     machinst::abi::ABIMachineSpec,
     machinst::{
@@ -80,6 +80,27 @@ pub(crate) fn lower_branch(
 
 impl generated_code::Context for IsleContext<'_, '_, MInst, S390xBackend> {
     isle_lower_prelude_methods!();
+
+    fn gen_return_call(
+        &mut self,
+        callee_sig: SigRef,
+        callee: ExternalName,
+        distance: RelocDistance,
+        args: ValueSlice,
+    ) -> InstOutput {
+        let _ = (callee_sig, callee, distance, args);
+        todo!()
+    }
+
+    fn gen_return_call_indirect(
+        &mut self,
+        callee_sig: SigRef,
+        callee: Value,
+        args: ValueSlice,
+    ) -> InstOutput {
+        let _ = (callee_sig, callee, args);
+        todo!()
+    }
 
     #[inline]
     fn args_builder_new(&mut self) -> CallArgListBuilder {
@@ -717,16 +738,6 @@ impl generated_code::Context for IsleContext<'_, '_, MInst, S390xBackend> {
     }
 
     #[inline]
-    fn vec_length_minus1(&mut self, vec: &VecMachLabel) -> u32 {
-        u32::try_from(vec.len()).unwrap() - 1
-    }
-
-    #[inline]
-    fn vec_element(&mut self, vec: &VecMachLabel, index: u8) -> MachLabel {
-        vec[usize::from(index)]
-    }
-
-    #[inline]
     fn zero_offset(&mut self) -> Offset32 {
         Offset32::new(0)
     }
@@ -968,7 +979,7 @@ impl generated_code::Context for IsleContext<'_, '_, MInst, S390xBackend> {
 /// Lane order to be used for a given calling convention.
 #[inline]
 fn lane_order_for_call_conv(call_conv: CallConv) -> LaneOrder {
-    if call_conv.extends_wasmtime() {
+    if call_conv == CallConv::WasmtimeSystemV {
         LaneOrder::LittleEndian
     } else {
         LaneOrder::BigEndian

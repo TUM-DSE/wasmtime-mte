@@ -5,7 +5,6 @@
 ;;! settings = [
 ;;!   "enable_heap_access_spectre_mitigation=true",
 ;;!   "opt_level=speed_and_size",
-;;!   "use_egraphs=false"
 ;;! ]
 ;;!
 ;;! [globals.vmctx]
@@ -44,16 +43,13 @@
 ;;     gv1 = load.i64 notrap aligned readonly gv0
 ;;
 ;;                                 block0(v0: i32, v1: i64):
-;; @0057                               v4 = uextend.i64 v0
-;;                                     v8 -> v4
+;;                                     v12 -> v1
+;;                                     v13 -> v1
 ;; @0057                               v5 = load.i64 notrap aligned readonly v1
-;;                                     v9 -> v5
+;; @0057                               v4 = uextend.i64 v0
 ;; @0057                               v6 = iadd v5, v4
-;;                                     v10 -> v6
 ;; @0057                               v7 = load.i32 little heap v6
 ;;                                     v2 -> v7
-;;                                     v11 -> v7
-;;                                     v3 -> v11
 ;; @005f                               jump block1
 ;;
 ;;                                 block1:
@@ -65,22 +61,17 @@
 ;;     gv1 = load.i64 notrap aligned readonly gv0
 ;;
 ;;                                 block0(v0: i32, v1: i64):
-;; @0064                               v4 = uextend.i64 v0
-;;                                     v9 -> v4
+;;                                     v16 -> v1
+;;                                     v17 -> v1
 ;; @0064                               v5 = load.i64 notrap aligned readonly v1
-;;                                     v10 -> v5
+;; @0064                               v4 = uextend.i64 v0
 ;; @0064                               v6 = iadd v5, v4
-;;                                     v11 -> v6
-;;                                     v14 = iconst.i64 1234
-;;                                     v15 -> v14
-;; @0064                               v7 = iadd v6, v14  ; v14 = 1234
-;;                                     v12 -> v7
-;; @0064                               v8 = load.i32 little heap v7
-;;                                     v2 -> v8
-;;                                     v13 -> v8
-;;                                     v3 -> v13
+;; @0064                               v7 = iconst.i64 1234
+;; @0064                               v8 = iadd v6, v7  ; v7 = 1234
+;; @0064                               v9 = load.i32 little heap v8
+;;                                     v2 -> v9
 ;; @006e                               jump block1
 ;;
 ;;                                 block1:
-;; @006e                               return v8, v8
+;; @006e                               return v9, v9
 ;; }

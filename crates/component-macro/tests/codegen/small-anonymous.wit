@@ -1,13 +1,15 @@
+package foo:foo;
+
 interface anon {
   enum error {
     success,
     failure,
   }
 
-  option-test: func() -> result<option<string>, error>
+  option-test: func() -> result<option<string>, error>;
 }
 
-default world the-world {
-  import imports: self.anon
-  export exports: self.anon
+world the-world {
+  import anon;
+  export anon;
 }

@@ -12,7 +12,7 @@ const MAX_MODULES: usize = 5;
 fuzz_target!(|data: &[u8]| {
     // errors in `run` have to do with not enough input in `data`, which we
     // ignore here since it doesn't affect how we'd like to fuzz.
-    drop(execute_one(data));
+    let _ = execute_one(data);
 });
 
 fn execute_one(data: &[u8]) -> Result<()> {
@@ -41,7 +41,7 @@ fn execute_one(data: &[u8]) -> Result<()> {
 
     let max_instances = match &config.wasmtime.strategy {
         generators::InstanceAllocationStrategy::OnDemand => u.int_in_range(1..=100)?,
-        generators::InstanceAllocationStrategy::Pooling(config) => config.instance_count,
+        generators::InstanceAllocationStrategy::Pooling(config) => config.total_core_instances,
     };
 
     // Front-load with instantiation commands

@@ -39,28 +39,30 @@
 
 ;; function u0:0:
 ;; block0:
-;;   ld a7,0(a2)
-;;   add a7,a7,a0
-;;   lui a5,65536
-;;   addi a5,a5,4095
-;;   ugt t3,a0,a5##ty=i64
-;;   li t0,0
-;;   selectif_spectre_guard t4,t0,a7##test=t3
-;;   sb a1,0(t4)
+;;   lui a4,65536
+;;   addi a3,a4,-1
+;;   sltu a5,a3,a0
+;;   ld a2,0(a2)
+;;   add a0,a2,a0
+;;   sub a3,zero,a5
+;;   not a5,a3
+;;   and a2,a0,a5
+;;   sb a1,0(a2)
 ;;   j label1
 ;; block1:
 ;;   ret
 ;;
 ;; function u0:1:
 ;; block0:
-;;   ld a7,0(a1)
-;;   add a7,a7,a0
-;;   lui a5,65536
-;;   addi a5,a5,4095
-;;   ugt t3,a0,a5##ty=i64
-;;   li t0,0
-;;   selectif_spectre_guard t4,t0,a7##test=t3
-;;   lbu a0,0(t4)
+;;   lui a4,65536
+;;   addi a2,a4,-1
+;;   sltu a5,a2,a0
+;;   ld a1,0(a1)
+;;   add a0,a1,a0
+;;   sub a3,zero,a5
+;;   not a5,a3
+;;   and a1,a0,a5
+;;   lbu a0,0(a1)
 ;;   j label1
 ;; block1:
 ;;   ret

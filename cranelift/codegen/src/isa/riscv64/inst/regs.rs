@@ -1,8 +1,6 @@
 //! Riscv64 ISA definitions: registers.
 //!
 
-use crate::settings;
-
 use crate::machinst::{Reg, Writable};
 
 use crate::machinst::RealReg;
@@ -10,7 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use regalloc2::VReg;
-use regalloc2::{MachineEnv, PReg, RegClass};
+use regalloc2::{PReg, RegClass};
 
 // first argument of function call
 #[inline]
@@ -20,49 +18,52 @@ pub fn a0() -> Reg {
 
 // second argument of function call
 #[inline]
+#[allow(dead_code)]
 pub fn a1() -> Reg {
     x_reg(11)
 }
 
 // third argument of function call
 #[inline]
+#[allow(dead_code)]
 pub fn a2() -> Reg {
     x_reg(12)
 }
 
 #[inline]
+#[allow(dead_code)]
 pub fn writable_a0() -> Writable<Reg> {
     Writable::from_reg(a0())
 }
 #[inline]
+#[allow(dead_code)]
 pub fn writable_a1() -> Writable<Reg> {
     Writable::from_reg(a1())
 }
 #[inline]
+#[allow(dead_code)]
 pub fn writable_a2() -> Writable<Reg> {
     Writable::from_reg(a2())
 }
 
 #[inline]
+#[allow(dead_code)]
 pub fn fa0() -> Reg {
     f_reg(10)
 }
 #[inline]
+#[allow(dead_code)]
 pub fn writable_fa0() -> Writable<Reg> {
     Writable::from_reg(fa0())
 }
 #[inline]
+#[allow(dead_code)]
 pub fn writable_fa1() -> Writable<Reg> {
     Writable::from_reg(fa1())
 }
 #[inline]
 pub fn fa1() -> Reg {
     f_reg(11)
-}
-
-#[inline]
-pub fn fa7() -> Reg {
-    f_reg(17)
 }
 
 /// Get a reference to the zero-register.
@@ -98,7 +99,7 @@ pub fn writable_link_reg() -> Writable<Reg> {
     Writable::from_reg(link_reg())
 }
 
-/// Get a reference to the frame pointer (x29).
+/// Get a reference to the frame pointer (x8).
 #[inline]
 pub fn fp_reg() -> Reg {
     x_reg(8)
@@ -135,63 +136,13 @@ pub fn writable_spilltmp_reg2() -> Writable<Reg> {
     Writable::from_reg(spilltmp_reg2())
 }
 
-pub fn crate_reg_eviroment(_flags: &settings::Flags) -> MachineEnv {
-    let preferred_regs_by_class: [Vec<PReg>; 2] = {
-        let mut x_register: Vec<PReg> = vec![];
-        x_register.push(PReg::new(5, RegClass::Int));
-        for i in 6..=7 {
-            x_register.push(PReg::new(i, RegClass::Int));
-        }
-        for i in 10..=17 {
-            x_register.push(PReg::new(i, RegClass::Int));
-        }
-        for i in 28..=29 {
-            x_register.push(PReg::new(i, RegClass::Int));
-        }
-
-        let mut f_register: Vec<PReg> = vec![];
-        for i in 0..=7 {
-            f_register.push(PReg::new(i, RegClass::Float));
-        }
-        for i in 10..=17 {
-            f_register.push(PReg::new(i, RegClass::Float));
-        }
-        for i in 28..=31 {
-            f_register.push(PReg::new(i, RegClass::Float));
-        }
-        [x_register, f_register]
-    };
-
-    let non_preferred_regs_by_class: [Vec<PReg>; 2] = {
-        let mut x_register: Vec<PReg> = vec![];
-        x_register.push(PReg::new(9, RegClass::Int));
-        for i in 18..=27 {
-            x_register.push(PReg::new(i, RegClass::Int));
-        }
-        let mut f_register: Vec<PReg> = vec![];
-        for i in 8..=9 {
-            f_register.push(PReg::new(i, RegClass::Float));
-        }
-        for i in 18..=27 {
-            f_register.push(PReg::new(i, RegClass::Float));
-        }
-        [x_register, f_register]
-    };
-
-    MachineEnv {
-        preferred_regs_by_class,
-        non_preferred_regs_by_class,
-        fixed_stack_slots: vec![],
-    }
-}
-
 #[inline]
 pub fn x_reg(enc: usize) -> Reg {
     let p_reg = PReg::new(enc, RegClass::Int);
     let v_reg = VReg::new(p_reg.index(), p_reg.class());
     Reg::from(v_reg)
 }
-pub fn px_reg(enc: usize) -> PReg {
+pub const fn px_reg(enc: usize) -> PReg {
     PReg::new(enc, RegClass::Int)
 }
 
@@ -217,4 +168,8 @@ pub(crate) fn x_reg_range(start: usize, end: usize) -> Vec<Writable<Reg>> {
         regs.push(Writable::from_reg(x_reg(i)));
     }
     regs
+}
+
+pub const fn pv_reg(enc: usize) -> PReg {
+    PReg::new(enc, RegClass::Vector)
 }

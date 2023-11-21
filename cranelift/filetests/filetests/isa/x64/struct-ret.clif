@@ -12,21 +12,19 @@ block0(v0: i64):
 ;   pushq   %rbp
 ;   movq    %rsp, %rbp
 ; block0:
+;   movq    $42, 0(%rdi)
 ;   movq    %rdi, %rax
-;   movl    $42, %edx
-;   movq    %rdx, 0(%rdi)
 ;   movq    %rbp, %rsp
 ;   popq    %rbp
 ;   ret
-; 
+;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
 ;   movq %rsp, %rbp
 ; block1: ; offset 0x4
+;   movq $0x2a, (%rdi) ; trap: heap_oob
 ;   movq %rdi, %rax
-;   movl $0x2a, %edx
-;   movq %rdx, (%rdi) ; trap: heap_oob
 ;   movq %rbp, %rsp
 ;   popq %rbp
 ;   retq
@@ -50,7 +48,7 @@ block0(v0: i64, v1: i64):
 ;   movq    %rbp, %rsp
 ;   popq    %rbp
 ;   ret
-; 
+;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
@@ -79,15 +77,16 @@ block0(v0: i64):
 ;   movq    %r15, 0(%rsp)
 ; block0:
 ;   movq    %rdi, %r15
-;   load_ext_name %f4+0, %rdx
-;   call    *%rdx
+;   load_ext_name %f4+0, %rax
+;   movq    %r15, %rdi
+;   call    *%rax
 ;   movq    %r15, %rax
 ;   movq    0(%rsp), %r15
 ;   addq    %rsp, $16, %rsp
 ;   movq    %rbp, %rsp
 ;   popq    %rbp
 ;   ret
-; 
+;
 ; Disassembled:
 ; block0: ; offset 0x0
 ;   pushq %rbp
@@ -96,8 +95,9 @@ block0(v0: i64):
 ;   movq %r15, (%rsp)
 ; block1: ; offset 0xc
 ;   movq %rdi, %r15
-;   movabsq $0, %rdx ; reloc_external Abs8 %f4 0
-;   callq *%rdx
+;   movabsq $0, %rax ; reloc_external Abs8 %f4 0
+;   movq %r15, %rdi
+;   callq *%rax
 ;   movq %r15, %rax
 ;   movq (%rsp), %r15
 ;   addq $0x10, %rsp

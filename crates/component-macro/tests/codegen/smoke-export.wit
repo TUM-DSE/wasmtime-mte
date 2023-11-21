@@ -1,5 +1,7 @@
-default world the-world {
+package foo:foo;
+
+world the-world {
   export the-name: interface {
-    y: func()
+    y: func();
   }
 }

@@ -80,9 +80,10 @@ use crate::machinst::{RealReg, Reg, RegClass, Writable};
 use crate::settings;
 use crate::{CodegenError, CodegenResult};
 use alloc::vec::Vec;
-use regalloc2::{PReg, PRegSet};
+use regalloc2::{MachineEnv, PReg, PRegSet};
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryFrom;
+use std::sync::OnceLock;
 
 // We use a generic implementation that factors out ABI commonalities.
 
@@ -232,6 +233,12 @@ impl ABIMachineSpec for S390xMachineDeps {
     where
         I: IntoIterator<Item = &'a ir::AbiParam>,
     {
+        assert_ne!(
+            call_conv,
+            isa::CallConv::Tail,
+            "s390x does not support the 'tail' calling convention yet"
+        );
+
         let mut next_gpr = 0;
         let mut next_fpr = 0;
         let mut next_vr = 0;
@@ -242,13 +249,12 @@ impl ABIMachineSpec for S390xMachineDeps {
         }
 
         // In the SystemV ABI, the return area pointer is the first argument,
-        // so we need to leave room for it if required.  (In the Wasmtime ABI,
-        // the return area pointer is the last argument and is handled below.)
-        if add_ret_area_ptr && !call_conv.extends_wasmtime() {
+        // so we need to leave room for it if required.
+        if add_ret_area_ptr {
             next_gpr += 1;
         }
 
-        for (i, mut param) in params.into_iter().copied().enumerate() {
+        for mut param in params.into_iter().copied() {
             let intreg = in_int_reg(param.value_type);
             let fltreg = in_flt_reg(param.value_type);
             let vecreg = in_vec_reg(param.value_type);
@@ -272,8 +278,6 @@ impl ABIMachineSpec for S390xMachineDeps {
                     ArgsOrRets::Rets => get_vecreg_for_ret(next_vr),
                 };
                 (&mut next_vr, candidate, None)
-            } else if call_conv.extends_wasmtime() {
-                panic!("i128 args/return values not supported in the Wasmtime ABI");
             } else {
                 // We must pass this by implicit reference.
                 if args_or_rets == ArgsOrRets::Rets {
@@ -288,14 +292,6 @@ impl ABIMachineSpec for S390xMachineDeps {
                 }
             };
 
-            // In the Wasmtime ABI only the first return value can be in a register.
-            let candidate =
-                if call_conv.extends_wasmtime() && args_or_rets == ArgsOrRets::Rets && i > 0 {
-                    None
-                } else {
-                    candidate
-                };
-
             let slot = if let Some(reg) = candidate {
                 *next_reg += 1;
                 ABIArgSlot::Reg {
@@ -305,14 +301,9 @@ impl ABIMachineSpec for S390xMachineDeps {
                 }
             } else {
                 // Compute size. Every argument or return value takes a slot of
-                // at least 8 bytes, except for return values in the Wasmtime ABI.
+                // at least 8 bytes.
                 let size = (ty_bits(param.value_type) / 8) as u32;
-                let slot_size = if call_conv.extends_wasmtime() && args_or_rets == ArgsOrRets::Rets
-                {
-                    size
-                } else {
-                    std::cmp::max(size, 8)
-                };
+                let slot_size = std::cmp::max(size, 8);
 
                 // Align the stack slot.
                 debug_assert!(slot_size.is_power_of_two());
@@ -366,14 +357,8 @@ impl ABIMachineSpec for S390xMachineDeps {
 
         let extra_arg = if add_ret_area_ptr {
             debug_assert!(args_or_rets == ArgsOrRets::Args);
-            // The return pointer is passed either as first argument
-            // (in the SystemV ABI) or as last argument (Wasmtime ABI).
-            let next_gpr = if call_conv.extends_wasmtime() {
-                next_gpr
-            } else {
-                0
-            };
-            if let Some(reg) = get_intreg_for_arg(next_gpr) {
+            // The return pointer is passed as first argument.
+            if let Some(reg) = get_intreg_for_arg(0) {
                 args.push(ABIArg::reg(
                     reg.to_real_reg().unwrap(),
                     types::I64,
@@ -452,18 +437,20 @@ impl ABIMachineSpec for S390xMachineDeps {
         }
     }
 
-    fn gen_args(_isa_flags: &s390x_settings::Flags, args: Vec<ArgPair>) -> Inst {
+    fn gen_args(args: Vec<ArgPair>) -> Inst {
         Inst::Args { args }
     }
 
-    fn gen_ret(_setup_frame: bool, _isa_flags: &s390x_settings::Flags, rets: Vec<RetPair>) -> Inst {
-        Inst::Ret {
-            link: gpr(14),
-            rets,
-        }
+    fn gen_rets(rets: Vec<RetPair>) -> Inst {
+        Inst::Rets { rets }
     }
 
-    fn gen_add_imm(into_reg: Writable<Reg>, from_reg: Reg, imm: u32) -> SmallInstVec<Inst> {
+    fn gen_add_imm(
+        _call_conv: isa::CallConv,
+        into_reg: Writable<Reg>,
+        from_reg: Reg,
+        imm: u32,
+    ) -> SmallInstVec<Inst> {
         let mut insts = SmallVec::new();
         if let Some(imm) = UImm12::maybe_from_u64(imm as u64) {
             insts.push(Inst::LoadAddr {
@@ -516,7 +503,7 @@ impl ABIMachineSpec for S390xMachineDeps {
         Inst::LoadAddr { rd: into_reg, mem }
     }
 
-    fn get_stacklimit_reg() -> Reg {
+    fn get_stacklimit_reg(_call_conv: isa::CallConv) -> Reg {
         spilltmp_reg()
     }
 
@@ -560,12 +547,29 @@ impl ABIMachineSpec for S390xMachineDeps {
         }
     }
 
-    fn gen_prologue_frame_setup(_flags: &settings::Flags) -> SmallInstVec<Inst> {
+    fn gen_prologue_frame_setup(
+        _call_conv: isa::CallConv,
+        _flags: &settings::Flags,
+        _isa_flags: &s390x_settings::Flags,
+        _frame_layout: &FrameLayout,
+    ) -> SmallInstVec<Inst> {
         SmallVec::new()
     }
 
-    fn gen_epilogue_frame_restore(_flags: &settings::Flags) -> SmallInstVec<Inst> {
-        SmallVec::new()
+    fn gen_epilogue_frame_restore(
+        call_conv: isa::CallConv,
+        _flags: &settings::Flags,
+        _isa_flags: &s390x_settings::Flags,
+        frame_layout: &FrameLayout,
+    ) -> SmallInstVec<Inst> {
+        let mut insts = SmallVec::new();
+        if call_conv == isa::CallConv::Tail && frame_layout.stack_args_size > 0 {
+            insts.extend(Self::gen_sp_reg_adjust(
+                frame_layout.stack_args_size.try_into().unwrap(),
+            ));
+        }
+        insts.push(Inst::Ret { link: gpr(14) });
+        insts
     }
 
     fn gen_probestack(_insts: &mut SmallInstVec<Self::I>, _: u32) {
@@ -576,33 +580,28 @@ impl ABIMachineSpec for S390xMachineDeps {
 
     fn gen_inline_probestack(
         _insts: &mut SmallInstVec<Self::I>,
+        _call_conv: isa::CallConv,
         _frame_size: u32,
         _guard_size: u32,
     ) {
         unimplemented!("Inline stack probing is unimplemented on S390x");
     }
 
-    // Returns stack bytes used as well as instructions. Does not adjust
-    // nominal SP offset; abi generic code will do that.
     fn gen_clobber_save(
         _call_conv: isa::CallConv,
-        _setup_frame: bool,
         flags: &settings::Flags,
-        clobbered_callee_saves: &[Writable<RealReg>],
-        fixed_frame_storage_size: u32,
-        mut outgoing_args_size: u32,
-    ) -> (u64, SmallVec<[Inst; 16]>) {
+        frame_layout: &FrameLayout,
+    ) -> SmallVec<[Inst; 16]> {
         let mut insts = SmallVec::new();
 
         // Collect clobbered registers.
         let (first_clobbered_gpr, clobbered_fpr) =
-            get_clobbered_gpr_fpr(flags, clobbered_callee_saves, &mut outgoing_args_size);
-        let clobber_size = clobbered_fpr.len() * 8;
+            get_clobbered_gpr_fpr(&frame_layout.clobbered_callee_saves);
         if flags.unwind_info() {
             insts.push(Inst::Unwind {
                 inst: UnwindInst::DefineNewFrame {
                     offset_upward_to_caller_sp: REG_SAVE_AREA_SIZE,
-                    offset_downward_to_clobbers: clobber_size as u32,
+                    offset_downward_to_clobbers: frame_layout.clobber_size,
                 },
             });
         }
@@ -620,7 +619,7 @@ impl ABIMachineSpec for S390xMachineDeps {
             for i in first_clobbered_gpr..16 {
                 insts.push(Inst::Unwind {
                     inst: UnwindInst::SaveReg {
-                        clobber_offset: clobber_size as u32 + (i * 8) as u32,
+                        clobber_offset: frame_layout.clobber_size + (i * 8) as u32,
                         reg: gpr(i).to_real_reg().unwrap(),
                     },
                 });
@@ -633,8 +632,9 @@ impl ABIMachineSpec for S390xMachineDeps {
         }
 
         // Decrement stack pointer.
-        let stack_size =
-            outgoing_args_size as i32 + clobber_size as i32 + fixed_frame_storage_size as i32;
+        let stack_size = frame_layout.outgoing_args_size as i32
+            + frame_layout.clobber_size as i32
+            + frame_layout.fixed_frame_storage_size as i32;
         insts.extend(Self::gen_sp_reg_adjust(-stack_size));
         if flags.unwind_info() {
             insts.push(Inst::Unwind {
@@ -644,7 +644,7 @@ impl ABIMachineSpec for S390xMachineDeps {
             });
         }
 
-        let sp_adj = outgoing_args_size as i32;
+        let sp_adj = frame_layout.outgoing_args_size as i32;
         if sp_adj > 0 {
             insts.push(Self::gen_nominal_sp_adj(sp_adj));
         }
@@ -664,7 +664,9 @@ impl ABIMachineSpec for S390xMachineDeps {
                 rd: reg.to_reg().into(),
                 mem: MemArg::reg_plus_off(
                     stack_reg(),
-                    (i * 8) as i64 + outgoing_args_size as i64 + fixed_frame_storage_size as i64,
+                    (i * 8) as i64
+                        + frame_layout.outgoing_args_size as i64
+                        + frame_layout.fixed_frame_storage_size as i64,
                     MemFlags::trusted(),
                 ),
                 lane_imm: 0,
@@ -679,25 +681,19 @@ impl ABIMachineSpec for S390xMachineDeps {
             }
         }
 
-        (clobber_size as u64, insts)
+        insts
     }
 
     fn gen_clobber_restore(
-        call_conv: isa::CallConv,
-        sig: &Signature,
-        flags: &settings::Flags,
-        clobbers: &[Writable<RealReg>],
-        fixed_frame_storage_size: u32,
-        mut outgoing_args_size: u32,
+        _call_conv: isa::CallConv,
+        _flags: &settings::Flags,
+        frame_layout: &FrameLayout,
     ) -> SmallVec<[Inst; 16]> {
         let mut insts = SmallVec::new();
-        let clobbered_callee_saves =
-            Self::get_clobbered_callee_saves(call_conv, flags, sig, clobbers);
 
         // Collect clobbered registers.
         let (first_clobbered_gpr, clobbered_fpr) =
-            get_clobbered_gpr_fpr(flags, &clobbered_callee_saves, &mut outgoing_args_size);
-        let clobber_size = clobbered_fpr.len() * 8;
+            get_clobbered_gpr_fpr(&frame_layout.clobbered_callee_saves);
 
         // Restore FPRs.
         for (i, reg) in clobbered_fpr.iter().enumerate() {
@@ -706,7 +702,9 @@ impl ABIMachineSpec for S390xMachineDeps {
                 rd: Writable::from_reg(reg.to_reg().into()),
                 mem: MemArg::reg_plus_off(
                     stack_reg(),
-                    (i * 8) as i64 + outgoing_args_size as i64 + fixed_frame_storage_size as i64,
+                    (i * 8) as i64
+                        + frame_layout.outgoing_args_size as i64
+                        + frame_layout.fixed_frame_storage_size as i64,
                     MemFlags::trusted(),
                 ),
                 lane_imm: 0,
@@ -714,8 +712,9 @@ impl ABIMachineSpec for S390xMachineDeps {
         }
 
         // Increment stack pointer unless it will be restored implicitly.
-        let stack_size =
-            outgoing_args_size as i32 + clobber_size as i32 + fixed_frame_storage_size as i32;
+        let stack_size = frame_layout.outgoing_args_size as i32
+            + frame_layout.clobber_size as i32
+            + frame_layout.fixed_frame_storage_size as i32;
         let implicit_sp_restore = first_clobbered_gpr < 16
             && SImm20::maybe_from_i64(8 * first_clobbered_gpr as i64 + stack_size as i64).is_some();
         if !implicit_sp_restore {
@@ -747,6 +746,7 @@ impl ABIMachineSpec for S390xMachineDeps {
         _tmp: Writable<Reg>,
         _callee_conv: isa::CallConv,
         _caller_conv: isa::CallConv,
+        _callee_pop_size: u32,
     ) -> SmallVec<[Inst; 2]> {
         unreachable!();
     }
@@ -761,11 +761,16 @@ impl ABIMachineSpec for S390xMachineDeps {
         unimplemented!("StructArgs not implemented for S390X yet");
     }
 
-    fn get_number_of_spillslots_for_value(rc: RegClass, _vector_scale: u32) -> u32 {
+    fn get_number_of_spillslots_for_value(
+        rc: RegClass,
+        _vector_scale: u32,
+        _isa_flags: &Self::F,
+    ) -> u32 {
         // We allocate in terms of 8-byte slots.
         match rc {
             RegClass::Int => 1,
             RegClass::Float => 2,
+            RegClass::Vector => unreachable!(),
         }
     }
 
@@ -779,6 +784,11 @@ impl ABIMachineSpec for S390xMachineDeps {
         s.initial_sp_offset
     }
 
+    fn get_machine_env(_flags: &settings::Flags, _call_conv: isa::CallConv) -> &MachineEnv {
+        static MACHINE_ENV: OnceLock<MachineEnv> = OnceLock::new();
+        MACHINE_ENV.get_or_init(create_machine_env)
+    }
+
     fn get_regs_clobbered_by_call(_call_conv_of_callee: isa::CallConv) -> PRegSet {
         CLOBBERS
     }
@@ -790,12 +800,16 @@ impl ABIMachineSpec for S390xMachineDeps {
         specified
     }
 
-    fn get_clobbered_callee_saves(
+    fn compute_frame_layout(
         call_conv: isa::CallConv,
         flags: &settings::Flags,
         _sig: &Signature,
         regs: &[Writable<RealReg>],
-    ) -> Vec<Writable<RealReg>> {
+        _is_leaf: bool,
+        stack_args_size: u32,
+        fixed_frame_storage_size: u32,
+        mut outgoing_args_size: u32,
+    ) -> FrameLayout {
         assert!(
             !flags.enable_pinned_reg(),
             "Pinned register not supported on s390x"
@@ -807,20 +821,54 @@ impl ABIMachineSpec for S390xMachineDeps {
             .filter(|r| is_reg_saved_in_prologue(call_conv, r.to_reg()))
             .collect();
 
+        // If the front end asks to preserve frame pointers (which we do not
+        // really have in the s390x ABI), we use the stack backchain instead.
+        // For this to work in all cases, we must allocate a stack frame with
+        // at least the outgoing register save area even in leaf functions.
+        // Update our caller's outgoing_args_size to reflect this.
+        if flags.preserve_frame_pointers() {
+            if outgoing_args_size < REG_SAVE_AREA_SIZE {
+                outgoing_args_size = REG_SAVE_AREA_SIZE;
+            }
+        }
+
+        // We need to save/restore the link register in non-leaf functions.
+        // This is not included in the clobber list because we have excluded
+        // call instructions via the is_included_in_clobbers callback.
+        // We also want to enforce saving the link register in leaf functions
+        // for stack unwinding, if we're asked to preserve frame pointers.
+        if outgoing_args_size > 0 {
+            let link_reg = Writable::from_reg(RealReg::from(gpr_preg(14)));
+            if !regs.contains(&link_reg) {
+                regs.push(link_reg);
+            }
+        }
+
         // Sort registers for deterministic code output. We can do an unstable
         // sort because the registers will be unique (there are no dups).
         regs.sort_unstable_by_key(|r| PReg::from(r.to_reg()).index());
-        regs
-    }
 
-    fn is_frame_setup_needed(
-        _is_leaf: bool,
-        _stack_args_size: u32,
-        _num_clobbered_callee_saves: usize,
-        _frame_storage_size: u32,
-    ) -> bool {
-        // The call frame set-up is handled by gen_clobber_save().
-        false
+        // Compute clobber size.  We only need to count FPR save slots.
+        let mut clobber_size = 0;
+        for reg in &regs {
+            match reg.to_reg().class() {
+                RegClass::Int => {}
+                RegClass::Float => {
+                    clobber_size += 8;
+                }
+                RegClass::Vector => unreachable!(),
+            }
+        }
+
+        // Return FrameLayout structure.
+        FrameLayout {
+            stack_args_size,
+            setup_area_size: 0,
+            clobber_size,
+            fixed_frame_storage_size,
+            outgoing_args_size,
+            clobbered_callee_saves: regs,
+        }
     }
 }
 
@@ -834,13 +882,12 @@ fn is_reg_saved_in_prologue(_call_conv: isa::CallConv, r: RealReg) -> bool {
             // f8 - f15 inclusive are callee-saves.
             r.hw_enc() >= 8 && r.hw_enc() <= 15
         }
+        RegClass::Vector => unreachable!(),
     }
 }
 
 fn get_clobbered_gpr_fpr(
-    flags: &settings::Flags,
     clobbered_callee_saves: &[Writable<RealReg>],
-    outgoing_args_size: &mut u32,
 ) -> (u8, SmallVec<[Writable<RealReg>; 8]>) {
     // Collect clobbered registers.  Note we save/restore GPR always as
     // a block of registers using LOAD MULTIPLE / STORE MULTIPLE, starting
@@ -848,26 +895,6 @@ fn get_clobbered_gpr_fpr(
     // return the number of that first GPR (or 16 if none is to be saved).
     let mut clobbered_fpr = SmallVec::new();
     let mut first_clobbered_gpr = 16;
-
-    // If the front end asks to preserve frame pointers (which we do not
-    // really have in the s390x ABI), we use the stack backchain instead.
-    // For this to work in all cases, we must allocate a stack frame with
-    // at least the outgoing register save area even in leaf functions.
-    // Update out caller's outgoing_args_size to reflect this.
-    if flags.preserve_frame_pointers() {
-        if *outgoing_args_size < REG_SAVE_AREA_SIZE {
-            *outgoing_args_size = REG_SAVE_AREA_SIZE;
-        }
-    }
-
-    // We need to save/restore the link register in non-leaf functions.
-    // This is not included in the clobber list because we have excluded
-    // call instructions via the is_included_in_clobbers callback.
-    // We also want to enforce saving the link register in leaf functions
-    // for stack unwinding, if we're asked to preserve frame pointers.
-    if *outgoing_args_size > 0 {
-        first_clobbered_gpr = 14;
-    }
 
     for &reg in clobbered_callee_saves.iter() {
         match reg.to_reg().class() {
@@ -878,6 +905,7 @@ fn get_clobbered_gpr_fpr(
                 }
             }
             RegClass::Float => clobbered_fpr.push(reg),
+            RegClass::Vector => unreachable!(),
         }
     }
 
@@ -942,3 +970,74 @@ const fn clobbers() -> PRegSet {
 }
 
 const CLOBBERS: PRegSet = clobbers();
+
+fn create_machine_env() -> MachineEnv {
+    MachineEnv {
+        preferred_regs_by_class: [
+            vec![
+                // no r0; can't use for addressing?
+                // no r1; it is our spilltmp.
+                gpr_preg(2),
+                gpr_preg(3),
+                gpr_preg(4),
+                gpr_preg(5),
+            ],
+            vec![
+                vr_preg(0),
+                vr_preg(1),
+                vr_preg(2),
+                vr_preg(3),
+                vr_preg(4),
+                vr_preg(5),
+                vr_preg(6),
+                vr_preg(7),
+                vr_preg(16),
+                vr_preg(17),
+                vr_preg(18),
+                vr_preg(19),
+                vr_preg(20),
+                vr_preg(21),
+                vr_preg(22),
+                vr_preg(23),
+                vr_preg(24),
+                vr_preg(25),
+                vr_preg(26),
+                vr_preg(27),
+                vr_preg(28),
+                vr_preg(29),
+                vr_preg(30),
+                vr_preg(31),
+            ],
+            // Vector Regclass is unused
+            vec![],
+        ],
+        non_preferred_regs_by_class: [
+            vec![
+                gpr_preg(6),
+                gpr_preg(7),
+                gpr_preg(8),
+                gpr_preg(9),
+                gpr_preg(10),
+                gpr_preg(11),
+                gpr_preg(12),
+                gpr_preg(13),
+                gpr_preg(14),
+                // no r15; it is the stack pointer.
+            ],
+            vec![
+                vr_preg(8),
+                vr_preg(9),
+                vr_preg(10),
+                vr_preg(11),
+                vr_preg(12),
+                vr_preg(13),
+                vr_preg(14),
+                vr_preg(15),
+            ],
+            // Vector Regclass is unused
+            vec![],
+        ],
+        fixed_stack_slots: vec![],
+        scratch_by_class: [None, None, None],
+    }
+}

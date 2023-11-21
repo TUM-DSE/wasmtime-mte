@@ -47,7 +47,7 @@ their implications in Wasmtime:
   involves acquiring a lock, whereas for `Store` below no locks are necessary.
 
 * `wasmtime::Store` - this is the concept of a "store" in WebAssembly. While
-  there's also a formal definition to go of this it can be thought of as a bag
+  there's also a formal definition to go off of, it can be thought of as a bag
   of related WebAssembly objects. This includes instances, globals, memories,
   tables, etc. A `Store` does not implement any form of garbage collection of
   the internal items (there is a `gc` function but that's just for `externref`
@@ -65,7 +65,7 @@ their implications in Wasmtime:
 
 * `wasmtime_runtime::InstanceHandle` - this is the low-level representation of a
   WebAssembly instance. At the same time this is also used as the representation
-  for all host-defined object. For example if you call `wasmtime::Memory::new`
+  for all host-defined objects. For example if you call `wasmtime::Memory::new`
   it'll create an `InstanceHandle` under the hood. This is a very `unsafe` type
   that should probably have all of its functions marked `unsafe` or otherwise
   have more strict guarantees documented about it, but it's an internal type
@@ -180,7 +180,7 @@ Compilation is roughly broken down into a few phases:
    point the module is ready to be instantiated.
 
 A `wasmtime::Module` is an atomically-reference-counted object where upon
-instantiation into a `Store` the `Store` will hold a strong reference to the
+instantiation into a `Store`, the `Store` will hold a strong reference to the
 internals of the module. This means that all instances of a `wasmtime::Module`
 share the same compiled code. Additionally a `wasmtime::Module` is one of the
 few objects that lives outside of a `wasmtime::Store`. This means that
@@ -388,22 +388,26 @@ in front of linear memory as well as after linear memory (the same size on both
 ends). This is only used to protect against possible Cranelift bugs and
 otherwise serves no purpose.
 
-At the time of this writing Wasmtime only supports WebAssembly with 32-bit
-memories, so a maximum of 4GB in size. Wasmtime has not implemented the
-memory64 proposal from upstream WebAssembly yet.
-
 The defaults for Wasmtime on 64-bit platforms are:
 
-* 4GB static maximum size (meaning all memories are static)
-* 2GB static guard size (meaning all loads/stores with less than 2GB offset
-  don't need bounds checks)
+* 4GB static maximum size meaning all 32-bit memories are static and 64-bit
+  memories are dynamic.
+* 2GB static guard size meaning all loads/stores with less than 2GB offset
+  don't need bounds checks with 32-bit memories.
 * Guard pages before linear memory are enabled.
 
-Altogether this means that linear memories result in an 8GB virtual address
-space reservation by default in Wasmtime. With the pooling allocator where we
-know that linear memories are contiguous this results in a 6GB reservation per
-memory because the guard region after one memory is the guard region before the
-next.
+Altogether this means that 32-bit linear memories result in an 8GB virtual
+address space reservation by default in Wasmtime. With the pooling allocator
+where we know that linear memories are contiguous this results in a 6GB
+reservation per memory because the guard region after one memory is the guard
+region before the next.
+
+Note that 64-bit memories (the memory64 proposal for WebAssembly) can be
+configured to be static but will never be able to elide bounds checks at this
+time. This configuration is possible through the `static_memory_forced`
+configuration option. Additionally note that support for 64-bit memories in
+Wasmtime is functional but not yet tuned at this time so there's probably still
+some performance work and better defaults to manage.
 
 ## Tables and `externref`
 

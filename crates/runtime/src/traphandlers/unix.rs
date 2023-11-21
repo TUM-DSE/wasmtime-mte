@@ -14,6 +14,9 @@ static mut PREV_SIGILL: MaybeUninit<libc::sigaction> = MaybeUninit::uninit();
 static mut PREV_SIGFPE: MaybeUninit<libc::sigaction> = MaybeUninit::uninit();
 
 pub unsafe fn platform_init() {
+    if cfg!(miri) {
+        return;
+    }
     let register = |slot: &mut MaybeUninit<libc::sigaction>, signal: i32| {
         let mut handler: libc::sigaction = mem::zeroed();
         // The flags here are relatively careful, and they are...
@@ -190,7 +193,7 @@ unsafe extern "C" fn trap_handler(
 
 unsafe fn get_pc_and_fp(cx: *mut libc::c_void, _signum: libc::c_int) -> (*const u8, usize) {
     cfg_if::cfg_if! {
-        if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
+        if #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "x86_64"))] {
             let cx = &*(cx as *const libc::ucontext_t);
             (
                 cx.uc_mcontext.gregs[libc::REG_RIP as usize] as *const u8,
@@ -266,7 +269,7 @@ unsafe fn get_pc_and_fp(cx: *mut libc::c_void, _signum: libc::c_int) -> (*const 
 unsafe fn set_pc(cx: *mut libc::c_void, pc: usize, arg1: usize) {
     cfg_if::cfg_if! {
         if #[cfg(not(target_os = "macos"))] {
-            drop((cx, pc, arg1));
+            let _ = (cx, pc, arg1);
             unreachable!(); // not used on these platforms
         } else if #[cfg(target_arch = "x86_64")] {
             let cx = &mut *(cx as *mut libc::ucontext_t);
@@ -330,6 +333,10 @@ pub fn lazy_per_thread_init() {
     });
 
     unsafe fn allocate_sigaltstack() -> Option<Stack> {
+        if cfg!(miri) {
+            return None;
+        }
+
         // Check to see if the existing sigaltstack, if it exists, is big
         // enough. If so we don't need to allocate our own.
         let mut old_stack = mem::zeroed();

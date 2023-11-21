@@ -7,7 +7,7 @@ use super::refs::{PendingDebugInfoRefs, PendingUnitRefs, UnitRefsMap};
 use super::utils::{add_internal_types, append_vmctx_info, get_function_frame_info};
 use super::{DebugInputContext, Reader, TransformError};
 use crate::debug::ModuleMemoryOffset;
-use crate::CompiledFunctions;
+use crate::CompiledFunctionsMetadata;
 use anyhow::{Context, Error};
 use cranelift_codegen::ir::Endianness;
 use cranelift_codegen::isa::TargetIsa;
@@ -15,6 +15,7 @@ use gimli::write;
 use gimli::{AttributeValue, DebuggingInformationEntry, Unit};
 use std::collections::HashSet;
 use wasmtime_environ::DefinedFuncIndex;
+use wasmtime_versioned_export_macros::versioned_stringify_ident;
 
 struct InheritedAttr<T> {
     stack: Vec<(usize, T)>,
@@ -198,7 +199,7 @@ where
     //  ..  .. DW_AT_type = <wrapper_ptr_type>
     //  ..  .. DW_AT_artificial = 1
     add_tag!(wrapper_die_id, gimli::DW_TAG_subprogram => deref_op_die as deref_op_die_id {
-        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add("resolve_vmctx_memory_ptr")),
+        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add(versioned_stringify_ident!(resolve_vmctx_memory_ptr))),
         gimli::DW_AT_name = write::AttributeValue::StringRef(out_strings.add("ptr")),
         gimli::DW_AT_type = write::AttributeValue::UnitRef(ptr_type_id)
     });
@@ -215,7 +216,7 @@ where
     //  ..  .. DW_AT_type = <wrapper_ptr_type>
     //  ..  .. DW_AT_artificial = 1
     add_tag!(wrapper_die_id, gimli::DW_TAG_subprogram => deref_op_die as deref_op_die_id {
-        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add("resolve_vmctx_memory_ptr")),
+        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add(versioned_stringify_ident!(resolve_vmctx_memory_ptr))),
         gimli::DW_AT_name = write::AttributeValue::StringRef(out_strings.add("operator*")),
         gimli::DW_AT_type = write::AttributeValue::UnitRef(ref_type_id)
     });
@@ -232,7 +233,7 @@ where
     //  ..  .. DW_AT_type = <wrapper_ptr_type>
     //  ..  .. DW_AT_artificial = 1
     add_tag!(wrapper_die_id, gimli::DW_TAG_subprogram => deref_op_die as deref_op_die_id {
-        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add("resolve_vmctx_memory_ptr")),
+        gimli::DW_AT_linkage_name = write::AttributeValue::StringRef(out_strings.add(versioned_stringify_ident!(resolve_vmctx_memory_ptr))),
         gimli::DW_AT_name = write::AttributeValue::StringRef(out_strings.add("operator->")),
         gimli::DW_AT_type = write::AttributeValue::UnitRef(ptr_type_id)
     });
@@ -258,7 +259,7 @@ pub(crate) fn clone_unit<'a, R>(
     unit: Unit<R, R::Offset>,
     context: &DebugInputContext<R>,
     addr_tr: &'a AddressTransform,
-    funcs: &'a CompiledFunctions,
+    funcs: &'a CompiledFunctionsMetadata,
     memory_offset: &ModuleMemoryOffset,
     out_encoding: gimli::Encoding,
     out_units: &mut write::UnitTable,

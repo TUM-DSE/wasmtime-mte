@@ -23,7 +23,7 @@ use crate::entity::entity_impl;
 use core::fmt;
 use core::u32;
 #[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 /// An opaque reference to a [basic block](https://en.wikipedia.org/wiki/Basic_block) in a
 /// [`Function`](super::function::Function).
@@ -106,7 +106,9 @@ entity_impl!(Inst, "inst");
 /// [call stack](https://en.wikipedia.org/wiki/Call_stack).
 ///
 /// `StackSlot`s can be created with
-/// [`FunctionBuilder::create_stackslot`](https://docs.rs/cranelift-frontend/*/cranelift_frontend/struct.FunctionBuilder.html#method.create_stack_slot).
+/// [`FunctionBuilder::create_sized_stack_slot`](https://docs.rs/cranelift-frontend/*/cranelift_frontend/struct.FunctionBuilder.html#method.create_sized_stack_slot)
+/// or
+/// [`FunctionBuilder::create_dynamic_stack_slot`](https://docs.rs/cranelift-frontend/*/cranelift_frontend/struct.FunctionBuilder.html#method.create_dynamic_stack_slot).
 ///
 /// `StackSlot`s are most often used with
 /// [`stack_addr`](super::InstBuilder::stack_addr),
@@ -196,6 +198,29 @@ entity_impl!(GlobalValue, "gv");
 
 impl GlobalValue {
     /// Create a new global value reference from its number.
+    ///
+    /// This method is for use by the parser.
+    pub fn with_number(n: u32) -> Option<Self> {
+        if n < u32::MAX {
+            Some(Self(n))
+        } else {
+            None
+        }
+    }
+}
+
+/// An opaque reference to a memory type.
+///
+/// A `MemoryType` is a descriptor of a struct layout in memory, with
+/// types and proof-carrying-code facts optionally attached to the
+/// fields.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "enable-serde", derive(Serialize, Deserialize))]
+pub struct MemoryType(u32);
+entity_impl!(MemoryType, "mt");
+
+impl MemoryType {
+    /// Create a new memory type reference from its number.
     ///
     /// This method is for use by the parser.
     pub fn with_number(n: u32) -> Option<Self> {
@@ -334,7 +359,7 @@ entity_impl!(UserExternalNameRef, "userextname");
 /// An opaque reference to a function [`Signature`](super::Signature).
 ///
 /// `SigRef`s are used to declare a function with
-/// [`FunctionBuiler::import_function`](https://docs.rs/cranelift-frontend/*/cranelift_frontend/struct.FunctionBuilder.html#method.import_function)
+/// [`FunctionBuilder::import_function`](https://docs.rs/cranelift-frontend/*/cranelift_frontend/struct.FunctionBuilder.html#method.import_function)
 /// as well as to make an [indirect function call](super::InstBuilder::call_indirect).
 ///
 /// `SigRef`s can be created with
@@ -410,6 +435,8 @@ pub enum AnyEntity {
     DynamicType(DynamicType),
     /// A Global value.
     GlobalValue(GlobalValue),
+    /// A memory type.
+    MemoryType(MemoryType),
     /// A jump table.
     JumpTable(JumpTable),
     /// A constant.
@@ -435,6 +462,7 @@ impl fmt::Display for AnyEntity {
             Self::DynamicStackSlot(r) => r.fmt(f),
             Self::DynamicType(r) => r.fmt(f),
             Self::GlobalValue(r) => r.fmt(f),
+            Self::MemoryType(r) => r.fmt(f),
             Self::JumpTable(r) => r.fmt(f),
             Self::Constant(r) => r.fmt(f),
             Self::FuncRef(r) => r.fmt(f),
@@ -493,6 +521,12 @@ impl From<GlobalValue> for AnyEntity {
     }
 }
 
+impl From<MemoryType> for AnyEntity {
+    fn from(r: MemoryType) -> Self {
+        Self::MemoryType(r)
+    }
+}
+
 impl From<JumpTable> for AnyEntity {
     fn from(r: JumpTable) -> Self {
         Self::JumpTable(r)
@@ -547,6 +581,14 @@ mod tests {
             mem::size_of::<Value>(),
             mem::size_of::<PackedOption<Value>>()
         );
+    }
+
+    #[test]
+    fn memory_option() {
+        use core::mem;
+        // PackedOption is used because Option<EntityRef> is twice as large
+        // as EntityRef. If this ever fails to be the case, this test will fail.
+        assert_eq!(mem::size_of::<Value>() * 2, mem::size_of::<Option<Value>>());
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub fn map_reg(reg: Reg) -> Result<Register, RegisterMappingError> {
             let reg = reg.to_real_reg().unwrap().hw_enc() as u16;
             Ok(Register(64 + reg))
         }
+        RegClass::Vector => unreachable!(),
     }
 }
 
@@ -76,7 +77,6 @@ mod tests {
     use crate::settings::{builder, Flags};
     use crate::Context;
     use gimli::write::Address;
-    use std::str::FromStr;
     use target_lexicon::triple;
 
     #[test]
@@ -91,7 +91,9 @@ mod tests {
             Some(StackSlotData::new(StackSlotKind::ExplicitSlot, 64)),
         ));
 
-        let code = context.compile(&*isa).expect("expected compilation");
+        let code = context
+            .compile(&*isa, &mut Default::default())
+            .expect("expected compilation");
 
         let fde = match code
             .create_unwind_info(isa.as_ref())
@@ -130,7 +132,9 @@ mod tests {
 
         let mut context = Context::for_function(create_multi_return_function(CallConv::SystemV));
 
-        let code = context.compile(&*isa).expect("expected compilation");
+        let code = context
+            .compile(&*isa, &mut Default::default())
+            .expect("expected compilation");
 
         let fde = match code
             .create_unwind_info(isa.as_ref())

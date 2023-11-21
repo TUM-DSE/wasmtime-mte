@@ -44,8 +44,8 @@
 ;;   unwind StackAlloc { size: 0 }
 ;; block0:
 ;;   llgfr %r5, %r2
-;;   lghi %r2, -4
-;;   ag %r2, 8(%r4)
+;;   lg %r2, 8(%r4)
+;;   aghi %r2, -4
 ;;   clgr %r5, %r2
 ;;   jgh label3 ; jg label1
 ;; block1:
@@ -62,8 +62,8 @@
 ;;   unwind StackAlloc { size: 0 }
 ;; block0:
 ;;   llgfr %r5, %r2
-;;   lghi %r2, -4
-;;   ag %r2, 8(%r3)
+;;   lg %r2, 8(%r3)
+;;   aghi %r2, -4
 ;;   clgr %r5, %r2
 ;;   jgh label3 ; jg label1
 ;; block1:

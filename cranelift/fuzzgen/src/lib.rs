@@ -8,17 +8,20 @@ use cranelift::codegen::ir::{types::*, UserExternalName, UserFuncName};
 use cranelift::codegen::ir::{Function, LibCall};
 use cranelift::codegen::isa::{self, Builder};
 use cranelift::codegen::Context;
+use cranelift::prelude::isa::{OwnedTargetIsa, TargetIsa};
 use cranelift::prelude::settings::SettingKind;
 use cranelift::prelude::*;
 use cranelift_arbitrary::CraneliftArbitrary;
 use cranelift_native::builder_with_options;
-use target_lexicon::{Architecture, Triple};
+use target_isa_extras::TargetIsaExtras;
+use target_lexicon::Architecture;
 
 mod config;
 mod cranelift_arbitrary;
 mod function_generator;
 mod passes;
 mod print;
+mod target_isa_extras;
 
 pub use print::PrintableTestCase;
 
@@ -52,10 +55,15 @@ where
         }
     }
 
-    pub fn generate_signature(&mut self, architecture: Architecture) -> Result<Signature> {
+    pub fn generate_signature(&mut self, isa: &dyn TargetIsa) -> Result<Signature> {
         let max_params = self.u.int_in_range(self.config.signature_params.clone())?;
         let max_rets = self.u.int_in_range(self.config.signature_rets.clone())?;
-        Ok(self.u.signature(architecture, max_params, max_rets)?)
+        Ok(self.u.signature(
+            isa.supports_simd(),
+            isa.triple().architecture,
+            max_params,
+            max_rets,
+        )?)
     }
 
     pub fn generate_test_inputs(mut self, signature: &Signature) -> Result<Vec<TestCaseInput>> {
@@ -139,16 +147,16 @@ where
     pub fn generate_func(
         &mut self,
         name: UserFuncName,
-        target_triple: Triple,
+        isa: OwnedTargetIsa,
         usercalls: Vec<(UserExternalName, Signature)>,
         libcalls: Vec<LibCall>,
     ) -> Result<Function> {
-        let sig = self.generate_signature(target_triple.architecture)?;
+        let sig = self.generate_signature(&*isa)?;
 
         let func = FunctionGenerator::new(
             &mut self.u,
             &self.config,
-            target_triple,
+            isa,
             name,
             sig,
             usercalls,
@@ -183,7 +191,6 @@ where
             "enable_incremental_compilation_cache_checks",
             "regalloc_checker",
             "enable_llvm_abi_extensions",
-            "use_egraphs",
         ];
         for flag_name in bool_settings {
             let enabled = self
@@ -216,6 +223,12 @@ where
             builder.set("probestack_size_log2", &format!("{}", size))?;
         }
 
+        // Generate random basic block padding
+        let bb_padding = self
+            .u
+            .int_in_range(self.config.bb_padding_log2_size.clone())?;
+        builder.set("bb_padding_log2_minus_one", &format!("{}", bb_padding))?;
+
         // Fixed settings
 
         // We need llvm ABI extensions for i128 values on x86, so enable it regardless of
@@ -231,7 +244,6 @@ where
         // so they aren't very interesting to be automatically generated.
         builder.enable("enable_atomics")?;
         builder.enable("enable_float")?;
-        builder.enable("enable_simd")?;
 
         // `machine_code_cfg_info` generates additional metadata for the embedder but this doesn't feed back
         // into compilation anywhere, we leave it on unconditionally to make sure the generation doesn't panic.

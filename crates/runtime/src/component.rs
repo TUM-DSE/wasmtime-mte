@@ -7,26 +7,28 @@
 //! cranelift-compiled adapters, will use this `VMComponentContext` as well.
 
 use crate::{
-    Store, VMCallerCheckedFuncRef, VMFunctionBody, VMGlobalDefinition, VMMemoryDefinition,
-    VMOpaqueContext, VMSharedSignatureIndex, ValRaw,
+    SendSyncPtr, Store, VMArrayCallFunction, VMFuncRef, VMGlobalDefinition, VMMemoryDefinition,
+    VMNativeCallFunction, VMOpaqueContext, VMSharedSignatureIndex, VMWasmCallFunction, ValRaw,
 };
+use anyhow::Result;
 use memoffset::offset_of;
+use sptr::Strict;
 use std::alloc::{self, Layout};
+use std::any::Any;
 use std::marker;
 use std::mem;
 use std::ops::Deref;
 use std::ptr::{self, NonNull};
-use wasmtime_environ::component::{
-    Component, LoweredIndex, RuntimeAlwaysTrapIndex, RuntimeComponentInstanceIndex,
-    RuntimeMemoryIndex, RuntimePostReturnIndex, RuntimeReallocIndex, RuntimeTranscoderIndex,
-    StringEncoding, VMComponentOffsets, FLAG_MAY_ENTER, FLAG_MAY_LEAVE, FLAG_NEEDS_POST_RETURN,
-    VMCOMPONENT_MAGIC,
-};
-use wasmtime_environ::HostPtr;
+use std::sync::Arc;
+use wasmtime_environ::component::*;
+use wasmtime_environ::{HostPtr, PrimaryMap};
 
 const INVALID_PTR: usize = 0xdead_dead_beef_beef_u64 as usize;
 
-mod transcode;
+mod libcalls;
+mod resources;
+
+pub use self::resources::{CallContexts, ResourceTable, ResourceTables};
 
 /// Runtime representation of a component instance and all state necessary for
 /// the instance itself.
@@ -39,6 +41,28 @@ mod transcode;
 pub struct ComponentInstance {
     /// Size and offset information for the trailing `VMComponentContext`.
     offsets: VMComponentOffsets<HostPtr>,
+
+    /// For more information about this see the documentation on
+    /// `Instance::vmctx_self_reference`.
+    vmctx_self_reference: SendSyncPtr<VMComponentContext>,
+
+    /// Runtime type information about this component.
+    runtime_info: Arc<dyn ComponentRuntimeInfo>,
+
+    /// State of resources for all `TypeResourceTableIndex` values for this
+    /// component.
+    ///
+    /// This is paired with other information to create a `ResourceTables` which
+    /// is how this field is manipulated.
+    component_resource_tables: PrimaryMap<TypeResourceTableIndex, ResourceTable>,
+
+    /// Storage for the type information about resources within this component
+    /// instance.
+    ///
+    /// This is actually `Arc<PrimaryMap<ResourceIndex, ResourceType>>` but that
+    /// can't be in this crate because `ResourceType` isn't here. Not using `dyn
+    /// Any` is left as an exercise for a future refactoring.
+    resource_types: Arc<dyn Any + Send + Sync>,
 
     /// A zero-sized field which represents the end of the struct for the actual
     /// `VMComponentContext` to be allocated behind.
@@ -55,6 +79,8 @@ pub struct ComponentInstance {
 ///   end up being a `VMComponentContext`.
 /// * `data` - this is the data pointer associated with the `VMLowering` for
 ///   which this function pointer was registered.
+/// * `ty` - the type index, relative to the tables in `vmctx`, that is the
+///   type of the function being called.
 /// * `flags` - the component flags for may_enter/leave corresponding to the
 ///   component instance that the lowering happened within.
 /// * `opt_memory` - this nullable pointer represents the memory configuration
@@ -70,18 +96,19 @@ pub struct ComponentInstance {
 /// * `nargs_and_results` - the size, in units of `ValRaw`, of
 ///   `args_and_results`.
 //
-// FIXME: 8 arguments is probably too many. The `data` through `string-encoding`
+// FIXME: 9 arguments is probably too many. The `data` through `string-encoding`
 // parameters should probably get packaged up into the `VMComponentContext`.
 // Needs benchmarking one way or another though to figure out what the best
 // balance is here.
 pub type VMLoweringCallee = extern "C" fn(
     vmctx: *mut VMOpaqueContext,
     data: *mut u8,
+    ty: TypeFuncIndex,
     flags: InstanceFlags,
     opt_memory: *mut VMMemoryDefinition,
-    opt_realloc: *mut VMCallerCheckedFuncRef,
+    opt_realloc: *mut VMFuncRef,
     string_encoding: StringEncoding,
-    args_and_results: *mut ValRaw,
+    args_and_results: *mut mem::MaybeUninit<ValRaw>,
     nargs_and_results: usize,
 );
 
@@ -108,15 +135,33 @@ pub struct VMLowering {
 /// `ComponentInstance`.
 #[repr(C)]
 // Set an appropriate alignment for this structure where the most-aligned value
-// internally right now is a pointer.
-#[cfg_attr(target_pointer_width = "32", repr(align(4)))]
-#[cfg_attr(target_pointer_width = "64", repr(align(8)))]
+// internally right now `VMGlobalDefinition` which has an alignment of 16 bytes.
+#[repr(align(16))]
 pub struct VMComponentContext {
     /// For more information about this see the equivalent field in `VMContext`
     _marker: marker::PhantomPinned,
 }
 
 impl ComponentInstance {
+    /// Converts the `vmctx` provided into a `ComponentInstance` and runs the
+    /// provided closure with that instance.
+    ///
+    /// # Unsafety
+    ///
+    /// This is `unsafe` because `vmctx` cannot be guaranteed to be a valid
+    /// pointer and it cannot be proven statically that it's safe to get a
+    /// mutable reference at this time to the instance from `vmctx`.
+    pub unsafe fn from_vmctx<R>(
+        vmctx: *mut VMComponentContext,
+        f: impl FnOnce(&mut ComponentInstance) -> R,
+    ) -> R {
+        let ptr = vmctx
+            .cast::<u8>()
+            .sub(mem::size_of::<ComponentInstance>())
+            .cast::<ComponentInstance>();
+        f(&mut *ptr)
+    }
+
     /// Returns the layout corresponding to what would be an allocation of a
     /// `ComponentInstance` for the `offsets` provided.
     ///
@@ -138,31 +183,59 @@ impl ComponentInstance {
     /// the shape of the component being instantiated and `store` is a pointer
     /// back to the Wasmtime store for host functions to have access to.
     unsafe fn new_at(
-        ptr: *mut ComponentInstance,
+        ptr: NonNull<ComponentInstance>,
         alloc_size: usize,
         offsets: VMComponentOffsets<HostPtr>,
+        runtime_info: Arc<dyn ComponentRuntimeInfo>,
+        resource_types: Arc<dyn Any + Send + Sync>,
         store: *mut dyn Store,
     ) {
         assert!(alloc_size >= Self::alloc_layout(&offsets).size());
 
+        let num_tables = runtime_info.component().num_resource_tables;
+        let mut component_resource_tables = PrimaryMap::with_capacity(num_tables);
+        for _ in 0..num_tables {
+            component_resource_tables.push(ResourceTable::default());
+        }
+
         ptr::write(
-            ptr,
+            ptr.as_ptr(),
             ComponentInstance {
                 offsets,
+                vmctx_self_reference: SendSyncPtr::new(
+                    NonNull::new(
+                        ptr.as_ptr()
+                            .cast::<u8>()
+                            .add(mem::size_of::<ComponentInstance>())
+                            .cast(),
+                    )
+                    .unwrap(),
+                ),
+                component_resource_tables,
+                runtime_info,
+                resource_types,
                 vmctx: VMComponentContext {
                     _marker: marker::PhantomPinned,
                 },
             },
         );
 
-        (*ptr).initialize_vmctx(store);
+        (*ptr.as_ptr()).initialize_vmctx(store);
     }
 
     fn vmctx(&self) -> *mut VMComponentContext {
-        &self.vmctx as *const VMComponentContext as *mut VMComponentContext
+        let addr = std::ptr::addr_of!(self.vmctx);
+        Strict::with_addr(self.vmctx_self_reference.as_ptr(), Strict::addr(addr))
     }
 
-    unsafe fn vmctx_plus_offset<T>(&self, offset: u32) -> *mut T {
+    unsafe fn vmctx_plus_offset<T>(&self, offset: u32) -> *const T {
+        self.vmctx()
+            .cast::<u8>()
+            .add(usize::try_from(offset).unwrap())
+            .cast()
+    }
+
+    unsafe fn vmctx_plus_offset_mut<T>(&mut self, offset: u32) -> *mut T {
         self.vmctx()
             .cast::<u8>()
             .add(usize::try_from(offset).unwrap())
@@ -171,8 +244,14 @@ impl ComponentInstance {
 
     /// Returns a pointer to the "may leave" flag for this instance specified
     /// for canonical lowering and lifting operations.
+    #[inline]
     pub fn instance_flags(&self, instance: RuntimeComponentInstanceIndex) -> InstanceFlags {
-        unsafe { InstanceFlags(self.vmctx_plus_offset(self.offsets.instance_flags(instance))) }
+        unsafe {
+            let ptr = self
+                .vmctx_plus_offset::<VMGlobalDefinition>(self.offsets.instance_flags(instance))
+                .cast_mut();
+            InstanceFlags(SendSyncPtr::new(NonNull::new(ptr).unwrap()))
+        }
     }
 
     /// Returns the store that this component was created with.
@@ -201,7 +280,7 @@ impl ComponentInstance {
     ///
     /// This can only be called after `idx` has been initialized at runtime
     /// during the instantiation process of a component.
-    pub fn runtime_realloc(&self, idx: RuntimeReallocIndex) -> NonNull<VMCallerCheckedFuncRef> {
+    pub fn runtime_realloc(&self, idx: RuntimeReallocIndex) -> NonNull<VMFuncRef> {
         unsafe {
             let ret = *self.vmctx_plus_offset::<NonNull<_>>(self.offsets.runtime_realloc(idx));
             debug_assert!(ret.as_ptr() as usize != INVALID_PTR);
@@ -213,10 +292,7 @@ impl ComponentInstance {
     ///
     /// This can only be called after `idx` has been initialized at runtime
     /// during the instantiation process of a component.
-    pub fn runtime_post_return(
-        &self,
-        idx: RuntimePostReturnIndex,
-    ) -> NonNull<VMCallerCheckedFuncRef> {
+    pub fn runtime_post_return(&self, idx: RuntimePostReturnIndex) -> NonNull<VMFuncRef> {
         unsafe {
             let ret = *self.vmctx_plus_offset::<NonNull<_>>(self.offsets.runtime_post_return(idx));
             debug_assert!(ret.as_ptr() as usize != INVALID_PTR);
@@ -238,39 +314,25 @@ impl ComponentInstance {
         }
     }
 
-    /// Returns the core wasm function pointer corresponding to the lowering
-    /// index specified.
+    /// Returns the core wasm `funcref` corresponding to the trampoline
+    /// specified.
     ///
     /// The returned function is suitable to pass directly to a wasm module
-    /// instantiation and the function is a cranelift-compiled trampoline.
+    /// instantiation and the function contains cranelift-compiled trampolines.
     ///
     /// This can only be called after `idx` has been initialized at runtime
     /// during the instantiation process of a component.
-    pub fn lowering_anyfunc(&self, idx: LoweredIndex) -> NonNull<VMCallerCheckedFuncRef> {
-        unsafe { self.anyfunc(self.offsets.lowering_anyfunc(idx)) }
-    }
-
-    /// Same as `lowering_anyfunc` except for the functions that always trap.
-    pub fn always_trap_anyfunc(
-        &self,
-        idx: RuntimeAlwaysTrapIndex,
-    ) -> NonNull<VMCallerCheckedFuncRef> {
-        unsafe { self.anyfunc(self.offsets.always_trap_anyfunc(idx)) }
-    }
-
-    /// Same as `lowering_anyfunc` except for the transcoding functions.
-    pub fn transcoder_anyfunc(
-        &self,
-        idx: RuntimeTranscoderIndex,
-    ) -> NonNull<VMCallerCheckedFuncRef> {
-        unsafe { self.anyfunc(self.offsets.transcoder_anyfunc(idx)) }
-    }
-
-    unsafe fn anyfunc(&self, offset: u32) -> NonNull<VMCallerCheckedFuncRef> {
-        let ret = self.vmctx_plus_offset::<VMCallerCheckedFuncRef>(offset);
-        debug_assert!((*ret).func_ptr.as_ptr() as usize != INVALID_PTR);
-        debug_assert!((*ret).vmctx as usize != INVALID_PTR);
-        NonNull::new(ret).unwrap()
+    pub fn trampoline_func_ref(&self, idx: TrampolineIndex) -> NonNull<VMFuncRef> {
+        unsafe {
+            let offset = self.offsets.trampoline_func_ref(idx);
+            let ret = self.vmctx_plus_offset::<VMFuncRef>(offset);
+            debug_assert!(
+                mem::transmute::<Option<NonNull<VMWasmCallFunction>>, usize>((*ret).wasm_call)
+                    != INVALID_PTR
+            );
+            debug_assert!((*ret).vmctx as usize != INVALID_PTR);
+            NonNull::new(ret.cast_mut()).unwrap()
+        }
     }
 
     /// Stores the runtime memory pointer at the index specified.
@@ -284,20 +346,16 @@ impl ComponentInstance {
     pub fn set_runtime_memory(&mut self, idx: RuntimeMemoryIndex, ptr: *mut VMMemoryDefinition) {
         unsafe {
             debug_assert!(!ptr.is_null());
-            let storage = self.vmctx_plus_offset(self.offsets.runtime_memory(idx));
+            let storage = self.vmctx_plus_offset_mut(self.offsets.runtime_memory(idx));
             debug_assert!(*storage as usize == INVALID_PTR);
             *storage = ptr;
         }
     }
 
     /// Same as `set_runtime_memory` but for realloc function pointers.
-    pub fn set_runtime_realloc(
-        &mut self,
-        idx: RuntimeReallocIndex,
-        ptr: NonNull<VMCallerCheckedFuncRef>,
-    ) {
+    pub fn set_runtime_realloc(&mut self, idx: RuntimeReallocIndex, ptr: NonNull<VMFuncRef>) {
         unsafe {
-            let storage = self.vmctx_plus_offset(self.offsets.runtime_realloc(idx));
+            let storage = self.vmctx_plus_offset_mut(self.offsets.runtime_realloc(idx));
             debug_assert!(*storage as usize == INVALID_PTR);
             *storage = ptr.as_ptr();
         }
@@ -307,33 +365,18 @@ impl ComponentInstance {
     pub fn set_runtime_post_return(
         &mut self,
         idx: RuntimePostReturnIndex,
-        ptr: NonNull<VMCallerCheckedFuncRef>,
+        ptr: NonNull<VMFuncRef>,
     ) {
         unsafe {
-            let storage = self.vmctx_plus_offset(self.offsets.runtime_post_return(idx));
+            let storage = self.vmctx_plus_offset_mut(self.offsets.runtime_post_return(idx));
             debug_assert!(*storage as usize == INVALID_PTR);
             *storage = ptr.as_ptr();
         }
     }
 
-    /// Configures a lowered host function with all the pieces necessary.
-    ///
-    /// * `idx` - the index that's being configured
-    /// * `lowering` - the host-related closure information to get invoked when
-    ///   the lowering is called.
-    /// * `anyfunc_func_ptr` - the cranelift-compiled trampoline which will
-    ///   read the `VMComponentContext` and invoke `lowering` provided. This
-    ///   function pointer will be passed to wasm if wasm needs to instantiate
-    ///   something.
-    /// * `anyfunc_type_index` - the signature index for the core wasm type
-    ///   registered within the engine already.
-    pub fn set_lowering(
-        &mut self,
-        idx: LoweredIndex,
-        lowering: VMLowering,
-        anyfunc_func_ptr: NonNull<VMFunctionBody>,
-        anyfunc_type_index: VMSharedSignatureIndex,
-    ) {
+    /// Configures host runtime lowering information associated with imported f
+    /// functions for the `idx` specified.
+    pub fn set_lowering(&mut self, idx: LoweredIndex, lowering: VMLowering) {
         unsafe {
             debug_assert!(
                 *self.vmctx_plus_offset::<usize>(self.offsets.lowering_callee(idx)) == INVALID_PTR
@@ -341,62 +384,72 @@ impl ComponentInstance {
             debug_assert!(
                 *self.vmctx_plus_offset::<usize>(self.offsets.lowering_data(idx)) == INVALID_PTR
             );
-            *self.vmctx_plus_offset(self.offsets.lowering(idx)) = lowering;
-            self.set_anyfunc(
-                self.offsets.lowering_anyfunc(idx),
-                anyfunc_func_ptr,
-                anyfunc_type_index,
-            );
+            *self.vmctx_plus_offset_mut(self.offsets.lowering(idx)) = lowering;
         }
     }
 
-    /// Same as `set_lowering` but for the "always trap" functions.
-    pub fn set_always_trap(
+    /// Same as `set_lowering` but for the resource.drop functions.
+    pub fn set_trampoline(
         &mut self,
-        idx: RuntimeAlwaysTrapIndex,
-        func_ptr: NonNull<VMFunctionBody>,
+        idx: TrampolineIndex,
+        wasm_call: NonNull<VMWasmCallFunction>,
+        native_call: NonNull<VMNativeCallFunction>,
+        array_call: VMArrayCallFunction,
         type_index: VMSharedSignatureIndex,
     ) {
-        unsafe { self.set_anyfunc(self.offsets.always_trap_anyfunc(idx), func_ptr, type_index) }
+        unsafe {
+            let offset = self.offsets.trampoline_func_ref(idx);
+            debug_assert!(*self.vmctx_plus_offset::<usize>(offset) == INVALID_PTR);
+            let vmctx = VMOpaqueContext::from_vmcomponent(self.vmctx());
+            *self.vmctx_plus_offset_mut(offset) = VMFuncRef {
+                wasm_call: Some(wasm_call),
+                native_call,
+                array_call,
+                type_index,
+                vmctx,
+            };
+        }
     }
 
-    /// Same as `set_lowering` but for the transcoder functions.
-    pub fn set_transcoder(
+    /// Configures the destructor for a resource at the `idx` specified.
+    ///
+    /// This is required to be called for each resource as it's defined within a
+    /// component during the instantiation process.
+    pub fn set_resource_destructor(
         &mut self,
-        idx: RuntimeTranscoderIndex,
-        func_ptr: NonNull<VMFunctionBody>,
-        type_index: VMSharedSignatureIndex,
+        idx: ResourceIndex,
+        dtor: Option<NonNull<VMFuncRef>>,
     ) {
-        unsafe { self.set_anyfunc(self.offsets.transcoder_anyfunc(idx), func_ptr, type_index) }
+        unsafe {
+            let offset = self.offsets.resource_destructor(idx);
+            debug_assert!(*self.vmctx_plus_offset::<usize>(offset) == INVALID_PTR);
+            *self.vmctx_plus_offset_mut(offset) = dtor;
+        }
     }
 
-    unsafe fn set_anyfunc(
-        &mut self,
-        offset: u32,
-        func_ptr: NonNull<VMFunctionBody>,
-        type_index: VMSharedSignatureIndex,
-    ) {
-        debug_assert!(*self.vmctx_plus_offset::<usize>(offset) == INVALID_PTR);
-        let vmctx = self.vmctx();
-        *self.vmctx_plus_offset(offset) = VMCallerCheckedFuncRef {
-            func_ptr,
-            type_index,
-            vmctx: VMOpaqueContext::from_vmcomponent(vmctx),
-        };
+    /// Returns the destructor, if any, for `idx`.
+    ///
+    /// This is only valid to call after `set_resource_destructor`, or typically
+    /// after instantiation.
+    pub fn resource_destructor(&self, idx: ResourceIndex) -> Option<NonNull<VMFuncRef>> {
+        unsafe {
+            let offset = self.offsets.resource_destructor(idx);
+            debug_assert!(*self.vmctx_plus_offset::<usize>(offset) != INVALID_PTR);
+            *self.vmctx_plus_offset(offset)
+        }
     }
 
     unsafe fn initialize_vmctx(&mut self, store: *mut dyn Store) {
-        *self.vmctx_plus_offset(self.offsets.magic()) = VMCOMPONENT_MAGIC;
-        *self.vmctx_plus_offset(self.offsets.transcode_libcalls()) =
-            &transcode::VMBuiltinTranscodeArray::INIT;
-        *self.vmctx_plus_offset(self.offsets.store()) = store;
-        *self.vmctx_plus_offset(self.offsets.limits()) = (*store).vmruntime_limits();
+        *self.vmctx_plus_offset_mut(self.offsets.magic()) = VMCOMPONENT_MAGIC;
+        *self.vmctx_plus_offset_mut(self.offsets.libcalls()) = &libcalls::VMComponentLibcalls::INIT;
+        *self.vmctx_plus_offset_mut(self.offsets.store()) = store;
+        *self.vmctx_plus_offset_mut(self.offsets.limits()) = (*store).vmruntime_limits();
 
         for i in 0..self.offsets.num_runtime_component_instances {
             let i = RuntimeComponentInstanceIndex::from_u32(i);
             let mut def = VMGlobalDefinition::new();
             *def.as_i32_mut() = FLAG_MAY_ENTER | FLAG_MAY_LEAVE;
-            *self.instance_flags(i).0 = def;
+            *self.instance_flags(i).as_raw() = def;
         }
 
         // In debug mode set non-null bad values to all "pointer looking" bits
@@ -407,38 +460,173 @@ impl ComponentInstance {
             for i in 0..self.offsets.num_lowerings {
                 let i = LoweredIndex::from_u32(i);
                 let offset = self.offsets.lowering_callee(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
                 let offset = self.offsets.lowering_data(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
-                let offset = self.offsets.lowering_anyfunc(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
             }
-            for i in 0..self.offsets.num_always_trap {
-                let i = RuntimeAlwaysTrapIndex::from_u32(i);
-                let offset = self.offsets.always_trap_anyfunc(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
-            }
-            for i in 0..self.offsets.num_transcoders {
-                let i = RuntimeTranscoderIndex::from_u32(i);
-                let offset = self.offsets.transcoder_anyfunc(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+            for i in 0..self.offsets.num_trampolines {
+                let i = TrampolineIndex::from_u32(i);
+                let offset = self.offsets.trampoline_func_ref(i);
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
             }
             for i in 0..self.offsets.num_runtime_memories {
                 let i = RuntimeMemoryIndex::from_u32(i);
                 let offset = self.offsets.runtime_memory(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
             }
             for i in 0..self.offsets.num_runtime_reallocs {
                 let i = RuntimeReallocIndex::from_u32(i);
                 let offset = self.offsets.runtime_realloc(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
             }
             for i in 0..self.offsets.num_runtime_post_returns {
                 let i = RuntimePostReturnIndex::from_u32(i);
                 let offset = self.offsets.runtime_post_return(i);
-                *self.vmctx_plus_offset(offset) = INVALID_PTR;
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
+            }
+            for i in 0..self.offsets.num_resources {
+                let i = ResourceIndex::from_u32(i);
+                let offset = self.offsets.resource_destructor(i);
+                *self.vmctx_plus_offset_mut(offset) = INVALID_PTR;
             }
         }
+    }
+
+    /// Returns a reference to the component type information for this instance.
+    pub fn component(&self) -> &Component {
+        self.runtime_info.component()
+    }
+
+    /// Returns the type information that this instance is instantiated with.
+    pub fn component_types(&self) -> &Arc<ComponentTypes> {
+        self.runtime_info.component_types()
+    }
+
+    /// Returns a reference to the resource type information as a `dyn Any`.
+    ///
+    /// Wasmtime is the one which then downcasts this to the appropriate type.
+    pub fn resource_types(&self) -> &Arc<dyn Any + Send + Sync> {
+        &self.resource_types
+    }
+
+    /// Returns whether the resource that `ty` points to is owned by the
+    /// instance that `ty` correspond to.
+    ///
+    /// This is used when lowering borrows to skip table management and instead
+    /// thread through the underlying representation directly.
+    pub fn resource_owned_by_own_instance(&self, ty: TypeResourceTableIndex) -> bool {
+        let resource = &self.component_types()[ty];
+        let component = self.component();
+        let idx = match component.defined_resource_index(resource.ty) {
+            Some(idx) => idx,
+            None => return false,
+        };
+        resource.instance == component.defined_resource_instances[idx]
+    }
+
+    /// Implementation of the `resource.new` intrinsic for `i32`
+    /// representations.
+    pub fn resource_new32(&mut self, resource: TypeResourceTableIndex, rep: u32) -> u32 {
+        self.resource_tables().resource_new(Some(resource), rep)
+    }
+
+    /// Implementation of the `resource.rep` intrinsic for `i32`
+    /// representations.
+    pub fn resource_rep32(&mut self, resource: TypeResourceTableIndex, idx: u32) -> Result<u32> {
+        self.resource_tables().resource_rep(Some(resource), idx)
+    }
+
+    /// Implementation of the `resource.drop` intrinsic.
+    pub fn resource_drop(
+        &mut self,
+        resource: TypeResourceTableIndex,
+        idx: u32,
+    ) -> Result<Option<u32>> {
+        self.resource_tables().resource_drop(Some(resource), idx)
+    }
+
+    /// NB: this is intended to be a private method. This does not have
+    /// `host_table` information at this time meaning it's only suitable for
+    /// working with resources specified to this component which is currently
+    /// all that this is used for.
+    ///
+    /// If necessary though it's possible to enhance the `Store` trait to thread
+    /// through the relevant information and get `host_table` to be `Some` here.
+    fn resource_tables(&mut self) -> ResourceTables<'_> {
+        ResourceTables {
+            host_table: None,
+            calls: unsafe { (&mut *self.store()).component_calls() },
+            tables: Some(&mut self.component_resource_tables),
+        }
+    }
+
+    /// Returns the runtime state of resources associated with this component.
+    #[inline]
+    pub fn component_resource_tables(
+        &mut self,
+    ) -> &mut PrimaryMap<TypeResourceTableIndex, ResourceTable> {
+        &mut self.component_resource_tables
+    }
+
+    /// Returns the destructor and instance flags for the specified resource
+    /// table type.
+    ///
+    /// This will lookup the origin definition of the `ty` table and return the
+    /// destructor/flags for that.
+    pub fn dtor_and_flags(
+        &self,
+        ty: TypeResourceTableIndex,
+    ) -> (Option<NonNull<VMFuncRef>>, Option<InstanceFlags>) {
+        let resource = self.component_types()[ty].ty;
+        let dtor = self.resource_destructor(resource);
+        let component = self.component();
+        let flags = component.defined_resource_index(resource).map(|i| {
+            let instance = component.defined_resource_instances[i];
+            self.instance_flags(instance)
+        });
+        (dtor, flags)
+    }
+
+    pub(crate) fn resource_transfer_own(
+        &mut self,
+        idx: u32,
+        src: TypeResourceTableIndex,
+        dst: TypeResourceTableIndex,
+    ) -> Result<u32> {
+        let mut tables = self.resource_tables();
+        let rep = tables.resource_lift_own(Some(src), idx)?;
+        Ok(tables.resource_lower_own(Some(dst), rep))
+    }
+
+    pub(crate) fn resource_transfer_borrow(
+        &mut self,
+        idx: u32,
+        src: TypeResourceTableIndex,
+        dst: TypeResourceTableIndex,
+    ) -> Result<u32> {
+        let dst_owns_resource = self.resource_owned_by_own_instance(dst);
+        let mut tables = self.resource_tables();
+        let rep = tables.resource_lift_borrow(Some(src), idx)?;
+        // Implement `lower_borrow`'s special case here where if a borrow's
+        // resource type is owned by `dst` then the destination receives the
+        // representation directly rather than a handle to the representation.
+        //
+        // This can perhaps become a different libcall in the future to avoid
+        // this check at runtime since we know at compile time whether the
+        // destination type owns the resource, but that's left as a future
+        // refactoring if truly necessary.
+        if dst_owns_resource {
+            return Ok(rep);
+        }
+        Ok(tables.resource_lower_borrow(Some(dst), rep))
+    }
+
+    pub(crate) fn resource_enter_call(&mut self) {
+        self.resource_tables().enter_call()
+    }
+
+    pub(crate) fn resource_exit_call(&mut self) -> Result<()> {
+        self.resource_tables().exit_call()
     }
 }
 
@@ -460,19 +648,18 @@ impl VMComponentContext {
 /// This type can be dereferenced to `ComponentInstance` to access the
 /// underlying methods.
 pub struct OwnedComponentInstance {
-    ptr: ptr::NonNull<ComponentInstance>,
+    ptr: SendSyncPtr<ComponentInstance>,
 }
-
-// Using `NonNull` turns off auto-derivation of these traits but the owned usage
-// here enables these trait impls so long as `ComponentInstance` itself
-// implements these traits.
-unsafe impl Send for OwnedComponentInstance where ComponentInstance: Send {}
-unsafe impl Sync for OwnedComponentInstance where ComponentInstance: Sync {}
 
 impl OwnedComponentInstance {
     /// Allocates a new `ComponentInstance + VMComponentContext` pair on the
     /// heap with `malloc` and configures it for the `component` specified.
-    pub fn new(component: &Component, store: *mut dyn Store) -> OwnedComponentInstance {
+    pub fn new(
+        runtime_info: Arc<dyn ComponentRuntimeInfo>,
+        resource_types: Arc<dyn Any + Send + Sync>,
+        store: *mut dyn Store,
+    ) -> OwnedComponentInstance {
+        let component = runtime_info.component();
         let offsets = VMComponentOffsets::new(HostPtr, component);
         let layout = ComponentInstance::alloc_layout(&offsets);
         unsafe {
@@ -485,10 +672,18 @@ impl OwnedComponentInstance {
             // zeroed allocation is done here to try to contain
             // use-before-initialized issues.
             let ptr = alloc::alloc_zeroed(layout) as *mut ComponentInstance;
-            let ptr = ptr::NonNull::new(ptr).unwrap();
+            let ptr = NonNull::new(ptr).unwrap();
 
-            ComponentInstance::new_at(ptr.as_ptr(), layout.size(), offsets, store);
+            ComponentInstance::new_at(
+                ptr,
+                layout.size(),
+                offsets,
+                runtime_info,
+                resource_types,
+                store,
+            );
 
+            let ptr = SendSyncPtr::new(ptr);
             OwnedComponentInstance { ptr }
         }
     }
@@ -501,17 +696,18 @@ impl OwnedComponentInstance {
         &mut *self.ptr.as_ptr()
     }
 
+    /// Returns the underlying component instance's raw pointer.
+    pub fn instance_ptr(&self) -> *mut ComponentInstance {
+        self.ptr.as_ptr()
+    }
+
     /// See `ComponentInstance::set_runtime_memory`
     pub fn set_runtime_memory(&mut self, idx: RuntimeMemoryIndex, ptr: *mut VMMemoryDefinition) {
         unsafe { self.instance_mut().set_runtime_memory(idx, ptr) }
     }
 
     /// See `ComponentInstance::set_runtime_realloc`
-    pub fn set_runtime_realloc(
-        &mut self,
-        idx: RuntimeReallocIndex,
-        ptr: NonNull<VMCallerCheckedFuncRef>,
-    ) {
+    pub fn set_runtime_realloc(&mut self, idx: RuntimeReallocIndex, ptr: NonNull<VMFuncRef>) {
         unsafe { self.instance_mut().set_runtime_realloc(idx, ptr) }
     }
 
@@ -519,49 +715,43 @@ impl OwnedComponentInstance {
     pub fn set_runtime_post_return(
         &mut self,
         idx: RuntimePostReturnIndex,
-        ptr: NonNull<VMCallerCheckedFuncRef>,
+        ptr: NonNull<VMFuncRef>,
     ) {
         unsafe { self.instance_mut().set_runtime_post_return(idx, ptr) }
     }
 
     /// See `ComponentInstance::set_lowering`
-    pub fn set_lowering(
-        &mut self,
-        idx: LoweredIndex,
-        lowering: VMLowering,
-        anyfunc_func_ptr: NonNull<VMFunctionBody>,
-        anyfunc_type_index: VMSharedSignatureIndex,
-    ) {
-        unsafe {
-            self.instance_mut()
-                .set_lowering(idx, lowering, anyfunc_func_ptr, anyfunc_type_index)
-        }
+    pub fn set_lowering(&mut self, idx: LoweredIndex, lowering: VMLowering) {
+        unsafe { self.instance_mut().set_lowering(idx, lowering) }
     }
 
-    /// See `ComponentInstance::set_always_trap`
-    pub fn set_always_trap(
+    /// See `ComponentInstance::set_resource_drop`
+    pub fn set_trampoline(
         &mut self,
-        idx: RuntimeAlwaysTrapIndex,
-        func_ptr: NonNull<VMFunctionBody>,
+        idx: TrampolineIndex,
+        wasm_call: NonNull<VMWasmCallFunction>,
+        native_call: NonNull<VMNativeCallFunction>,
+        array_call: VMArrayCallFunction,
         type_index: VMSharedSignatureIndex,
     ) {
         unsafe {
             self.instance_mut()
-                .set_always_trap(idx, func_ptr, type_index)
+                .set_trampoline(idx, wasm_call, native_call, array_call, type_index)
         }
     }
 
-    /// See `ComponentInstance::set_transcoder`
-    pub fn set_transcoder(
+    /// See `ComponentInstance::set_resource_destructor`
+    pub fn set_resource_destructor(
         &mut self,
-        idx: RuntimeTranscoderIndex,
-        func_ptr: NonNull<VMFunctionBody>,
-        type_index: VMSharedSignatureIndex,
+        idx: ResourceIndex,
+        dtor: Option<NonNull<VMFuncRef>>,
     ) {
-        unsafe {
-            self.instance_mut()
-                .set_transcoder(idx, func_ptr, type_index)
-        }
+        unsafe { self.instance_mut().set_resource_destructor(idx, dtor) }
+    }
+
+    /// See `ComponentInstance::resource_types`
+    pub fn resource_types_mut(&mut self) -> &mut Arc<dyn Any + Send + Sync> {
+        unsafe { &mut (*self.ptr.as_ptr()).resource_types }
     }
 }
 
@@ -603,54 +793,63 @@ impl VMOpaqueContext {
 
 #[allow(missing_docs)]
 #[repr(transparent)]
-pub struct InstanceFlags(*mut VMGlobalDefinition);
+#[derive(Copy, Clone)]
+pub struct InstanceFlags(SendSyncPtr<VMGlobalDefinition>);
 
 #[allow(missing_docs)]
 impl InstanceFlags {
     #[inline]
     pub unsafe fn may_leave(&self) -> bool {
-        *(*self.0).as_i32() & FLAG_MAY_LEAVE != 0
+        *(*self.as_raw()).as_i32() & FLAG_MAY_LEAVE != 0
     }
 
     #[inline]
     pub unsafe fn set_may_leave(&mut self, val: bool) {
         if val {
-            *(*self.0).as_i32_mut() |= FLAG_MAY_LEAVE;
+            *(*self.as_raw()).as_i32_mut() |= FLAG_MAY_LEAVE;
         } else {
-            *(*self.0).as_i32_mut() &= !FLAG_MAY_LEAVE;
+            *(*self.as_raw()).as_i32_mut() &= !FLAG_MAY_LEAVE;
         }
     }
 
     #[inline]
     pub unsafe fn may_enter(&self) -> bool {
-        *(*self.0).as_i32() & FLAG_MAY_ENTER != 0
+        *(*self.as_raw()).as_i32() & FLAG_MAY_ENTER != 0
     }
 
     #[inline]
     pub unsafe fn set_may_enter(&mut self, val: bool) {
         if val {
-            *(*self.0).as_i32_mut() |= FLAG_MAY_ENTER;
+            *(*self.as_raw()).as_i32_mut() |= FLAG_MAY_ENTER;
         } else {
-            *(*self.0).as_i32_mut() &= !FLAG_MAY_ENTER;
+            *(*self.as_raw()).as_i32_mut() &= !FLAG_MAY_ENTER;
         }
     }
 
     #[inline]
     pub unsafe fn needs_post_return(&self) -> bool {
-        *(*self.0).as_i32() & FLAG_NEEDS_POST_RETURN != 0
+        *(*self.as_raw()).as_i32() & FLAG_NEEDS_POST_RETURN != 0
     }
 
     #[inline]
     pub unsafe fn set_needs_post_return(&mut self, val: bool) {
         if val {
-            *(*self.0).as_i32_mut() |= FLAG_NEEDS_POST_RETURN;
+            *(*self.as_raw()).as_i32_mut() |= FLAG_NEEDS_POST_RETURN;
         } else {
-            *(*self.0).as_i32_mut() &= !FLAG_NEEDS_POST_RETURN;
+            *(*self.as_raw()).as_i32_mut() &= !FLAG_NEEDS_POST_RETURN;
         }
     }
 
     #[inline]
     pub fn as_raw(&self) -> *mut VMGlobalDefinition {
-        self.0
+        self.0.as_ptr()
     }
+}
+
+/// Runtime information about a component stored locally for reflection.
+pub trait ComponentRuntimeInfo: Send + Sync + 'static {
+    /// Returns the type information about the compiled component.
+    fn component(&self) -> &Component;
+    /// Returns a handle to the tables of type information for this component.
+    fn component_types(&self) -> &Arc<ComponentTypes>;
 }

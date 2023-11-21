@@ -5,14 +5,12 @@ use crate::unwind::UnwindRegistration;
 use anyhow::{anyhow, bail, Context, Result};
 use object::read::{File, Object, ObjectSection};
 use object::ObjectSymbol;
-use std::mem;
 use std::mem::ManuallyDrop;
 use std::ops::Range;
 use wasmtime_environ::obj;
-use wasmtime_environ::FunctionLoc;
 use wasmtime_jit_icache_coherence as icache_coherence;
 use wasmtime_runtime::libcalls;
-use wasmtime_runtime::{MmapVec, VMTrampoline};
+use wasmtime_runtime::MmapVec;
 
 /// Management of executable memory within a `MmapVec`
 ///
@@ -151,22 +149,26 @@ impl CodeMemory {
     }
 
     /// Returns a reference to the underlying `MmapVec` this memory owns.
+    #[inline]
     pub fn mmap(&self) -> &MmapVec {
         &self.mmap
     }
 
     /// Returns the contents of the text section of the ELF executable this
     /// represents.
+    #[inline]
     pub fn text(&self) -> &[u8] {
         &self.mmap[self.text.clone()]
     }
 
     /// Returns the contents of the `ELF_WASMTIME_DWARF` section.
+    #[inline]
     pub fn dwarf(&self) -> &[u8] {
         &self.mmap[self.dwarf.clone()]
     }
 
     /// Returns the data in the `ELF_NAME_DATA` section.
+    #[inline]
     pub fn func_name_data(&self) -> &[u8] {
         &self.mmap[self.func_name_data.clone()]
     }
@@ -176,38 +178,30 @@ impl CodeMemory {
     ///
     /// This is used for initialization of memories and all data ranges stored
     /// in a `Module` are relative to the slice returned here.
+    #[inline]
     pub fn wasm_data(&self) -> &[u8] {
         &self.mmap[self.wasm_data.clone()]
     }
 
     /// Returns the encoded address map section used to pass to
     /// `wasmtime_environ::lookup_file_pos`.
+    #[inline]
     pub fn address_map_data(&self) -> &[u8] {
         &self.mmap[self.address_map_data.clone()]
     }
 
     /// Returns the contents of the `ELF_WASMTIME_INFO` section, or an empty
     /// slice if it wasn't found.
+    #[inline]
     pub fn wasmtime_info(&self) -> &[u8] {
         &self.mmap[self.info_data.clone()]
     }
 
     /// Returns the contents of the `ELF_WASMTIME_TRAPS` section, or an empty
     /// slice if it wasn't found.
+    #[inline]
     pub fn trap_data(&self) -> &[u8] {
         &self.mmap[self.trap_data.clone()]
-    }
-
-    /// Returns a `VMTrampoline` function pointer for the given function in the
-    /// text section.
-    ///
-    /// # Unsafety
-    ///
-    /// This function is unsafe as there's no guarantee that the returned
-    /// function pointer is valid.
-    pub unsafe fn vmtrampoline(&self, loc: FunctionLoc) -> VMTrampoline {
-        let ptr = self.text()[loc.start as usize..][..loc.length as usize].as_ptr();
-        mem::transmute::<*const u8, VMTrampoline>(ptr)
     }
 
     /// Publishes the internal ELF image to be ready for execution.
@@ -265,7 +259,7 @@ impl CodeMemory {
             // Switch the executable portion from readonly to read/execute.
             self.mmap
                 .make_executable(self.text.clone(), self.enable_branch_protection)
-                .expect("unable to make memory executable");
+                .context("unable to make memory executable")?;
 
             // Flush any in-flight instructions from the pipeline
             icache_coherence::pipeline_flush_mt().expect("Failed pipeline flush");
@@ -298,8 +292,16 @@ impl CodeMemory {
                 obj::LibCall::TruncF64 => libcalls::relocs::truncf64 as usize,
                 obj::LibCall::FmaF32 => libcalls::relocs::fmaf32 as usize,
                 obj::LibCall::FmaF64 => libcalls::relocs::fmaf64 as usize,
+                #[cfg(target_arch = "x86_64")]
+                obj::LibCall::X86Pshufb => libcalls::relocs::x86_pshufb as usize,
+                #[cfg(not(target_arch = "x86_64"))]
+                obj::LibCall::X86Pshufb => unreachable!(),
             };
-            *self.mmap.as_mut_ptr().add(offset).cast::<usize>() = libcall;
+            self.mmap
+                .as_mut_ptr()
+                .add(offset)
+                .cast::<usize>()
+                .write_unaligned(libcall);
         }
         Ok(())
     }

@@ -5,7 +5,7 @@ set -ex
 # Determine the name of the tarball
 tag=dev
 if [[ $GITHUB_REF == refs/heads/release-* ]]; then
-  tag=v${GITHUB_REF:19}
+  tag=v$(./ci/print-current-version.sh)
 fi
 pkgname=wasmtime-$tag-src
 
@@ -18,3 +18,5 @@ cargo vendor > .cargo/config.toml
 tar -czf /tmp/$pkgname.tar.gz --transform "s/^\./$pkgname/S" --exclude=.git .
 mkdir -p dist
 mv /tmp/$pkgname.tar.gz dist/
+
+rm .cargo/config.toml

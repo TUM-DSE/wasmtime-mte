@@ -3,20 +3,6 @@
 #![deny(missing_docs, trivial_numeric_casts, unused_extern_crates)]
 #![warn(unused_import_braces)]
 #![cfg_attr(feature = "std", deny(unstable_features))]
-#![cfg_attr(feature = "clippy", plugin(clippy(conf_file = "../../clippy.toml")))]
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
-#![cfg_attr(
-    feature = "cargo-clippy",
-    warn(
-        clippy::float_arithmetic,
-        clippy::mut_mut,
-        clippy::nonminimal_bool,
-        clippy::map_unwrap_or,
-        clippy::clippy::print_stdout,
-        clippy::unicode_not_nfc,
-        clippy::use_self
-    )
-)]
 #![no_std]
 
 #[cfg(not(feature = "std"))]
@@ -40,11 +26,10 @@ mod data_context;
 mod module;
 mod traps;
 
-pub use crate::data_context::{DataContext, DataDescription, Init};
+pub use crate::data_context::{DataDescription, Init};
 pub use crate::module::{
     DataDeclaration, DataId, FuncId, FuncOrDataId, FunctionDeclaration, Linkage, Module,
-    ModuleCompiledFunction, ModuleDeclarations, ModuleError, ModuleExtName, ModuleReloc,
-    ModuleResult,
+    ModuleDeclarations, ModuleError, ModuleReloc, ModuleRelocTarget, ModuleResult,
 };
 pub use crate::traps::TrapSite;
 
@@ -73,5 +58,6 @@ pub fn default_libcall_names() -> Box<dyn Fn(ir::LibCall) -> String + Send + Syn
 
         ir::LibCall::ElfTlsGetAddr => "__tls_get_addr".to_owned(),
         ir::LibCall::ElfTlsGetOffset => "__tls_get_offset".to_owned(),
+        ir::LibCall::X86Pshufb => "__cranelift_x86_pshufb".to_owned(),
     })
 }

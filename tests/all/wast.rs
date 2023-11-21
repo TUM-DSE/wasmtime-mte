@@ -19,18 +19,15 @@ fn run_wast(wast: &str, strategy: Strategy, pooling: bool) -> anyhow::Result<()>
 
     let wast_bytes = std::fs::read(wast).with_context(|| format!("failed to read `{}`", wast))?;
 
-    match strategy {
-        Strategy::Cranelift => {}
-        _ => unimplemented!(),
-    }
-
     let wast = Path::new(wast);
 
     let memory64 = feature_found(wast, "memory64");
     let multi_memory = feature_found(wast, "multi-memory");
     let threads = feature_found(wast, "threads");
+    let function_references = feature_found(wast, "function-references");
     let reference_types = !(threads && feature_found(wast, "proposals"));
     let relaxed_simd = feature_found(wast, "relaxed-simd");
+    let tail_call = feature_found(wast, "tail-call") || feature_found(wast, "function-references");
     let use_shared_memory = feature_found_src(&wast_bytes, "shared_memory")
         || feature_found_src(&wast_bytes, "shared)");
 
@@ -39,17 +36,28 @@ fn run_wast(wast: &str, strategy: Strategy, pooling: bool) -> anyhow::Result<()>
         return Ok(());
     }
 
+    let is_cranelift = match strategy {
+        Strategy::Cranelift => true,
+        _ => false,
+    };
+
     let mut cfg = Config::new();
     cfg.wasm_multi_memory(multi_memory)
         .wasm_threads(threads)
         .wasm_memory64(memory64)
+        .wasm_function_references(function_references)
         .wasm_reference_types(reference_types)
         .wasm_relaxed_simd(relaxed_simd)
-        .cranelift_debug_verifier(true);
+        .wasm_tail_call(tail_call)
+        .strategy(strategy);
+
+    if is_cranelift {
+        cfg.cranelift_debug_verifier(true);
+    }
 
     cfg.wasm_component_model(feature_found(wast, "component-model"));
 
-    if feature_found(wast, "canonicalize-nan") {
+    if feature_found(wast, "canonicalize-nan") && is_cranelift {
         cfg.cranelift_nan_canonicalization(true);
     }
     let test_allocates_lots_of_memory = wast.ends_with("more-than-4gb.wast");
@@ -115,14 +123,16 @@ fn run_wast(wast: &str, strategy: Strategy, pooling: bool) -> anyhow::Result<()>
         }
 
         // The limits here are crafted such that the wast tests should pass.
-        // However, these limits may become insufficient in the future as the wast tests change.
-        // If a wast test fails because of a limit being "exceeded" or if memory/table
-        // fails to grow, the values here will need to be adjusted.
+        // However, these limits may become insufficient in the future as the
+        // wast tests change. If a wast test fails because of a limit being
+        // "exceeded" or if memory/table fails to grow, the values here will
+        // need to be adjusted.
         let mut pool = PoolingAllocationConfig::default();
-        pool.instance_count(450)
-            .instance_memories(if multi_memory { 9 } else { 1 })
-            .instance_tables(4)
-            .instance_memory_pages(805);
+        pool.total_memories(450 * 2)
+            .max_memory_protection_keys(2)
+            .memory_pages(805)
+            .max_memories_per_module(if multi_memory { 9 } else { 1 })
+            .max_tables_per_module(4);
         cfg.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
         Some(lock_pooling())
     } else {
@@ -172,7 +182,7 @@ fn feature_found_src(bytes: &[u8], name: &str) -> bool {
 // specified maximum we can put a cap on the virtual address space reservations
 // made.
 fn lock_pooling() -> impl Drop {
-    const MAX_CONCURRENT_POOLING: u32 = 8;
+    const MAX_CONCURRENT_POOLING: u32 = 4;
 
     static ACTIVE: Lazy<MyState> = Lazy::new(MyState::default);
 

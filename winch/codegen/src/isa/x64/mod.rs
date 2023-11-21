@@ -1,27 +1,27 @@
 use crate::{
     abi::ABI,
-    codegen::{CodeGen, CodeGenContext},
+    codegen::{BuiltinFunctions, CodeGen, CodeGenContext, FuncEnv},
 };
 
 use crate::frame::{DefinedLocals, Frame};
-use crate::isa::x64::masm::MacroAssembler as X64Masm;
+use crate::isa::{x64::masm::MacroAssembler as X64Masm, CallingConvention};
 use crate::masm::MacroAssembler;
 use crate::regalloc::RegAlloc;
 use crate::stack::Stack;
-use crate::trampoline::Trampoline;
-use crate::FuncEnv;
+use crate::trampoline::{Trampoline, TrampolineKind};
 use crate::{
     isa::{Builder, TargetIsa},
-    regset::RegSet,
+    regset::RegBitSet,
 };
 use anyhow::Result;
 use cranelift_codegen::settings::{self, Flags};
 use cranelift_codegen::{isa::x64::settings as x64_settings, Final, MachBufferFinalized};
 use cranelift_codegen::{MachTextSectionBuilder, TextSectionBuilder};
 use target_lexicon::Triple;
-use wasmparser::{FuncType, FuncValidator, FunctionBody, ValidatorResources};
+use wasmparser::{FuncValidator, FunctionBody, ValidatorResources};
+use wasmtime_environ::{ModuleTranslation, ModuleTypes, VMOffsets, WasmFuncType};
 
-use self::regs::ALL_GPR;
+use self::regs::{ALL_FPR, ALL_GPR, MAX_FPR, MAX_GPR, NON_ALLOCATABLE_FPR, NON_ALLOCATABLE_GPR};
 
 mod abi;
 mod address;
@@ -88,23 +88,42 @@ impl TargetIsa for X64 {
 
     fn compile_function(
         &self,
-        sig: &FuncType,
+        sig: &WasmFuncType,
         body: &FunctionBody,
-        env: &dyn FuncEnv,
+        translation: &ModuleTranslation,
+        types: &ModuleTypes,
+        builtins: &mut BuiltinFunctions,
         validator: &mut FuncValidator<ValidatorResources>,
     ) -> Result<MachBufferFinalized<Final>> {
-        let mut body = body.get_binary_reader();
-        let mut masm = X64Masm::new(self.shared_flags.clone(), self.isa_flags.clone());
-        let stack = Stack::new();
-        let abi = abi::X64ABI::default();
-        let abi_sig = abi.sig(sig);
+        let pointer_bytes = self.pointer_bytes();
+        let vmoffsets = VMOffsets::new(pointer_bytes, &translation.module);
 
-        let defined_locals = DefinedLocals::new(&mut body, validator)?;
-        let frame = Frame::new(&abi_sig, &defined_locals, &abi)?;
-        // TODO Add in floating point bitmask
-        let regalloc = RegAlloc::new(RegSet::new(ALL_GPR, 0), regs::scratch());
-        let codegen_context = CodeGenContext::new(regalloc, stack, &frame);
-        let mut codegen = CodeGen::new(&mut masm, &abi, codegen_context, env, abi_sig);
+        let mut body = body.get_binary_reader();
+        let mut masm = X64Masm::new(
+            pointer_bytes,
+            self.shared_flags.clone(),
+            self.isa_flags.clone(),
+        );
+        let stack = Stack::new();
+        let abi_sig = abi::X64ABI::sig(sig, &CallingConvention::Default);
+
+        let defined_locals = DefinedLocals::new::<abi::X64ABI>(translation, &mut body, validator)?;
+        let frame = Frame::new::<abi::X64ABI>(&abi_sig, &defined_locals)?;
+        let gpr = RegBitSet::int(
+            ALL_GPR.into(),
+            NON_ALLOCATABLE_GPR.into(),
+            usize::try_from(MAX_GPR).unwrap(),
+        );
+        let fpr = RegBitSet::float(
+            ALL_FPR.into(),
+            NON_ALLOCATABLE_FPR.into(),
+            usize::try_from(MAX_FPR).unwrap(),
+        );
+
+        let regalloc = RegAlloc::from(gpr, fpr);
+        let env = FuncEnv::new(&vmoffsets, translation, types);
+        let codegen_context = CodeGenContext::new(regalloc, stack, frame, builtins, &vmoffsets);
+        let mut codegen = CodeGen::new(&mut masm, codegen_context, env, abi_sig);
 
         codegen.emit(&mut body, validator)?;
 
@@ -120,13 +139,33 @@ impl TargetIsa for X64 {
         16
     }
 
-    fn host_to_wasm_trampoline(&self, ty: &FuncType) -> Result<MachBufferFinalized<Final>> {
-        let abi = abi::X64ABI::default();
-        let mut masm = X64Masm::new(self.shared_flags.clone(), self.isa_flags.clone());
+    fn compile_trampoline(
+        &self,
+        ty: &WasmFuncType,
+        kind: TrampolineKind,
+    ) -> Result<MachBufferFinalized<Final>> {
+        use TrampolineKind::*;
 
-        let mut trampoline = Trampoline::new(&mut masm, &abi, regs::scratch(), regs::argv());
+        let mut masm = X64Masm::new(
+            self.pointer_bytes(),
+            self.shared_flags.clone(),
+            self.isa_flags.clone(),
+        );
+        let call_conv = self.wasmtime_call_conv();
 
-        trampoline.emit_host_to_wasm(ty);
+        let mut trampoline = Trampoline::new(
+            &mut masm,
+            regs::scratch(),
+            regs::argv(),
+            &call_conv,
+            self.pointer_bytes(),
+        );
+
+        match kind {
+            ArrayToWasm(idx) => trampoline.emit_array_to_wasm(ty, idx)?,
+            NativeToWasm(idx) => trampoline.emit_native_to_wasm(ty, idx)?,
+            WasmToNative => trampoline.emit_wasm_to_native(ty)?,
+        }
 
         Ok(masm.finalize())
     }

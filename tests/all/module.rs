@@ -43,7 +43,7 @@ fn caches_across_engines() {
         // differ in wasm features enabled (which can affect
         // runtime/compilation settings)
         let res = Module::deserialize(
-            &Engine::new(Config::new().wasm_simd(false)).unwrap(),
+            &Engine::new(Config::new().wasm_threads(false)).unwrap(),
             &bytes,
         );
         assert!(res.is_err());
@@ -51,6 +51,7 @@ fn caches_across_engines() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn aot_compiles() -> Result<()> {
     let engine = Engine::default();
     let bytes = engine.precompile_module(
@@ -69,6 +70,7 @@ fn aot_compiles() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn serialize_deterministic() {
     let engine = Engine::default();
 
@@ -108,7 +110,7 @@ fn serialize_deterministic() {
     assert_deterministic("(module (func (export \"f\")) (func (export \"y\")))");
     assert_deterministic("(module (func $f) (func $g))");
     assert_deterministic("(module (data \"\") (data \"\"))");
-    assert_deterministic("(module (elem) (elem))");
+    assert_deterministic("(module (elem func) (elem func))");
 }
 
 // This test asserts that the optimization to transform separate data segments
@@ -177,10 +179,10 @@ fn serialize_not_overly_massive() -> Result<()> {
 // This test then also tests that loading modules through various means, e.g.
 // through precompiled artifacts, all works.
 #[test]
-#[cfg_attr(not(target_arch = "x86_64"), ignore)]
+#[cfg_attr(any(not(target_arch = "x86_64"), miri), ignore)]
 fn missing_sse_and_floats_still_works() -> Result<()> {
     let mut config = Config::new();
-    config.wasm_simd(false);
+    config.wasm_simd(false).wasm_relaxed_simd(false);
     unsafe {
         config.cranelift_flag_set("has_sse41", "false");
     }
@@ -211,6 +213,29 @@ fn missing_sse_and_floats_still_works() -> Result<()> {
             assert_eq!(ceil.call(&mut store, f)?, f.ceil());
         }
     }
+
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn large_add_chain_no_stack_overflow() -> Result<()> {
+    let mut config = Config::new();
+    config.cranelift_opt_level(OptLevel::None);
+    let engine = Engine::new(&config)?;
+    let mut wat = String::from(
+        "
+        (module
+            (func (result i64)
+                (i64.const 1)
+        ",
+    );
+    for _ in 0..20_000 {
+        wat.push_str("(i64.add (i64.const 1))\n");
+    }
+
+    wat.push_str(")\n)");
+    Module::new(&engine, &wat)?;
 
     Ok(())
 }

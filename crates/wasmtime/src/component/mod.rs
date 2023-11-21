@@ -10,6 +10,7 @@ mod func;
 mod instance;
 mod linker;
 mod matching;
+mod resources;
 mod storage;
 mod store;
 pub mod types;
@@ -20,10 +21,9 @@ pub use self::func::{
 };
 pub use self::instance::{ExportInstance, Exports, Instance, InstancePre};
 pub use self::linker::{Linker, LinkerInstance};
-pub use self::types::Type;
-pub use self::values::{
-    Enum, Flags, List, OptionVal, Record, ResultVal, Tuple, Union, Val, Variant,
-};
+pub use self::resources::{Resource, ResourceAny};
+pub use self::types::{ResourceType, Type};
+pub use self::values::{Enum, Flags, List, OptionVal, Record, ResultVal, Tuple, Val, Variant};
 pub use wasmtime_component_macro::{flags, ComponentType, Lift, Lower};
 
 // These items are expected to be used by an eventual
@@ -32,10 +32,11 @@ pub use wasmtime_component_macro::{flags, ComponentType, Lift, Lower};
 #[doc(hidden)]
 pub mod __internal {
     pub use super::func::{
-        format_flags, lower_payload, typecheck_enum, typecheck_flags, typecheck_record,
-        typecheck_union, typecheck_variant, ComponentVariant, MaybeUninitExt, Memory, MemoryMut,
-        Options,
+        bad_type_info, format_flags, lower_payload, typecheck_enum, typecheck_flags,
+        typecheck_record, typecheck_variant, ComponentVariant, LiftContext, LowerContext,
+        MaybeUninitExt, Options,
     };
+    pub use super::matching::InstanceType;
     pub use crate::map_maybe_uninit;
     pub use crate::store::StoreOpaque;
     pub use anyhow;
@@ -73,9 +74,11 @@ pub(crate) use self::store::ComponentStoreData;
 /// ```text,ignore
 /// // wit/my-component.wit
 ///
-/// default world hello-world {
-///     import name: func() -> string
-///     export greet: func()
+/// package my:project;
+///
+/// world hello-world {
+///     import name: func() -> string;
+///     export greet: func();
 /// }
 /// ```
 ///
@@ -150,16 +153,18 @@ pub(crate) use self::store::ComponentStoreData;
 /// ```text,ignore
 /// // wit/my-component.wit
 ///
+/// package my:project;
+///
 /// interface host {
-///     gen-random-integer: func() -> u32
-///     sha256: func(bytes: list<u8>) -> string
+///     gen-random-integer: func() -> u32;
+///     sha256: func(bytes: list<u8>) -> string;
 /// }
 ///
 /// default world hello-world {
-///     import host: self.host
+///     import host;
 ///
 ///     export demo: interface {
-///         run: func()
+///         run: func();
 ///     }
 /// }
 /// ```
@@ -169,6 +174,7 @@ pub(crate) use self::store::ComponentStoreData;
 /// ```rust,ignore
 /// use wasmtime::component::*;
 /// use wasmtime::{Config, Engine, Store};
+/// use my::project::host::Host;
 ///
 /// bindgen!();
 ///
@@ -177,7 +183,7 @@ pub(crate) use self::store::ComponentStoreData;
 /// }
 ///
 /// // Note that the trait here is per-interface and within a submodule now.
-/// impl host::Host for MyState {
+/// impl Host for MyState {
 ///     fn gen_random_integer(&mut self) -> wasmtime::Result<u32> {
 ///         Ok(rand::thread_rng().gen())
 ///     }
@@ -204,7 +210,7 @@ pub(crate) use self::store::ComponentStoreData;
 ///
 ///     // Note that the `demo` method returns a `&Demo` through which we can
 ///     // run the methods on that interface.
-///     bindings.demo().run(&mut store)?;
+///     bindings.demo().call_run(&mut store)?;
 ///     Ok(())
 /// }
 /// ```
@@ -228,18 +234,12 @@ pub(crate) use self::store::ComponentStoreData;
 /// bindgen!();
 ///
 /// // Parse the `wit/` folder adjacent to this crate's `Cargo.toml` and look
-/// // for the document `foo`, which must have a `default world` contained
-/// // within it.
+/// // for the world `foo` contained in it.
 /// bindgen!("foo");
-///
-/// // Parse the `wit/` folder adjacent to `Cargo.toml` and look up the document
-/// // `foo` and the world named `bar`.
-/// bindgen!("foo.bar");
 ///
 /// // Parse the folder `other/wit/folder` adjacent to `Cargo.toml`.
 /// bindgen!(in "other/wit/folder");
 /// bindgen!("foo" in "other/wit/folder");
-/// bindgen!("foo.bar" in "other/wit/folder");
 ///
 /// // Parse the file `foo.wit` as a single-file WIT package with no
 /// // dependencies.
@@ -250,8 +250,7 @@ pub(crate) use self::store::ComponentStoreData;
 ///
 /// ```rust,ignore
 /// bindgen!({
-///     world: "foo", // or "foo.bar", same as in `bindgen!("foo")`
-///                   // not needed if `path` has one `default world`
+///     world: "foo", // not needed if `path` has one `world`
 ///
 ///     // same as in `bindgen!(in "other/wit/folder")
 ///     path: "other/wit/folder",
@@ -259,7 +258,9 @@ pub(crate) use self::store::ComponentStoreData;
 ///     // Instead of `path` the WIT document can be provided inline if
 ///     // desired.
 ///     inline: "
-///         default world foo {
+///         package my:inline;
+///
+///         world foo {
 ///             // ...
 ///         }
 ///     ",
@@ -280,18 +281,67 @@ pub(crate) use self::store::ComponentStoreData;
 ///     // This option defaults to `false`.
 ///     async: true,
 ///
+///     // Alternative mode of async configuration where this still implies
+///     // async instantiation happens, for example, but more control is
+///     // provided over which imports are async and which aren't.
+///     //
+///     // Note that in this mode all exports are still async.
+///     async: {
+///         // All imports are async except for functions with these names
+///         except_imports: ["foo", "bar"],
+///
+///         // All imports are synchronous except for functions with these names
+///         //
+///         // Note that this key cannot be specified with `except_imports`,
+///         // only one or the other is accepted.
+///         only_imports: ["foo", "bar"],
+///     },
+///
 ///     // This can be used to translate WIT return values of the form
 ///     // `result<T, error-type>` into `Result<T, RustErrorType>` in Rust.
-///     // The `RustErrorType` structure will have an automatically generated
-///     // implementation of `From<ErrorType> for RustErrorType`. The
-///     // `RustErrorType` additionally can also represent a trap to
-///     // conveniently flatten all errors into one container.
+///     // Users must define `RustErrorType` and the `Host` trait for the
+///     // interface which defines `error-type` will have a method
+///     // called `convert_error_type` which converts `RustErrorType`
+///     // into `wasmtime::Result<ErrorType>`. This conversion can either
+///     // return the raw WIT error (`ErrorType` here) or a trap.
 ///     //
 ///     // By default this option is not specified.
 ///     trappable_error_type: {
-///         interface::ErrorType: RustErrorType,
+///         "wasi:io/streams/stream-error" => RustErrorType,
 ///     },
 ///
+///     // All generated bindgen types are "owned" meaning types like `String`
+///     // are used instead of `&str`, for example. This is the default and
+///     // ensures that the same type used in both imports and exports uses the
+///     // same generated type.
+///     ownership: Owning,
+///
+///     // Alternative to `Owning` above where borrowed types attempt to be used
+///     // instead. The `duplicate_if_necessary` configures whether duplicate
+///     // Rust types will be generated for the same WIT type if necessary, for
+///     // example when a type is used both as an import and an export.
+///     ownership: Borrowing {
+///         duplicate_if_necessary: true
+///     },
+///
+///     // Restrict the code generated to what's needed for the interface
+///     // imports in the inlined WIT document fragment.
+///     interfaces: "
+///         import wasi:cli/command;
+///     ",
+///
+///     // Remap imported interfaces or resources to types defined in Rust
+///     // elsewhere. Using this option will prevent any code from being
+///     // generated for interfaces mentioned here. Resources named here will
+///     // not have a type generated to represent the resource.
+///     //
+///     // Interfaces mapped with this option should be previously generated
+///     // with an invocation of this macro. Resources need to be mapped to a
+///     // Rust type name.
+///     with: {
+///         "wasi:random/random": some::other::wasi::random::random,
+///         "wasi:filesystem/types/descriptor": MyDescriptorType,
+///     },
 /// });
 /// ```
 ///

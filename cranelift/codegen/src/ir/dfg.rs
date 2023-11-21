@@ -5,6 +5,7 @@ use crate::ir;
 use crate::ir::builder::ReplaceBuilder;
 use crate::ir::dynamic_type::{DynamicTypeData, DynamicTypes};
 use crate::ir::instructions::{CallInfo, InstructionData};
+use crate::ir::pcc::Fact;
 use crate::ir::{
     types, Block, BlockCall, ConstantData, ConstantPool, DynamicType, ExtFuncData, FuncRef,
     Immediate, Inst, JumpTables, RelSourceLoc, SigRef, Signature, Type, Value,
@@ -20,7 +21,7 @@ use core::u16;
 
 use alloc::collections::BTreeMap;
 #[cfg(feature = "enable-serde")]
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 /// Storage for instructions within the DFG.
@@ -125,6 +126,9 @@ pub struct DataFlowGraph {
     /// Primary value table with entries for all values.
     values: PrimaryMap<Value, ValueDataPacked>,
 
+    /// Facts: proof-carrying-code assertions about values.
+    pub facts: SecondaryMap<Value, Option<Fact>>,
+
     /// Function signature table. These signatures are referenced by indirect call instructions as
     /// well as the external function references.
     pub signatures: PrimaryMap<SigRef, Signature>,
@@ -138,10 +142,10 @@ pub struct DataFlowGraph {
     /// Saves Value labels.
     pub values_labels: Option<BTreeMap<Value, ValueLabelAssignments>>,
 
-    /// Constants used within the function
+    /// Constants used within the function.
     pub constants: ConstantPool,
 
-    /// Stores large immediates that otherwise will not fit on InstructionData
+    /// Stores large immediates that otherwise will not fit on InstructionData.
     pub immediates: PrimaryMap<Immediate, ConstantData>,
 
     /// Jump tables used in this function.
@@ -158,6 +162,7 @@ impl DataFlowGraph {
             dynamic_types: DynamicTypes::new(),
             value_lists: ValueListPool::new(),
             values: PrimaryMap::new(),
+            facts: SecondaryMap::new(),
             signatures: PrimaryMap::new(),
             old_signatures: SecondaryMap::new(),
             ext_funcs: PrimaryMap::new(),
@@ -183,6 +188,7 @@ impl DataFlowGraph {
         self.constants.clear();
         self.immediates.clear();
         self.jump_tables.clear();
+        self.facts.clear();
     }
 
     /// Get the total number of instructions created in this function, whether they are currently
@@ -275,12 +281,12 @@ fn resolve_aliases(values: &PrimaryMap<Value, ValueDataPacked>, value: Value) ->
     }
 }
 
-/// Iterator over all Values in a DFG
+/// Iterator over all Values in a DFG.
 pub struct Values<'a> {
     inner: entity::Iter<'a, Value, ValueDataPacked>,
 }
 
-/// Check for non-values
+/// Check for non-values.
 fn valid_valuedata(data: ValueDataPacked) -> bool {
     let data = ValueData::from(data);
     if let ValueData::Alias {
@@ -545,10 +551,15 @@ struct ValueDataPacked(u64);
 /// (and is implied by `mask`), by translating 2^32-1 (0xffffffff)
 /// into 2^n-1 and panic'ing on 2^n..2^32-1.
 fn encode_narrow_field(x: u32, bits: u8) -> u32 {
+    let max = (1 << bits) - 1;
     if x == 0xffff_ffff {
-        (1 << bits) - 1
+        max
     } else {
-        debug_assert!(x < (1 << bits));
+        debug_assert!(
+            x < max,
+            "{x} does not fit into {bits} bits (must be less than {max} to \
+             allow for a 0xffffffff sentinal)"
+        );
         x
     }
 }
@@ -624,7 +635,7 @@ impl From<ValueData> for ValueDataPacked {
                 Self::make(Self::TAG_ALIAS, ty, 0, original.as_bits())
             }
             ValueData::Union { ty, x, y } => {
-                Self::make(Self::TAG_ALIAS, ty, x.as_bits(), y.as_bits())
+                Self::make(Self::TAG_UNION, ty, x.as_bits(), y.as_bits())
             }
         }
     }
@@ -953,7 +964,13 @@ impl DataFlowGraph {
         // Get the controlling type variable.
         let ctrl_typevar = self.ctrl_typevar(inst);
         // Create new result values.
-        self.make_inst_results(new_inst, ctrl_typevar);
+        let num_results = self.make_inst_results(new_inst, ctrl_typevar);
+        // Copy over PCC facts, if any.
+        for i in 0..num_results {
+            let old_result = self.inst_results(inst)[i];
+            let new_result = self.inst_results(new_inst)[i];
+            self.facts[new_result] = self.facts[old_result].clone();
+        }
         new_inst
     }
 
@@ -1278,6 +1295,38 @@ impl DataFlowGraph {
     /// with `change_to_alias()`.
     pub fn detach_block_params(&mut self, block: Block) -> ValueList {
         self.blocks[block].params.take()
+    }
+
+    /// Merge the facts for two values. If both values have facts and
+    /// they differ, both values get a special "conflict" fact that is
+    /// never satisfied.
+    pub fn merge_facts(&mut self, a: Value, b: Value) {
+        let a = self.resolve_aliases(a);
+        let b = self.resolve_aliases(b);
+        match (&self.facts[a], &self.facts[b]) {
+            (Some(a), Some(b)) if a == b => { /* nothing */ }
+            (None, None) => { /* nothing */ }
+            (Some(a), None) => {
+                self.facts[b] = Some(a.clone());
+            }
+            (None, Some(b)) => {
+                self.facts[a] = Some(b.clone());
+            }
+            (Some(a_fact), Some(b_fact)) => {
+                assert_eq!(self.value_type(a), self.value_type(b));
+                let merged = Fact::intersect(a_fact, b_fact);
+                crate::trace!(
+                    "facts merge on {} and {}: {:?}, {:?} -> {:?}",
+                    a,
+                    b,
+                    a_fact,
+                    b_fact,
+                    merged,
+                );
+                self.facts[a] = Some(merged.clone());
+                self.facts[b] = Some(merged);
+            }
+        }
     }
 }
 
@@ -1644,7 +1693,7 @@ mod tests {
         assert_eq!(pos.func.dfg.resolve_aliases(v1), v1);
 
         let arg0 = pos.func.dfg.append_block_param(block0, types::I32);
-        let (s, c) = pos.ins().iadd_cout(v1, arg0);
+        let (s, c) = pos.ins().uadd_overflow(v1, arg0);
         let iadd = match pos.func.dfg.value_def(s) {
             ValueDef::Result(i, 0) => i,
             _ => panic!(),
@@ -1654,7 +1703,7 @@ mod tests {
         pos.func.dfg.clear_results(iadd);
         pos.func.dfg.attach_result(iadd, s);
 
-        // Replace `iadd_cout` with a normal `iadd` and an `icmp`.
+        // Replace `uadd_overflow` with a normal `iadd` and an `icmp`.
         pos.func.dfg.replace(iadd).iadd(v1, arg0);
         let c2 = pos.ins().icmp(IntCC::Equal, s, v1);
         pos.func.dfg.change_to_alias(c, c2);

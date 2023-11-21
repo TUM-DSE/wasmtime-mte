@@ -2,16 +2,17 @@ use crate::linker::{Definition, DefinitionType};
 use crate::store::{InstanceId, StoreOpaque, Stored};
 use crate::types::matching;
 use crate::{
-    AsContextMut, Engine, Export, Extern, Func, Global, Memory, Module, SharedMemory,
+    AsContextMut, Engine, Export, Extern, Func, Global, Memory, Module, SharedMemory, StoreContext,
     StoreContextMut, Table, TypedFunc,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use std::mem;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use wasmtime_environ::{EntityType, FuncIndex, GlobalIndex, MemoryIndex, PrimaryMap, TableIndex};
 use wasmtime_runtime::{
-    Imports, InstanceAllocationRequest, StorePtr, VMContext, VMFunctionBody, VMFunctionImport,
-    VMGlobalImport, VMMemoryImport, VMOpaqueContext, VMTableImport,
+    Imports, InstanceAllocationRequest, StorePtr, VMContext, VMFuncRef, VMFunctionImport,
+    VMGlobalImport, VMMemoryImport, VMNativeCallFunction, VMOpaqueContext, VMTableImport,
 };
 
 /// An instantiated WebAssembly module.
@@ -39,6 +40,15 @@ pub(crate) struct InstanceData {
     /// exports here matches the order of the exports in the the original
     /// module.
     exports: Vec<Option<Extern>>,
+}
+
+impl InstanceData {
+    pub fn from_id(id: InstanceId) -> InstanceData {
+        InstanceData {
+            id,
+            exports: vec![],
+        }
+    }
 }
 
 impl Instance {
@@ -163,7 +173,7 @@ impl Instance {
         })?;
         let mut owned_imports = OwnedImports::new(module);
         for import in imports {
-            owned_imports.push(import, store);
+            owned_imports.push(import, store, module);
         }
         Ok(owned_imports)
     }
@@ -250,7 +260,8 @@ impl Instance {
 
         // Register the module just before instantiation to ensure we keep the module
         // properly referenced while in use by the store.
-        store.modules_mut().register_module(module);
+        let module_id = store.modules_mut().register_module(module);
+        store.fill_func_refs();
 
         // The first thing we do is issue an instance allocation request
         // to the instance allocator. This, on success, will give us an
@@ -267,11 +278,13 @@ impl Instance {
             store
                 .engine()
                 .allocator()
-                .allocate(InstanceAllocationRequest {
+                .allocate_module(InstanceAllocationRequest {
                     runtime_info: &module.runtime_info(),
                     imports,
                     host_state: Box::new(Instance(instance_to_be)),
                     store: StorePtr::new(store.traitobj()),
+                    wmemcheck: store.engine().config().wmemcheck,
+                    pkey: store.get_pkey(),
                 })?;
 
         // The instance still has lots of setup, for example
@@ -286,7 +299,7 @@ impl Instance {
         // conflicts with the borrow on `store.engine`) but this doesn't
         // matter in practice since initialization isn't even running any
         // code here anyway.
-        let id = store.add_instance(instance_handle.clone(), false);
+        let id = store.add_instance(instance_handle.clone(), module_id);
 
         // Additionally, before we start doing fallible instantiation, we
         // do one more step which is to insert an `InstanceData`
@@ -338,19 +351,27 @@ impl Instance {
         // trap-handling configuration in `store` as well.
         let instance = store.0.instance_mut(id);
         let f = instance.get_exported_func(start);
-        let vmctx = instance.vmctx_ptr();
+        let caller_vmctx = instance.vmctx();
         unsafe {
             super::func::invoke_wasm_and_catch_traps(store, |_default_caller| {
-                let trampoline = mem::transmute::<
-                    *const VMFunctionBody,
-                    unsafe extern "C" fn(*mut VMOpaqueContext, *mut VMContext),
-                >(f.anyfunc.as_ref().func_ptr.as_ptr());
-                let trampoline =
-                    wasmtime_runtime::prepare_host_to_wasm_trampoline(vmctx, trampoline);
-                trampoline(f.anyfunc.as_ref().vmctx, vmctx)
+                let func = mem::transmute::<
+                    NonNull<VMNativeCallFunction>,
+                    extern "C" fn(*mut VMOpaqueContext, *mut VMContext),
+                >(f.func_ref.as_ref().native_call);
+                func(f.func_ref.as_ref().vmctx, caller_vmctx)
             })?;
         }
         Ok(())
+    }
+
+    /// Get this instance's module.
+    pub fn module<'a, T: 'a>(&self, store: impl Into<StoreContext<'a, T>>) -> &'a Module {
+        self._module(store.into().0)
+    }
+
+    fn _module<'a>(&self, store: &'a StoreOpaque) -> &'a Module {
+        let InstanceData { id, .. } = store[self.0];
+        store.module_for_instance(id).unwrap()
     }
 
     /// Returns the list of exported items from this [`Instance`].
@@ -526,6 +547,46 @@ impl Instance {
     pub(crate) fn id(&self, store: &StoreOpaque) -> InstanceId {
         store[self.0].id
     }
+
+    /// Get all globals within this instance.
+    ///
+    /// Returns both import and defined globals.
+    ///
+    /// Returns both exported and non-exported globals.
+    ///
+    /// Gives access to the full globals space.
+    pub(crate) fn all_globals<'a>(
+        &'a self,
+        store: &'a mut StoreOpaque,
+    ) -> impl ExactSizeIterator<Item = (GlobalIndex, Global)> + 'a {
+        let data = &store[self.0];
+        let instance = store.instance_mut(data.id);
+        instance
+            .all_globals()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(i, g)| (i, unsafe { Global::from_wasmtime_global(g, store) }))
+    }
+
+    /// Get all memories within this instance.
+    ///
+    /// Returns both import and defined memories.
+    ///
+    /// Returns both exported and non-exported memories.
+    ///
+    /// Gives access to the full memories space.
+    pub(crate) fn all_memories<'a>(
+        &'a self,
+        store: &'a mut StoreOpaque,
+    ) -> impl ExactSizeIterator<Item = (MemoryIndex, Memory)> + 'a {
+        let data = &store[self.0];
+        let instance = store.instance_mut(data.id);
+        instance
+            .all_memories()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(i, m)| (i, unsafe { Memory::from_wasmtime_memory(m, store) }))
+    }
 }
 
 pub(crate) struct OwnedImports {
@@ -567,10 +628,10 @@ impl OwnedImports {
         self.globals.clear();
     }
 
-    fn push(&mut self, item: &Extern, store: &mut StoreOpaque) {
+    fn push(&mut self, item: &Extern, store: &mut StoreOpaque, module: &Module) {
         match item {
             Extern::Func(i) => {
-                self.functions.push(i.vmimport(store));
+                self.functions.push(i.vmimport(store, module));
             }
             Extern::Global(i) => {
                 self.globals.push(i.vmimport(store));
@@ -593,9 +654,11 @@ impl OwnedImports {
     pub(crate) unsafe fn push_export(&mut self, item: &wasmtime_runtime::Export) {
         match item {
             wasmtime_runtime::Export::Function(f) => {
-                let f = f.anyfunc.as_ref();
+                let f = f.func_ref.as_ref();
                 self.functions.push(VMFunctionImport {
-                    body: f.func_ptr,
+                    wasm_call: f.wasm_call.unwrap(),
+                    native_call: f.native_call,
+                    array_call: f.array_call,
                     vmctx: f.vmctx,
                 });
             }
@@ -658,6 +721,14 @@ pub struct InstancePre<T> {
     /// preallocate space in a `Store` up front for all entries to be inserted.
     host_funcs: usize,
 
+    /// The `VMFuncRef`s for the functions in `items` that do not
+    /// have a `wasm_call` trampoline. We pre-allocate and pre-patch these
+    /// `VMFuncRef`s so that we don't have to do it at
+    /// instantiation time.
+    ///
+    /// This is an `Arc<[T]>` for the same reason as `items`.
+    func_refs: Arc<[VMFuncRef]>,
+
     _marker: std::marker::PhantomData<fn() -> T>,
 }
 
@@ -668,6 +739,7 @@ impl<T> Clone for InstancePre<T> {
             module: self.module.clone(),
             items: self.items.clone(),
             host_funcs: self.host_funcs,
+            func_refs: self.func_refs.clone(),
             _marker: self._marker,
         }
     }
@@ -685,17 +757,33 @@ impl<T> InstancePre<T> {
     pub(crate) unsafe fn new(module: &Module, items: Vec<Definition>) -> Result<InstancePre<T>> {
         typecheck(module, &items, |cx, ty, item| cx.definition(ty, &item.ty()))?;
 
-        let host_funcs = items
-            .iter()
-            .filter(|i| match i {
-                Definition::HostFunc(_) => true,
-                _ => false,
-            })
-            .count();
+        let mut func_refs = vec![];
+        let mut host_funcs = 0;
+        for item in &items {
+            match item {
+                Definition::Extern(_, _) => {}
+                Definition::HostFunc(f) => {
+                    host_funcs += 1;
+                    if f.func_ref().wasm_call.is_none() {
+                        // `f` needs its `VMFuncRef::wasm_call`
+                        // patched with a Wasm-to-native trampoline.
+                        debug_assert!(matches!(f.host_ctx(), crate::HostContext::Native(_)));
+                        func_refs.push(VMFuncRef {
+                            wasm_call: module
+                                .runtime_info()
+                                .wasm_to_native_trampoline(f.sig_index()),
+                            ..*f.func_ref()
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(InstancePre {
             module: module.clone(),
             items: items.into(),
             host_funcs,
+            func_refs: func_refs.into(),
             _marker: std::marker::PhantomData,
         })
     }
@@ -723,8 +811,13 @@ impl<T> InstancePre<T> {
     /// [`Engine`] than the [`InstancePre`] originally came from.
     pub fn instantiate(&self, mut store: impl AsContextMut<Data = T>) -> Result<Instance> {
         let mut store = store.as_context_mut();
-        let imports =
-            pre_instantiate_raw(&mut store.0, &self.module, &self.items, self.host_funcs)?;
+        let imports = pre_instantiate_raw(
+            &mut store.0,
+            &self.module,
+            &self.items,
+            self.host_funcs,
+            &self.func_refs,
+        )?;
 
         // This unsafety should be handled by the type-checking performed by the
         // constructor of `InstancePre` to assert that all the imports we're passing
@@ -752,8 +845,13 @@ impl<T> InstancePre<T> {
         T: Send,
     {
         let mut store = store.as_context_mut();
-        let imports =
-            pre_instantiate_raw(&mut store.0, &self.module, &self.items, self.host_funcs)?;
+        let imports = pre_instantiate_raw(
+            &mut store.0,
+            &self.module,
+            &self.items,
+            self.host_funcs,
+            &self.func_refs,
+        )?;
 
         // This unsafety should be handled by the type-checking performed by the
         // constructor of `InstancePre` to assert that all the imports we're passing
@@ -773,6 +871,7 @@ fn pre_instantiate_raw(
     module: &Module,
     items: &Arc<[Definition]>,
     host_funcs: usize,
+    func_refs: &Arc<[VMFuncRef]>,
 ) -> Result<OwnedImports> {
     if host_funcs > 0 {
         // Any linker-defined function of the `Definition::HostFunc` variant
@@ -786,8 +885,10 @@ fn pre_instantiate_raw(
         // items into the store once. This avoids cloning each individual item
         // below.
         store.push_rooted_funcs(items.clone());
+        store.push_instance_pre_func_refs(func_refs.clone());
     }
 
+    let mut func_refs = func_refs.iter().map(|f| NonNull::from(f));
     let mut imports = OwnedImports::new(module);
     for import in items.iter() {
         if !import.comes_from_same_store(store) {
@@ -797,8 +898,21 @@ fn pre_instantiate_raw(
         // `InstancePre` where the `T` of the original item should match the
         // `T` of the store. Additionally the rooting necessary has happened
         // above.
-        let item = unsafe { import.to_extern_store_rooted(store) };
-        imports.push(&item, store);
+        let item = match import {
+            Definition::Extern(e, _) => e.clone(),
+            Definition::HostFunc(func) => unsafe {
+                func.to_func_store_rooted(
+                    store,
+                    if func.func_ref().wasm_call.is_none() {
+                        Some(func_refs.next().unwrap())
+                    } else {
+                        None
+                    },
+                )
+                .into()
+            },
+        };
+        imports.push(&item, store, module);
     }
 
     Ok(imports)

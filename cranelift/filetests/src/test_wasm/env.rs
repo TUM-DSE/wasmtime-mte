@@ -13,23 +13,26 @@ use cranelift_codegen::{
 };
 use cranelift_wasm::{
     DummyEnvironment, FuncEnvironment, FuncIndex, ModuleEnvironment, TargetEnvironment,
+    TypeConvert, TypeIndex, WasmHeapType,
 };
 
 pub struct ModuleEnv {
     pub inner: DummyEnvironment,
     pub config: TestConfig,
     pub heap_access_spectre_mitigation: bool,
+    pub proof_carrying_code: bool,
 }
 
 impl ModuleEnv {
     pub fn new(target_isa: &dyn TargetIsa, config: TestConfig) -> Self {
-        let inner = DummyEnvironment::new(target_isa.frontend_config(), config.debug_info);
+        let inner = DummyEnvironment::new(target_isa.frontend_config());
         Self {
             inner,
             config,
             heap_access_spectre_mitigation: target_isa
                 .flags()
                 .enable_heap_access_spectre_mitigation(),
+            proof_carrying_code: target_isa.flags().enable_pcc(),
         }
     }
 }
@@ -50,6 +53,7 @@ impl<'data> ModuleEnvironment<'data> for ModuleEnv {
                 self.inner.expected_reachability.clone(),
                 self.config.clone(),
                 self.heap_access_spectre_mitigation,
+                self.proof_carrying_code,
             );
             let func_index = FuncIndex::new(
                 self.inner.get_num_func_imports() + self.inner.info.function_bodies.len(),
@@ -62,10 +66,6 @@ impl<'data> ModuleEnvironment<'data> for ModuleEnv {
                 ir::UserFuncName::user(0, func_index.as_u32()),
                 sig,
             );
-
-            if self.inner.debug_info {
-                func.collect_debug_info();
-            }
 
             self.inner
                 .trans
@@ -149,8 +149,12 @@ impl<'data> ModuleEnvironment<'data> for ModuleEnv {
         self.inner.declare_memory(memory)
     }
 
-    fn declare_global(&mut self, global: cranelift_wasm::Global) -> cranelift_wasm::WasmResult<()> {
-        self.inner.declare_global(global)
+    fn declare_global(
+        &mut self,
+        global: cranelift_wasm::Global,
+        init: cranelift_wasm::GlobalInit,
+    ) -> cranelift_wasm::WasmResult<()> {
+        self.inner.declare_global(global, init)
     }
 
     fn declare_func_export(
@@ -231,12 +235,19 @@ impl<'data> ModuleEnvironment<'data> for ModuleEnv {
     }
 }
 
+impl TypeConvert for ModuleEnv {
+    fn lookup_heap_type(&self, _index: TypeIndex) -> WasmHeapType {
+        todo!()
+    }
+}
+
 pub struct FuncEnv<'a> {
     pub inner: cranelift_wasm::DummyFuncEnvironment<'a>,
     pub config: TestConfig,
     pub name_to_ir_global: BTreeMap<String, ir::GlobalValue>,
     pub next_heap: usize,
     pub heap_access_spectre_mitigation: bool,
+    pub proof_carrying_code: bool,
 }
 
 impl<'a> FuncEnv<'a> {
@@ -245,6 +256,7 @@ impl<'a> FuncEnv<'a> {
         expected_reachability: Option<cranelift_wasm::ExpectedReachability>,
         config: TestConfig,
         heap_access_spectre_mitigation: bool,
+        proof_carrying_code: bool,
     ) -> Self {
         let inner = cranelift_wasm::DummyFuncEnvironment::new(mod_info, expected_reachability);
         Self {
@@ -253,7 +265,14 @@ impl<'a> FuncEnv<'a> {
             name_to_ir_global: Default::default(),
             next_heap: 0,
             heap_access_spectre_mitigation,
+            proof_carrying_code,
         }
+    }
+}
+
+impl TypeConvert for FuncEnv<'_> {
+    fn lookup_heap_type(&self, _index: TypeIndex) -> WasmHeapType {
+        todo!()
     }
 }
 
@@ -264,6 +283,10 @@ impl<'a> TargetEnvironment for FuncEnv<'a> {
 
     fn heap_access_spectre_mitigation(&self) -> bool {
         self.heap_access_spectre_mitigation
+    }
+
+    fn proof_carrying_code(&self) -> bool {
+        self.proof_carrying_code
     }
 }
 
@@ -381,6 +404,38 @@ impl<'a> FuncEnvironment for FuncEnv<'a> {
             callee,
             call_args,
         )
+    }
+
+    fn translate_return_call_indirect(
+        &mut self,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        table_index: cranelift_wasm::TableIndex,
+        table: ir::Table,
+        sig_index: TypeIndex,
+        sig_ref: ir::SigRef,
+        callee: ir::Value,
+        call_args: &[ir::Value],
+    ) -> cranelift_wasm::WasmResult<()> {
+        self.inner.translate_return_call_indirect(
+            builder,
+            table_index,
+            table,
+            sig_index,
+            sig_ref,
+            callee,
+            call_args,
+        )
+    }
+
+    fn translate_return_call_ref(
+        &mut self,
+        builder: &mut cranelift_frontend::FunctionBuilder,
+        sig_ref: ir::SigRef,
+        callee: ir::Value,
+        call_args: &[ir::Value],
+    ) -> cranelift_wasm::WasmResult<()> {
+        self.inner
+            .translate_return_call_ref(builder, sig_ref, callee, call_args)
     }
 
     fn translate_memory_grow(
@@ -604,10 +659,6 @@ impl<'a> FuncEnvironment for FuncEnv<'a> {
             .translate_atomic_notify(pos, index, heap, addr, count)
     }
 
-    fn unsigned_add_overflow_condition(&self) -> ir::condcodes::IntCC {
-        self.inner.unsigned_add_overflow_condition()
-    }
-
     fn heaps(
         &self,
     ) -> &cranelift_codegen::entity::PrimaryMap<cranelift_wasm::Heap, cranelift_wasm::HeapData>
@@ -621,5 +672,19 @@ impl<'a> FuncEnvironment for FuncEnv<'a> {
 
     fn is_x86(&self) -> bool {
         self.config.target.contains("x86_64")
+    }
+
+    fn use_x86_pmaddubsw_for_dot(&self) -> bool {
+        self.config.target.contains("x86_64")
+    }
+
+    fn translate_call_ref(
+        &mut self,
+        _builder: &mut cranelift_frontend::FunctionBuilder<'_>,
+        _ty: ir::SigRef,
+        _func: ir::Value,
+        _args: &[ir::Value],
+    ) -> cranelift_wasm::WasmResult<ir::Inst> {
+        unimplemented!()
     }
 }

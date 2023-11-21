@@ -3,6 +3,7 @@ use rayon::prelude::*;
 use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
 use std::time::{Duration, Instant};
 use wasmtime::*;
+use wasmtime_runtime::{mpk, MpkEnabled};
 
 fn module(engine: &Engine) -> Result<Module> {
     let mut wat = format!("(module\n");
@@ -92,6 +93,7 @@ fn test_traps(store: &mut Store<()>, funcs: &[TestFunc], addr: u32, mem: &Memory
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn offsets_static_dynamic_oh_my() -> Result<()> {
     const GB: u64 = 1 << 30;
 
@@ -137,6 +139,7 @@ fn offsets_static_dynamic_oh_my() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn guards_present() -> Result<()> {
     const GUARD_SIZE: u64 = 65536;
 
@@ -185,11 +188,77 @@ fn guards_present() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn guards_present_pooling() -> Result<()> {
     const GUARD_SIZE: u64 = 65536;
 
-    let mut pool = PoolingAllocationConfig::default();
-    pool.instance_count(2).instance_memory_pages(10);
+    let mut pool = crate::small_pool_config();
+    pool.total_memories(2)
+        .memory_pages(10)
+        .memory_protection_keys(MpkEnabled::Disable);
+    let mut config = Config::new();
+    config.static_memory_maximum_size(1 << 20);
+    config.dynamic_memory_guard_size(GUARD_SIZE);
+    config.static_memory_guard_size(GUARD_SIZE);
+    config.guard_before_linear_memory(true);
+    config.allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    let engine = Engine::new(&config)?;
+
+    let mut store = Store::new(&engine, ());
+
+    let mem1 = {
+        let m = Module::new(&engine, "(module (memory (export \"\") 1 2))")?;
+        Instance::new(&mut store, &m, &[])?
+            .get_memory(&mut store, "")
+            .unwrap()
+    };
+    let mem2 = {
+        let m = Module::new(&engine, "(module (memory (export \"\") 1))")?;
+        Instance::new(&mut store, &m, &[])?
+            .get_memory(&mut store, "")
+            .unwrap()
+    };
+
+    unsafe fn assert_guards(store: &Store<()>, mem: &Memory) {
+        // guards before
+        println!("check pre-mem");
+        assert_faults(mem.data_ptr(&store).offset(-(GUARD_SIZE as isize)));
+
+        // unmapped just after memory
+        println!("check mem");
+        assert_faults(mem.data_ptr(&store).add(mem.data_size(&store)));
+
+        // guards after memory
+        println!("check post-mem");
+        assert_faults(mem.data_ptr(&store).add(1 << 20));
+    }
+    unsafe {
+        assert_guards(&store, &mem1);
+        assert_guards(&store, &mem2);
+        println!("growing");
+        mem1.grow(&mut store, 1).unwrap();
+        mem2.grow(&mut store, 1).unwrap();
+        assert_guards(&store, &mem1);
+        assert_guards(&store, &mem2);
+    }
+
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn guards_present_pooling_mpk() -> Result<()> {
+    if !mpk::is_supported() {
+        println!("skipping `guards_present_pooling_mpk` test; mpk is not supported");
+        return Ok(());
+    }
+
+    const GUARD_SIZE: u64 = 65536;
+    let mut pool = crate::small_pool_config();
+    pool.total_memories(4)
+        .memory_pages(10)
+        .memory_protection_keys(MpkEnabled::Enable)
+        .max_memory_protection_keys(2);
     let mut config = Config::new();
     config.static_memory_maximum_size(1 << 20);
     config.dynamic_memory_guard_size(GUARD_SIZE);
@@ -306,17 +375,23 @@ fn massive_64_bit_still_limited() -> Result<()> {
             _current: usize,
             _request: usize,
             _max: Option<usize>,
-        ) -> bool {
+        ) -> Result<bool> {
             self.hit = true;
-            true
+            Ok(true)
         }
-        fn table_growing(&mut self, _current: u32, _request: u32, _max: Option<u32>) -> bool {
+        fn table_growing(
+            &mut self,
+            _current: u32,
+            _request: u32,
+            _max: Option<u32>,
+        ) -> Result<bool> {
             unreachable!()
         }
     }
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn tiny_static_heap() -> Result<()> {
     // The size of the memory in the module below is the exact same size as
     // the static memory size limit in the configuration. This is intended to
@@ -337,7 +412,7 @@ fn tiny_static_heap() -> Result<()> {
 
                     (loop
                         (if (i32.eq (local.get $i) (i32.const 65536))
-                            (return))
+                            (then (return)))
                         (drop (i32.load8_u (local.get $i)))
                         (local.set $i (i32.add (local.get $i) (i32.const 1)))
                         br 0
@@ -528,6 +603,7 @@ fn shared_memory_basics() -> Result<()> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn shared_memory_wait_notify() -> Result<()> {
     const THREADS: usize = 8;
     const COUNT: usize = 100_000;

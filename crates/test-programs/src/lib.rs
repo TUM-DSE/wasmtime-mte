@@ -1,2 +1,5 @@
-// This crate doesn't contain any code; it just exists to run tests for
-// other crates in the workspace.
+pub mod http;
+pub mod preview1;
+pub mod sockets;
+
+wit_bindgen::generate!("test-command" in "../wasi/wit");

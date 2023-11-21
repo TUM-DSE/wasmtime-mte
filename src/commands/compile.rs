@@ -5,15 +5,12 @@ use clap::Parser;
 use once_cell::sync::Lazy;
 use std::fs;
 use std::path::PathBuf;
-use target_lexicon::Triple;
 use wasmtime::Engine;
 use wasmtime_cli_flags::CommonOptions;
 
 static AFTER_HELP: Lazy<String> = Lazy::new(|| {
     format!(
         "By default, no CPU features or presets will be enabled for the compilation.\n\
-        \n\
-        {}\
         \n\
         Usage examples:\n\
         \n\
@@ -27,13 +24,12 @@ static AFTER_HELP: Lazy<String> = Lazy::new(|| {
         \n\
         Compiling for a specific platform (Linux) and CPU preset (Skylake):\n\
         \n  \
-        wasmtime compile --target x86_64-unknown-linux --cranelift-enable skylake foo.wasm\n",
-        crate::FLAG_EXPLANATIONS.as_str()
+        wasmtime compile --target x86_64-unknown-linux -Ccranelift-skylake foo.wasm\n",
     )
 });
 
 /// Compiles a WebAssembly module.
-#[derive(Parser)]
+#[derive(Parser, PartialEq)]
 #[structopt(
     name = "compile",
     version,
@@ -41,32 +37,47 @@ static AFTER_HELP: Lazy<String> = Lazy::new(|| {
 )]
 pub struct CompileCommand {
     #[clap(flatten)]
-    common: CommonOptions,
+    #[allow(missing_docs)]
+    pub common: CommonOptions,
 
     /// The target triple; default is the host triple
     #[clap(long, value_name = "TARGET")]
-    target: Option<String>,
+    pub target: Option<String>,
 
     /// The path of the output compiled module; defaults to <MODULE>.cwasm
-    #[clap(short = 'o', long, value_name = "OUTPUT", parse(from_os_str))]
-    output: Option<PathBuf>,
+    #[clap(short = 'o', long, value_name = "OUTPUT")]
+    pub output: Option<PathBuf>,
+
+    /// The directory path to write clif files into, one clif file per wasm function.
+    #[clap(long = "emit-clif", value_name = "PATH")]
+    pub emit_clif: Option<PathBuf>,
 
     /// The path of the WebAssembly to compile
-    #[clap(index = 1, value_name = "MODULE", parse(from_os_str))]
-    module: PathBuf,
+    #[clap(index = 1, value_name = "MODULE")]
+    pub module: PathBuf,
 }
 
 impl CompileCommand {
     /// Executes the command.
     pub fn execute(mut self) -> Result<()> {
-        self.common.init_logging();
+        self.common.init_logging()?;
 
-        let target = self
-            .target
-            .take()
-            .unwrap_or_else(|| Triple::host().to_string());
+        let mut config = self.common.config(self.target.as_deref())?;
 
-        let config = self.common.config(Some(&target))?;
+        if let Some(path) = self.emit_clif {
+            if !path.exists() {
+                std::fs::create_dir(&path)?;
+            }
+
+            if !path.is_dir() {
+                bail!(
+                    "the path passed for '--emit-clif' ({}) must be a directory",
+                    path.display()
+                );
+            }
+
+            config.emit_clif(&path);
+        }
 
         let engine = Engine::new(&config)?;
 
@@ -77,7 +88,11 @@ impl CompileCommand {
             );
         }
 
+        #[cfg(feature = "wat")]
         let input = wat::parse_file(&self.module).with_context(|| "failed to read input file")?;
+        #[cfg(not(feature = "wat"))]
+        let input = std::fs::read(&self.module)
+            .with_context(|| format!("failed to read input file: {:?}", self.module))?;
 
         let output = self.output.take().unwrap_or_else(|| {
             let mut output: PathBuf = self.module.file_name().unwrap().into();
@@ -85,31 +100,19 @@ impl CompileCommand {
             output
         });
 
-        // If the component-model proposal is enabled and the binary we're
-        // compiling looks like a component, tested by sniffing the first 8
-        // bytes with the current component model proposal.
-        #[cfg(feature = "component-model")]
-        {
-            if let Ok(wasmparser::Chunk::Parsed {
-                payload:
-                    wasmparser::Payload::Version {
-                        encoding: wasmparser::Encoding::Component,
-                        ..
-                    },
-                ..
-            }) = wasmparser::Parser::new(0).parse(&input, true)
-            {
-                fs::write(output, engine.precompile_component(&input)?)?;
-                return Ok(());
-            }
-        }
-        fs::write(output, engine.precompile_module(&input)?)?;
+        let output_bytes = if wasmparser::Parser::is_component(&input) {
+            engine.precompile_component(&input)?
+        } else {
+            engine.precompile_module(&input)?
+        };
+        fs::write(&output, output_bytes)
+            .with_context(|| format!("failed to write output: {}", output.display()))?;
 
         Ok(())
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod test {
     use super::*;
     use std::io::Write;
@@ -128,7 +131,7 @@ mod test {
 
         let command = CompileCommand::try_parse_from(vec![
             "compile",
-            "--disable-logging",
+            "-Dlogging=n",
             "-o",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),
@@ -159,35 +162,21 @@ mod test {
         // Set all the x64 flags to make sure they work
         let command = CompileCommand::try_parse_from(vec![
             "compile",
-            "--disable-logging",
-            "--cranelift-enable",
-            "has_sse3",
-            "--cranelift-enable",
-            "has_ssse3",
-            "--cranelift-enable",
-            "has_sse41",
-            "--cranelift-enable",
-            "has_sse42",
-            "--cranelift-enable",
-            "has_avx",
-            "--cranelift-enable",
-            "has_avx2",
-            "--cranelift-enable",
-            "has_fma",
-            "--cranelift-enable",
-            "has_avx512dq",
-            "--cranelift-enable",
-            "has_avx512vl",
-            "--cranelift-enable",
-            "has_avx512f",
-            "--cranelift-enable",
-            "has_popcnt",
-            "--cranelift-enable",
-            "has_bmi1",
-            "--cranelift-enable",
-            "has_bmi2",
-            "--cranelift-enable",
-            "has_lzcnt",
+            "-Dlogging=n",
+            "-Ccranelift-has-sse3",
+            "-Ccranelift-has-ssse3",
+            "-Ccranelift-has-sse41",
+            "-Ccranelift-has-sse42",
+            "-Ccranelift-has-avx",
+            "-Ccranelift-has-avx2",
+            "-Ccranelift-has-fma",
+            "-Ccranelift-has-avx512dq",
+            "-Ccranelift-has-avx512vl",
+            "-Ccranelift-has-avx512f",
+            "-Ccranelift-has-popcnt",
+            "-Ccranelift-has-bmi1",
+            "-Ccranelift-has-bmi2",
+            "-Ccranelift-has-lzcnt",
             "-o",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),
@@ -210,17 +199,12 @@ mod test {
         // Set all the aarch64 flags to make sure they work
         let command = CompileCommand::try_parse_from(vec![
             "compile",
-            "--disable-logging",
-            "--cranelift-enable",
-            "has_lse",
-            "--cranelift-enable",
-            "has_pauth",
-            "--cranelift-enable",
-            "sign_return_address",
-            "--cranelift-enable",
-            "sign_return_address_all",
-            "--cranelift-enable",
-            "sign_return_address_with_bkey",
+            "-Dlogging=n",
+            "-Ccranelift-has-lse",
+            "-Ccranelift-has-pauth",
+            "-Ccranelift-sign-return-address",
+            "-Ccranelift-sign-return-address-all",
+            "-Ccranelift-sign-return-address-with-bkey",
             "-o",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),
@@ -243,9 +227,8 @@ mod test {
         // aarch64 flags should not be supported
         let command = CompileCommand::try_parse_from(vec![
             "compile",
-            "--disable-logging",
-            "--cranelift-enable",
-            "has_lse",
+            "-Dlogging=n",
+            "-Ccranelift-has-lse",
             "-o",
             output_path.to_str().unwrap(),
             input_path.to_str().unwrap(),
@@ -277,11 +260,11 @@ mod test {
             "icelake",
             "znver1",
         ] {
+            let flag = format!("-Ccranelift-{preset}");
             let command = CompileCommand::try_parse_from(vec![
                 "compile",
-                "--disable-logging",
-                "--cranelift-enable",
-                preset,
+                "-Dlogging=n",
+                flag.as_str(),
                 "-o",
                 output_path.to_str().unwrap(),
                 input_path.to_str().unwrap(),

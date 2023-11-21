@@ -19,16 +19,18 @@
 
 use crate::fx::FxHashMap;
 use crate::fx::FxHashSet;
+use crate::ir::pcc::*;
 use crate::ir::RelSourceLoc;
-use crate::ir::{self, types, Constant, ConstantData, DynamicStackSlot, LabelValueLoc, ValueLabel};
+use crate::ir::{self, types, Constant, ConstantData, DynamicStackSlot, ValueLabel};
 use crate::machinst::*;
 use crate::timing;
 use crate::trace;
 use crate::CodegenError;
-use crate::ValueLocRange;
+use crate::{LabelValueLoc, ValueLocRange};
+use cranelift_control::ControlPlane;
 use regalloc2::{
-    Edit, Function as RegallocFunction, InstOrEdit, InstRange, Operand, OperandKind, PRegSet,
-    RegClass, VReg,
+    Edit, Function as RegallocFunction, InstOrEdit, InstRange, MachineEnv, Operand, OperandKind,
+    PRegSet, RegClass, VReg,
 };
 
 use alloc::vec::Vec;
@@ -80,9 +82,6 @@ pub struct VCode<I: VCodeInst> {
 
     /// Clobbers: a sparse map from instruction indices to clobber masks.
     clobbers: FxHashMap<InsnIndex, PRegSet>,
-
-    /// Move information: for a given InsnIndex, (src, dst) operand pair.
-    is_move: FxHashMap<InsnIndex, (Operand, Operand)>,
 
     /// Source locations for each instruction. (`SourceLoc` is a `u32`, so it is
     /// reasonable to keep one of these per instruction.)
@@ -168,20 +167,23 @@ pub struct VCode<I: VCodeInst> {
     reftyped_vregs: Vec<VReg>,
 
     /// Constants.
-    constants: VCodeConstants,
+    pub(crate) constants: VCodeConstants,
 
     /// Value labels for debuginfo attached to vregs.
     debug_value_labels: Vec<(VReg, InsnIndex, InsnIndex, u32)>,
 
     pub(crate) sigs: SigSet,
+
+    /// Facts on VRegs, for proof-carrying code verification.
+    facts: Vec<Option<Fact>>,
 }
 
 /// The result of `VCode::emit`. Contains all information computed
 /// during emission: actual machine code, optionally a disassembly,
 /// and optionally metadata about the code layout.
-pub struct EmitResult<I: VCodeInst> {
+pub struct EmitResult {
     /// The MachBuffer containing the machine code.
-    pub buffer: MachBuffer<I>,
+    pub buffer: MachBufferFinalized<Stencil>,
 
     /// Offset of each basic block, recorded during emission. Computed
     /// only if `debug_value_labels` is non-empty.
@@ -190,10 +192,6 @@ pub struct EmitResult<I: VCodeInst> {
     /// Final basic-block edges, in terms of code offsets of
     /// bb-starts. Computed only if `debug_value_labels` is non-empty.
     pub bb_edges: Vec<(CodeOffset, CodeOffset)>,
-
-    /// Final instruction offsets, recorded during emission. Computed
-    /// only if `debug_value_labels` is non-empty.
-    pub inst_offsets: Vec<CodeOffset>,
 
     /// Final length of function body.
     pub func_body_len: CodeOffset,
@@ -215,9 +213,6 @@ pub struct EmitResult<I: VCodeInst> {
 
     /// Stack frame size.
     pub frame_size: u32,
-
-    /// The alignment requirement for pc-relative loads.
-    pub alignment: u32,
 }
 
 /// A builder for a VCode function body.
@@ -413,35 +408,10 @@ impl<I: VCodeInst> VCodeBuilder<I> {
 
     pub fn set_vreg_alias(&mut self, from: Reg, to: Reg) {
         let from = from.into();
-        let resolved_to = self.resolve_vreg_alias(to.into());
+        let resolved_to = self.vcode.resolve_vreg_alias(to.into());
         // Disallow cycles (see below).
         assert_ne!(resolved_to, from);
         self.vcode.vreg_aliases.insert(from, resolved_to);
-    }
-
-    pub fn resolve_vreg_alias(&self, from: regalloc2::VReg) -> regalloc2::VReg {
-        Self::resolve_vreg_alias_impl(&self.vcode.vreg_aliases, from)
-    }
-
-    fn resolve_vreg_alias_impl(
-        aliases: &FxHashMap<regalloc2::VReg, regalloc2::VReg>,
-        from: regalloc2::VReg,
-    ) -> regalloc2::VReg {
-        // We prevent cycles from existing by resolving targets of
-        // aliases eagerly before setting them. If the target resolves
-        // to the origin of the alias, then a cycle would be created
-        // and the alias is disallowed. Because of the structure of
-        // SSA code (one instruction can refer to another's defs but
-        // not vice-versa, except indirectly through
-        // phis/blockparams), cycles should not occur as we use
-        // aliases to redirect vregs to the temps that actually define
-        // them.
-
-        let mut vreg = from;
-        while let Some(to) = aliases.get(&vreg) {
-            vreg = *to;
-        }
-        vreg
     }
 
     /// Access the constants.
@@ -525,7 +495,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         // Generate debug-value labels based on per-label maps.
         for (label, tuples) in &self.debug_info {
             for &(start, end, vreg) in tuples {
-                let vreg = self.resolve_vreg_alias(vreg);
+                let vreg = self.vcode.resolve_vreg_alias(vreg);
                 let fwd_start = translate(end);
                 let fwd_end = translate(start);
                 self.vcode
@@ -541,7 +511,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
             .sort_unstable_by_key(|(vreg, _, _, _)| *vreg);
     }
 
-    fn collect_operands(&mut self, allocatable: PRegSet) {
+    fn collect_operands(&mut self) {
         for (i, insn) in self.vcode.insts.iter().enumerate() {
             // Push operands from the instruction onto the operand list.
             //
@@ -555,9 +525,10 @@ impl<I: VCodeInst> VCodeBuilder<I> {
             // its register fields (which is slow, branchy code) once.
 
             let vreg_aliases = &self.vcode.vreg_aliases;
+            let allocatable = PRegSet::from(self.vcode.machine_env());
             let mut op_collector =
                 OperandCollector::new(&mut self.vcode.operands, allocatable, |vreg| {
-                    Self::resolve_vreg_alias_impl(vreg_aliases, vreg)
+                    VCode::<I>::resolve_vreg_alias_impl(vreg_aliases, vreg)
                 });
             insn.get_operands(&mut op_collector);
             let (ops, clobbers) = op_collector.finish();
@@ -580,35 +551,27 @@ impl<I: VCodeInst> VCodeBuilder<I> {
                     "the real register {:?} was used as the destination of a move instruction",
                     dst.to_reg()
                 );
-
-                let src = Operand::reg_use(Self::resolve_vreg_alias_impl(vreg_aliases, src.into()));
-                let dst = Operand::reg_def(Self::resolve_vreg_alias_impl(
-                    vreg_aliases,
-                    dst.to_reg().into(),
-                ));
-
-                // Note that regalloc2 requires these in (src, dst) order.
-                self.vcode.is_move.insert(InsnIndex::new(i), (src, dst));
             }
         }
 
         // Translate blockparam args via the vreg aliases table as well.
         for arg in &mut self.vcode.branch_block_args {
-            let new_arg = Self::resolve_vreg_alias_impl(&self.vcode.vreg_aliases, *arg);
+            let new_arg = VCode::<I>::resolve_vreg_alias_impl(&self.vcode.vreg_aliases, *arg);
             trace!("operandcollector: block arg {:?} -> {:?}", arg, new_arg);
             *arg = new_arg;
         }
     }
 
     /// Build the final VCode.
-    pub fn build(mut self, allocatable: PRegSet, vregs: VRegAllocator<I>) -> VCode<I> {
+    pub fn build(mut self, vregs: VRegAllocator<I>) -> VCode<I> {
         self.vcode.vreg_types = vregs.vreg_types;
+        self.vcode.facts = vregs.facts;
         self.vcode.reftyped_vregs = vregs.reftyped_vregs;
 
         if self.direction == VCodeBuildDirection::Backward {
             self.reverse_and_finalize();
         }
-        self.collect_operands(allocatable);
+        self.collect_operands();
 
         // Apply register aliases to the `reftyped_vregs` list since this list
         // will be returned directly to `regalloc2` eventually and all
@@ -618,7 +581,7 @@ impl<I: VCodeInst> VCodeBuilder<I> {
         // Also note that `reftyped_vregs` can't have duplicates, so after the
         // aliases are applied duplicates are removed.
         for reg in self.vcode.reftyped_vregs.iter_mut() {
-            *reg = Self::resolve_vreg_alias_impl(&self.vcode.vreg_aliases, *reg);
+            *reg = VCode::<I>::resolve_vreg_alias_impl(&self.vcode.vreg_aliases, *reg);
         }
         self.vcode.reftyped_vregs.sort();
         self.vcode.reftyped_vregs.dedup();
@@ -633,6 +596,8 @@ impl<I: VCodeInst> VCodeBuilder<I> {
 fn is_reftype(ty: Type) -> bool {
     ty == types::R64 || ty == types::R32
 }
+
+const NO_INST_OFFSET: CodeOffset = u32::MAX;
 
 impl<I: VCodeInst> VCode<I> {
     /// New empty VCode.
@@ -651,7 +616,6 @@ impl<I: VCodeInst> VCode<I> {
             operands: Vec::with_capacity(30 * n_blocks),
             operand_ranges: Vec::with_capacity(10 * n_blocks),
             clobbers: FxHashMap::default(),
-            is_move: FxHashMap::default(),
             srclocs: Vec::with_capacity(10 * n_blocks),
             entry: BlockIndex::new(0),
             block_ranges: Vec::with_capacity(n_blocks),
@@ -670,7 +634,13 @@ impl<I: VCodeInst> VCode<I> {
             constants,
             debug_value_labels: vec![],
             vreg_aliases: FxHashMap::with_capacity_and_hasher(10 * n_blocks, Default::default()),
+            facts: vec![],
         }
+    }
+
+    /// Get the ABI-dependent MachineEnv for managing register allocation.
+    pub fn machine_env(&self) -> &MachineEnv {
+        self.abi.machine_env(&self.sigs)
     }
 
     /// Get the number of blocks. Block indices will be in the range `0 ..
@@ -762,8 +732,9 @@ impl<I: VCodeInst> VCode<I> {
         mut self,
         regalloc: &regalloc2::Output,
         want_disasm: bool,
-        want_metadata: bool,
-    ) -> EmitResult<I>
+        flags: &settings::Flags,
+        ctrl_plane: &mut ControlPlane,
+    ) -> EmitResult
     where
         I: VCodeInst,
     {
@@ -774,10 +745,13 @@ impl<I: VCodeInst> VCode<I> {
         let mut buffer = MachBuffer::new();
         let mut bb_starts: Vec<Option<CodeOffset>> = vec![];
 
-        // The first M MachLabels are reserved for block indices, the next N MachLabels for
-        // constants.
+        // The first M MachLabels are reserved for block indices.
         buffer.reserve_labels_for_blocks(self.num_blocks());
-        buffer.reserve_labels_for_constants(&self.constants);
+
+        // Register all allocated constants with the `MachBuffer` to ensure that
+        // any references to the constants during instructions can be handled
+        // correctly.
+        buffer.register_constants(&self.constants);
 
         // Construct the final order we emit code in: cold blocks at the end.
         let mut final_order: SmallVec<[BlockIndex; 16]> = smallvec![];
@@ -803,22 +777,18 @@ impl<I: VCodeInst> VCode<I> {
         let clobbers = self.compute_clobbers(regalloc);
         self.abi.set_num_spillslots(regalloc.num_spillslots);
         self.abi.set_clobbered(clobbers);
-
-        // We need to generate the prologue in order to get the ABI
-        // object into the right state first. We'll emit it when we
-        // hit the right block below.
-        let prologue_insts = self.abi.gen_prologue(&self.sigs);
+        self.abi.compute_frame_layout(&self.sigs);
 
         // Emit blocks.
         let mut cur_srcloc = None;
         let mut last_offset = None;
         let mut inst_offsets = vec![];
-        let mut state = I::State::new(&self.abi);
+        let mut state = I::State::new(&self.abi, std::mem::take(ctrl_plane));
 
         let mut disasm = String::new();
 
         if !self.debug_value_labels.is_empty() {
-            inst_offsets.resize(self.insts.len(), 0);
+            inst_offsets.resize(self.insts.len(), NO_INST_OFFSET);
         }
 
         // Count edits per block ahead of time; this is needed for
@@ -838,9 +808,19 @@ impl<I: VCodeInst> VCode<I> {
         }
 
         let is_forward_edge_cfi_enabled = self.abi.is_forward_edge_cfi_enabled();
+        let mut bb_padding = match flags.bb_padding_log2_minus_one() {
+            0 => Vec::new(),
+            n => vec![0; 1 << (n - 1)],
+        };
+        let mut total_bb_padding = 0;
 
         for (block_order_idx, &block) in final_order.iter().enumerate() {
             trace!("emitting block {:?}", block);
+
+            // Call the new block hook for state
+            state.on_new_block();
+
+            // Emit NOPs to align the block.
             let new_offset = I::align_basic_block(buffer.cur_offset());
             while new_offset > buffer.cur_offset() {
                 // Pad with NOPs up to the aligned block offset.
@@ -866,7 +846,7 @@ impl<I: VCodeInst> VCode<I> {
                 trace!(" -> entry block");
                 buffer.start_srcloc(Default::default());
                 state.pre_sourceloc(Default::default());
-                for inst in &prologue_insts {
+                for inst in &self.abi.gen_prologue() {
                     do_emit(&inst, &[], &mut disasm, &mut buffer, &mut state);
                 }
                 buffer.end_srcloc();
@@ -874,13 +854,13 @@ impl<I: VCodeInst> VCode<I> {
 
             // Now emit the regular block body.
 
-            buffer.bind_label(MachLabel::from_block(block));
+            buffer.bind_label(MachLabel::from_block(block), state.ctrl_plane_mut());
 
             if want_disasm {
                 writeln!(&mut disasm, "block{}:", block.index()).unwrap();
             }
 
-            if want_metadata {
+            if flags.machine_code_cfg_info() {
                 // Track BB starts. If we have backed up due to MachBuffer
                 // branch opts, note that the removed blocks were removed.
                 let cur_offset = buffer.cur_offset();
@@ -922,16 +902,6 @@ impl<I: VCodeInst> VCode<I> {
                             if !self.block_order.is_cold(block) {
                                 inst_offsets[iix.index()] = buffer.cur_offset();
                             }
-                        }
-
-                        if self.insts[iix.index()].is_move().is_some() {
-                            // Skip moves in the pre-regalloc program;
-                            // all of these are incorporated by the
-                            // regalloc into its unified move handling
-                            // and they come out the other end, if
-                            // still needed (not elided), as
-                            // regalloc-inserted moves.
-                            continue;
                         }
 
                         // Update the srcloc at this point in the buffer.
@@ -1042,38 +1012,59 @@ impl<I: VCodeInst> VCode<I> {
                 cur_srcloc = None;
             }
 
-            // Do we need an island? Get the worst-case size of the
-            // next BB and see if, having emitted that many bytes, we
-            // will be beyond the deadline.
-            if block_order_idx < final_order.len() - 1 {
+            // Do we need an island? Get the worst-case size of the next BB, add
+            // it to the optional padding behind the block, and pass this to the
+            // `MachBuffer` to determine if an island is necessary.
+            let worst_case_next_bb = if block_order_idx < final_order.len() - 1 {
                 let next_block = final_order[block_order_idx + 1];
                 let next_block_range = self.block_ranges[next_block.index()];
                 let next_block_size =
                     (next_block_range.1.index() - next_block_range.0.index()) as u32;
                 let next_block_ra_insertions = ra_edits_per_block[next_block.index()];
-                let worst_case_next_bb =
-                    I::worst_case_size() * (next_block_size + next_block_ra_insertions);
-                if buffer.island_needed(worst_case_next_bb) {
-                    buffer.emit_island(worst_case_next_bb);
+                I::worst_case_size() * (next_block_size + next_block_ra_insertions)
+            } else {
+                0
+            };
+            let padding = if bb_padding.is_empty() {
+                0
+            } else {
+                bb_padding.len() as u32 + I::LabelUse::ALIGN - 1
+            };
+            if buffer.island_needed(padding + worst_case_next_bb) {
+                buffer.emit_island(padding + worst_case_next_bb, ctrl_plane);
+            }
+
+            // Insert padding, if configured, to stress the `MachBuffer`'s
+            // relocation and island calculations.
+            //
+            // Padding can get quite large during fuzzing though so place a
+            // total cap on it where when a per-function threshold is exceeded
+            // the padding is turned back down to zero. This avoids a small-ish
+            // test case generating a GB+ memory footprint in Cranelift for
+            // example.
+            if !bb_padding.is_empty() {
+                buffer.put_data(&bb_padding);
+                buffer.align_to(I::LabelUse::ALIGN);
+                total_bb_padding += bb_padding.len();
+                if total_bb_padding > (150 << 20) {
+                    bb_padding = Vec::new();
                 }
             }
         }
 
-        // Emit the constants used by the function.
-        let mut alignment = 1;
-        for (constant, data) in self.constants.iter() {
-            alignment = data.alignment().max(alignment);
+        // Do any optimizations on branches at tail of buffer, as if we had
+        // bound one last label.
+        buffer.optimize_branches(ctrl_plane);
 
-            let label = buffer.get_label_for_constant(constant);
-            buffer.defer_constant(label, data.alignment(), data.as_slice(), u32::max_value());
-        }
+        // emission state is not needed anymore, move control plane back out
+        *ctrl_plane = state.take_ctrl_plane();
 
         let func_body_len = buffer.cur_offset();
 
         // Create `bb_edges` and final (filtered) `bb_starts`.
         let mut bb_edges = vec![];
         let mut bb_offsets = vec![];
-        if want_metadata {
+        if flags.machine_code_cfg_info() {
             for block in 0..self.num_blocks() {
                 if bb_starts[block].is_none() {
                     // Block was deleted by MachBuffer; skip.
@@ -1091,22 +1082,61 @@ impl<I: VCodeInst> VCode<I> {
             }
         }
 
+        self.monotonize_inst_offsets(&mut inst_offsets[..], func_body_len);
         let value_labels_ranges =
             self.compute_value_labels_ranges(regalloc, &inst_offsets[..], func_body_len);
         let frame_size = self.abi.frame_size();
 
         EmitResult {
-            buffer,
+            buffer: buffer.finish(&self.constants, ctrl_plane),
             bb_offsets,
             bb_edges,
-            inst_offsets,
             func_body_len,
             disasm: if want_disasm { Some(disasm) } else { None },
             sized_stackslot_offsets: self.abi.sized_stackslot_offsets().clone(),
             dynamic_stackslot_offsets: self.abi.dynamic_stackslot_offsets().clone(),
             value_labels_ranges,
             frame_size,
-            alignment,
+        }
+    }
+
+    fn monotonize_inst_offsets(&self, inst_offsets: &mut [CodeOffset], func_body_len: u32) {
+        if self.debug_value_labels.is_empty() {
+            return;
+        }
+
+        // During emission, branch removal can make offsets of instructions incorrect.
+        // Consider the following sequence: [insi][jmp0][jmp1][jmp2][insj]
+        // It will be recorded as (say):    [30]  [34]  [38]  [42]  [<would be 46>]
+        // When the jumps get removed we are left with (in "inst_offsets"):
+        // [insi][jmp0][jmp1][jmp2][insj][...]
+        // [30]  [34]  [38]  [42]  [34]
+        // Which violates the monotonicity invariant. This method sets offsets of these
+        // removed instructions such as to make them appear zero-sized:
+        // [insi][jmp0][jmp1][jmp2][insj][...]
+        // [30]  [34]  [34]  [34]  [34]
+        //
+        let mut next_offset = func_body_len;
+        for inst_index in (0..(inst_offsets.len() - 1)).rev() {
+            let inst_offset = inst_offsets[inst_index];
+
+            // Not all instructions get their offsets recorded.
+            if inst_offset == NO_INST_OFFSET {
+                continue;
+            }
+
+            if inst_offset > next_offset {
+                trace!(
+                    "Fixing code offset of the removed Inst {}: {} -> {}",
+                    inst_index,
+                    inst_offset,
+                    next_offset
+                );
+                inst_offsets[inst_index] = next_offset;
+                continue;
+            }
+
+            next_offset = inst_offset;
         }
     }
 
@@ -1132,45 +1162,70 @@ impl<I: VCodeInst> VCode<I> {
                 inst_offsets[to.inst().index()]
             };
 
-            // Empty range or to-offset of zero can happen because of
-            // cold blocks (see above).
-            if to_offset == 0 || from_offset == to_offset {
+            // Empty ranges or unavailable offsets can happen
+            // due to cold blocks and branch removal (see above).
+            if from_offset == NO_INST_OFFSET
+                || to_offset == NO_INST_OFFSET
+                || from_offset == to_offset
+            {
                 continue;
             }
 
             let loc = if let Some(preg) = alloc.as_reg() {
                 LabelValueLoc::Reg(Reg::from(preg))
             } else {
-                // We can't translate spillslot locations at the
-                // moment because ValueLabelLoc requires an
-                // instantaneous SP offset, and this can *change*
-                // within the range we have here because of callsites
-                // adjusting SP temporarily. To avoid the complexity
-                // of accurately plumbing through nominal-SP
-                // adjustment sites, we just omit debug info for
-                // values that are spilled. Not ideal, but debug info
-                // is best-effort.
-                continue;
+                let slot = alloc.as_stack().unwrap();
+                let sp_offset = self.abi.get_spillslot_offset(slot);
+                let sp_to_caller_sp_offset = self.abi.nominal_sp_to_caller_sp_offset();
+                let caller_sp_to_cfa_offset =
+                    crate::isa::unwind::systemv::caller_sp_to_cfa_offset();
+                let cfa_to_sp_offset = -((sp_to_caller_sp_offset + caller_sp_to_cfa_offset) as i64);
+                LabelValueLoc::CFAOffset(cfa_to_sp_offset + sp_offset)
             };
 
-            ranges.push(ValueLocRange {
+            // ValueLocRanges are recorded by *instruction-end
+            // offset*. `from_offset` is the *start* of the
+            // instruction; that is the same as the end of another
+            // instruction, so we only want to begin coverage once
+            // we are past the previous instruction's end.
+            let start = from_offset + 1;
+
+            // Likewise, `end` is exclusive, but we want to
+            // *include* the end of the last
+            // instruction. `to_offset` is the start of the
+            // `to`-instruction, which is the exclusive end, i.e.,
+            // the first instruction not covered. That
+            // instruction's start is the same as the end of the
+            // last instruction that is included, so we go one
+            // byte further to be sure to include it.
+            let end = to_offset + 1;
+
+            // Coalesce adjacent ranges that for the same location
+            // to minimize output size here and for the consumers.
+            if let Some(last_loc_range) = ranges.last_mut() {
+                if last_loc_range.loc == loc && last_loc_range.end == start {
+                    trace!(
+                        "Extending debug range for VL{} in {:?} to {}",
+                        label,
+                        loc,
+                        end
+                    );
+                    last_loc_range.end = end;
+                    continue;
+                }
+            }
+
+            trace!(
+                "Recording debug range for VL{} in {:?}: [Inst {}..Inst {}) [{}..{})",
+                label,
                 loc,
-                // ValueLocRanges are recorded by *instruction-end
-                // offset*. `from_offset` is the *start* of the
-                // instruction; that is the same as the end of another
-                // instruction, so we only want to begin coverage once
-                // we are past the previous instruction's end.
-                start: from_offset + 1,
-                // Likewise, `end` is exclusive, but we want to
-                // *include* the end of the last
-                // instruction. `to_offset` is the start of the
-                // `to`-instruction, which is the exclusive end, i.e.,
-                // the first instruction not covered. That
-                // instruction's start is the same as the end of the
-                // last instruction that is included, so we go one
-                // byte further to be sure to include it.
-                end: to_offset + 1,
-            });
+                from.inst().index(),
+                to.inst().index(),
+                start,
+                end
+            );
+
+            ranges.push(ValueLocRange { loc, start, end });
         }
 
         value_labels_ranges
@@ -1179,6 +1234,34 @@ impl<I: VCodeInst> VCode<I> {
     /// Get the IR block for a BlockIndex, if one exists.
     pub fn bindex_to_bb(&self, block: BlockIndex) -> Option<ir::Block> {
         self.block_order.lowered_order()[block.index()].orig_block()
+    }
+
+    pub fn resolve_vreg_alias(&self, from: regalloc2::VReg) -> regalloc2::VReg {
+        Self::resolve_vreg_alias_impl(&self.vreg_aliases, from)
+    }
+
+    /// Implementation of alias resolution. Separate helper that does
+    /// not borrow `self` in order to allow working around borrowing
+    /// restrictions.
+    fn resolve_vreg_alias_impl(
+        aliases: &FxHashMap<regalloc2::VReg, regalloc2::VReg>,
+        from: regalloc2::VReg,
+    ) -> regalloc2::VReg {
+        // We prevent cycles from existing by resolving targets of
+        // aliases eagerly before setting them. If the target resolves
+        // to the origin of the alias, then a cycle would be created
+        // and the alias is disallowed. Because of the structure of
+        // SSA code (one instruction can refer to another's defs but
+        // not vice-versa, except indirectly through
+        // phis/blockparams), cycles should not occur as we use
+        // aliases to redirect vregs to the temps that actually define
+        // them.
+
+        let mut vreg = from;
+        while let Some(to) = aliases.get(&vreg) {
+            vreg = *to;
+        }
+        vreg
     }
 
     #[inline]
@@ -1191,7 +1274,7 @@ impl<I: VCodeInst> VCode<I> {
 
     #[inline]
     fn assert_not_vreg_alias(&self, vreg: VReg) -> VReg {
-        debug_assert!(VCodeBuilder::<I>::resolve_vreg_alias_impl(&self.vreg_aliases, vreg) == vreg);
+        debug_assert!(self.resolve_vreg_alias(vreg) == vreg);
         vreg
     }
 
@@ -1202,6 +1285,40 @@ impl<I: VCodeInst> VCode<I> {
         // is itself constructed.
         self.assert_not_vreg_alias(op.vreg());
         op
+    }
+
+    /// Get the type of a VReg.
+    pub fn vreg_type(&self, vreg: VReg) -> Type {
+        self.vreg_types[vreg.vreg()]
+    }
+
+    /// Get the fact, if any, for a given VReg.
+    pub fn vreg_fact(&self, vreg: VReg) -> Option<&Fact> {
+        let vreg = self.resolve_vreg_alias(vreg);
+        self.facts[vreg.vreg()].as_ref()
+    }
+
+    /// Set the fact for a given VReg.
+    pub fn set_vreg_fact(&mut self, vreg: VReg, fact: Fact) {
+        let vreg = self.resolve_vreg_alias(vreg);
+        trace!("set fact on {}: {:?}", vreg, fact);
+        self.facts[vreg.vreg()] = Some(fact);
+    }
+
+    /// Does a given instruction define any facts?
+    pub fn inst_defines_facts(&self, inst: InsnIndex) -> bool {
+        self.inst_operands(inst)
+            .iter()
+            .filter(|o| o.kind() == OperandKind::Def)
+            .map(|o| o.vreg())
+            .any(|vreg| self.facts[vreg.vreg()].is_some())
+    }
+}
+
+impl<I: VCodeInst> std::ops::Index<InsnIndex> for VCode<I> {
+    type Output = I;
+    fn index(&self, idx: InsnIndex) -> &Self::Output {
+        &self.insts[idx.index()]
     }
 }
 
@@ -1261,8 +1378,8 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
         match self.insts[insn.index()].is_term() {
             // We treat blocks terminated by an unconditional trap like a return for regalloc.
             MachTerminator::None => self.insts[insn.index()].is_trap(),
-            MachTerminator::Ret => true,
-            _ => false,
+            MachTerminator::Ret | MachTerminator::RetCall => true,
+            MachTerminator::Uncond | MachTerminator::Cond | MachTerminator::Indirect => false,
         }
     }
 
@@ -1275,14 +1392,6 @@ impl<I: VCodeInst> RegallocFunction for VCode<I> {
 
     fn requires_refs_on_stack(&self, insn: InsnIndex) -> bool {
         self.insts[insn.index()].is_safepoint()
-    }
-
-    fn is_move(&self, insn: InsnIndex) -> Option<(Operand, Operand)> {
-        let (a, b) = self.is_move.get(&insn)?;
-        Some((
-            self.assert_operand_not_vreg_alias(*a),
-            self.assert_operand_not_vreg_alias(*b),
-        ))
     }
 
     fn inst_operands(&self, insn: InsnIndex) -> &[Operand] {
@@ -1365,6 +1474,13 @@ impl<I: VCodeInst> fmt::Debug for VCode<I> {
                     inst,
                     self.insts[inst].pretty_print_inst(&[], &mut state)
                 )?;
+                for operand in self.inst_operands(InsnIndex::new(inst)) {
+                    if operand.kind() == OperandKind::Def {
+                        if let Some(fact) = &self.facts[operand.vreg().vreg()] {
+                            writeln!(f, "    v{} ! {}", operand.vreg().vreg(), fact)?;
+                        }
+                    }
+                }
             }
         }
 
@@ -1390,6 +1506,15 @@ pub struct VRegAllocator<I> {
     /// reftype-status of each vreg) for efficient iteration.
     reftyped_vregs: Vec<VReg>,
 
+    /// A deferred error, to be bubbled up to the top level of the
+    /// lowering algorithm. We take this approach because we cannot
+    /// currently propagate a `Result` upward through ISLE code (the
+    /// lowering rules) or some ABI code.
+    deferred_error: Option<CodegenError>,
+
+    /// Facts on VRegs, for proof-carrying code.
+    facts: Vec<Option<Fact>>,
+
     /// The type of instruction that this allocator makes registers for.
     _inst: core::marker::PhantomData<I>,
 }
@@ -1400,14 +1525,19 @@ impl<I: VCodeInst> VRegAllocator<I> {
         Self {
             next_vreg: first_user_vreg_index(),
             vreg_types: vec![],
+            facts: vec![],
             reftyped_vregs_set: FxHashSet::default(),
             reftyped_vregs: vec![],
+            deferred_error: None,
             _inst: core::marker::PhantomData::default(),
         }
     }
 
     /// Allocate a fresh ValueRegs.
     pub fn alloc(&mut self, ty: Type) -> CodegenResult<ValueRegs<Reg>> {
+        if self.deferred_error.is_some() {
+            return Err(CodegenError::CodeTooLarge);
+        }
         let v = self.next_vreg;
         let (regclasses, tys) = I::rc_for_type(ty)?;
         self.next_vreg += regclasses.len();
@@ -1426,7 +1556,44 @@ impl<I: VCodeInst> VRegAllocator<I> {
         for (&reg_ty, &reg) in tys.iter().zip(regs.regs().iter()) {
             self.set_vreg_type(reg.to_virtual_reg().unwrap(), reg_ty);
         }
+
+        // Create empty facts for each allocated vreg.
+        self.facts
+            .resize(usize::try_from(self.next_vreg).unwrap(), None);
+
         Ok(regs)
+    }
+
+    /// Allocate a fresh ValueRegs, deferring any out-of-vregs
+    /// errors. This is useful in places where we cannot bubble a
+    /// `CodegenResult` upward easily, and which are known to be
+    /// invoked from within the lowering loop that checks the deferred
+    /// error status below.
+    pub fn alloc_with_deferred_error(&mut self, ty: Type) -> ValueRegs<Reg> {
+        match self.alloc(ty) {
+            Ok(x) => x,
+            Err(e) => {
+                self.deferred_error = Some(e);
+                self.bogus_for_deferred_error(ty)
+            }
+        }
+    }
+
+    /// Take any deferred error that was accumulated by `alloc_with_deferred_error`.
+    pub fn take_deferred_error(&mut self) -> Option<CodegenError> {
+        self.deferred_error.take()
+    }
+
+    /// Produce an bogus VReg placeholder with the proper number of
+    /// registers for the given type. This is meant to be used with
+    /// deferred allocation errors (see `Lower::alloc_tmp()`).
+    fn bogus_for_deferred_error(&self, ty: Type) -> ValueRegs<Reg> {
+        let (regclasses, _tys) = I::rc_for_type(ty).expect("must have valid type");
+        match regclasses {
+            &[rc0] => ValueRegs::one(VReg::new(0, rc0).into()),
+            &[rc0, rc1] => ValueRegs::two(VReg::new(0, rc0).into(), VReg::new(1, rc1).into()),
+            _ => panic!("Value must reside in 1 or 2 registers"),
+        }
     }
 
     /// Set the type of this virtual register.
@@ -1441,6 +1608,48 @@ impl<I: VCodeInst> VRegAllocator<I> {
                 self.reftyped_vregs.push(vreg);
             }
         }
+    }
+
+    /// Set the proof-carrying code fact on a given virtual register.
+    ///
+    /// Returns the old fact, if any (only one fact can be stored).
+    pub fn set_fact(&mut self, vreg: VirtualReg, fact: Fact) -> Option<Fact> {
+        trace!("vreg {:?} has fact: {:?}", vreg, fact);
+        self.facts[vreg.index()].replace(fact)
+    }
+
+    /// Take (and remove) a fact about a VReg. Used when setting up
+    /// aliases: we want to move a fact from the alias vreg to the
+    /// aliased vreg, to preserve facts about a value that were stated
+    /// before we lowered its producer.
+    pub fn take_fact(&mut self, vreg: VirtualReg) -> Option<Fact> {
+        self.facts[vreg.index()].take()
+    }
+
+    /// Set a fact only if one doesn't already exist.
+    pub fn set_fact_if_missing(&mut self, vreg: VirtualReg, fact: Fact) {
+        if self.facts[vreg.index()].is_none() {
+            self.set_fact(vreg, fact);
+        }
+    }
+
+    /// Allocate a fresh ValueRegs, with a given fact to apply if
+    /// the value fits in one VReg.
+    pub fn alloc_with_maybe_fact(
+        &mut self,
+        ty: Type,
+        fact: Option<Fact>,
+    ) -> CodegenResult<ValueRegs<Reg>> {
+        let result = self.alloc(ty)?;
+
+        // Ensure that we don't lose a fact on a value that splits
+        // into multiple VRegs.
+        assert!(result.len() == 1 || fact.is_none());
+        if let Some(fact) = fact {
+            self.set_fact(result.regs()[0].to_virtual_reg().unwrap(), fact);
+        }
+
+        Ok(result)
     }
 }
 
@@ -1523,6 +1732,20 @@ impl VCodeConstants {
     /// structure.
     pub fn iter(&self) -> impl Iterator<Item = (VCodeConstant, &VCodeConstantData)> {
         self.constants.iter()
+    }
+
+    /// Returns the data associated with the specified constant.
+    pub fn get(&self, c: VCodeConstant) -> &VCodeConstantData {
+        &self.constants[c]
+    }
+
+    /// Checks if the given [VCodeConstantData] is registered as
+    /// used by the pool.
+    pub fn pool_uses(&self, constant: &VCodeConstantData) -> bool {
+        match constant {
+            VCodeConstantData::Pool(c, _) => self.pool_uses.contains_key(c),
+            _ => false,
+        }
     }
 }
 
