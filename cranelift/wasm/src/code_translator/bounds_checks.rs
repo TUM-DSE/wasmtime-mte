@@ -434,80 +434,75 @@ fn compute_addr<Env>(
 where
     Env: FuncEnvironment + ?Sized,
 {
+    use cranelift_codegen::constants::{
+        BIT_MASK_EXCLUDING_MTE_TAG, BIT_MASK_INCLUDING_MTE_TAG, MTE_DEFAULT_FREE_TAG,
+        MTE_TAG_LEAST_SIG_BIT,
+    };
+
     let pos = builder.cursor();
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
-    // TODO: in case we use alternate design: we have to tag the heap_base here everytime, by following approach from todo below
-    // TODO: we could also slightly change the design, and just expect that heap_base was never tagged with 1 before (always has tag 0), and tag here. So if (index_tag == 0) index_tag = 1
+    // We expect that the heap base address already contains the
+    // MTE_LINEAR_MEMORY_FREE_TAG tag.
 
-    // We expect that the heap base address has already been tagged with the
-    // MTE_LINEAR_MEMORY_FREE_TAG before this point.
-    // If the index has already been tagged (by e.g. segment_* instructions),
-    // then we have to remove the tag stored in the heap base address.
-    // Otherwise, both "addresses" (index technically is not an address, but
-    // we still treat it as such when tagging) would have tags, leading to
-    // arithmetic errors during the addition.
-
-    let tag_bits_inclusive_mask: i64 = 0x0F00_0000_0000_0000;
-    let tag_bits_exclusive_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-
-    pub const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-
-    // println!("Tagging memory address.");
-
-    // TODO:
+    // TODO: we replaced the line below with the line below that. Was that correct?
     // let heap_base = pos.ins().global_value(addr_ty, heap.base);
     let heap_base = builder.ins().global_value(addr_ty, heap.base);
 
-    // TODO: optimize
-    // Tag heap_base address with MTE_LINEAR_MEMORY_FREE_TAG
-    let heap_base = builder.ins().band_imm(heap_base, tag_bits_exclusive_mask);
-    let heap_base = builder
-        .ins()
-        .bor_imm(heap_base, (MTE_LINEAR_MEMORY_FREE_TAG as i64) << 56);
+    // TODO: I think there might be more efficient hardware instructions for this (checkout CMPP and SUBPS)
 
+    // If the index has already been tagged (by e.g. segment_* instructions),
+    // then we have to remove the tag stored in the heap base address.
+    // Otherwise, both the base address and the index would have tags, leading
+    // to arithmetic errors during the addition.
+    //
     // Pseudo code:
     //
-    // let heap_base = if (index_tag != 0) {
+    // if (index_tag != 0) {
+    //     [INDEX_IS_TAGGED_BLOCK]
     //     // Remove tag from heap_base
-    //     let heap_base = heap_base & tag_bits_exclusive;
-    // } else {
-    //     heap_base
+    //     heap_base = heap_base & tag_bits_exclusive;
     // }
-    // ...
+    // [NEXT_BLOCK]
 
     let index_is_tagged_block = block_with_params(builder, [], env)?;
     // Parameters: [heap_base]
-    let common_block = block_with_params(builder, [ValType::I64], env)?;
+    let next_block = block_with_params(builder, [ValType::I64], env)?;
 
     // Check if index is tagged
-    let index_tag = builder.ins().band_imm(index, tag_bits_inclusive_mask);
-    let cond = builder
-        .ins()
-        .icmp_imm(IntCC::NotEqual, index_tag, 0x0000_0000_0000_0000);
+    let index_tag = builder.ins().band_imm(index, BIT_MASK_INCLUDING_MTE_TAG);
+    // Condition: index is tagged <=> index is unequal to free tag
+    let cond = builder.ins().icmp_imm(
+        IntCC::NotEqual,
+        index_tag,
+        (i64::from(MTE_DEFAULT_FREE_TAG)) << MTE_TAG_LEAST_SIG_BIT,
+    );
+
     canonicalise_brif(
         builder,
         cond,
         index_is_tagged_block,
         &[],
-        common_block,
+        next_block,
         &[heap_base],
     );
 
     // === Index is tagged block
     builder.switch_to_block(index_is_tagged_block);
 
-    // Remove the tag stored in heap base.
-    let heap_base = builder.ins().band_imm(index, tag_bits_exclusive_mask);
+    // Remove the tag from the heap base.
+    let heap_base = builder
+        .ins()
+        .band_imm(heap_base, BIT_MASK_EXCLUDING_MTE_TAG);
 
-    builder.ins().jump(common_block, &[heap_base]);
+    builder.ins().jump(next_block, &[heap_base]);
 
     builder.seal_block(index_is_tagged_block);
 
-    // === Common block
-    builder.switch_to_block(common_block);
+    // === Next block
+    builder.switch_to_block(next_block);
 
-    let heap_base = builder.block_params(common_block)[0];
+    let heap_base = builder.block_params(next_block)[0];
 
     let base_and_index = builder.ins().iadd(heap_base, index);
     let base_and_index = if offset == 0 {
@@ -520,7 +515,7 @@ where
         builder.ins().iadd_imm(base_and_index, offset as i64)
     };
 
-    builder.seal_block(common_block);
+    builder.seal_block(next_block);
 
     Ok(base_and_index)
 }

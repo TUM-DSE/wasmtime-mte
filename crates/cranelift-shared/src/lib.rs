@@ -4,6 +4,7 @@ use cranelift_codegen::settings;
 use std::collections::BTreeMap;
 use wasmtime_environ::{FlagValue, FuncIndex};
 
+pub mod constants;
 pub mod isa_builder;
 pub mod obj;
 

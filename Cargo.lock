@@ -3796,6 +3796,7 @@ dependencies = [
  "rand 0.8.5",
  "rustix",
  "wasmtime-asm-macros",
+ "wasmtime-cranelift-shared",
  "wasmtime-environ",
  "wasmtime-fiber",
  "wasmtime-jit-debug",

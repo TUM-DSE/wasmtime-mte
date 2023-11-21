@@ -2358,6 +2358,10 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             todo!("not yet implemented: segment.new")
         }
         Operator::SegmentFree { memarg } => {
+            use cranelift_codegen::constants::{
+                BIT_MASK_EXCLUDING_MTE_TAG, MTE_LINEAR_MEMORY_FREE_TAG, MTE_TAG_LEAST_SIG_BIT,
+            };
+
             // This instruction iterates over the base_ptr (for size bytes) and
             // tags every 16 bytes of memory with a special free tag.
 
@@ -2365,12 +2369,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // base_ptr:  pointer to the memory that should be freed by tagging it
             // size:      size of the memory (in bytes) that should be freed
 
-            // TODO: get constant from other crate, use that instead
-            // let special_free_tag = MTE_LINEAR_MEMORY_FREE_TAG;
-            let special_free_tag: i64 = 0b0001;
-            let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-            // MTE tag is stored in bits 56-59
-            let special_free_tag_mask = special_free_tag << 56;
+            let special_free_tag = MTE_LINEAR_MEMORY_FREE_TAG;
+            let special_free_tag_mask: i64 = (special_free_tag as i64) << MTE_TAG_LEAST_SIG_BIT;
 
             let size = state.pop1();
 
@@ -2380,7 +2380,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             );
 
             // remove existing tag in base_ptr
-            let base_ptr = builder.ins().band_imm(base_ptr, tag_mask);
+            let base_ptr = builder.ins().band_imm(base_ptr, BIT_MASK_EXCLUDING_MTE_TAG);
 
             // set new special free tag in base_ptr
             let tagged_ptr: Value = builder.ins().bor_imm(base_ptr, special_free_tag_mask);
@@ -2408,6 +2408,8 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         }
         Operator::SegmentStackFree { memarg } => {
             // TODO: add explanation what this instruction does
+
+            // TODO: don't we need to untag with our special linear memory free tag here as well?
 
             let size = state.pop1();
 

@@ -73,6 +73,7 @@ mod machinst;
 
 pub mod binemit;
 pub mod cfg_printer;
+pub mod constants;
 pub mod cursor;
 pub mod data_value;
 pub mod dbg;

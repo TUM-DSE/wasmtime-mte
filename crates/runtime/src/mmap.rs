@@ -3,7 +3,6 @@
 
 use anyhow::anyhow;
 use anyhow::{Context, Result};
-use std::arch::asm;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::ops::Range;
@@ -341,7 +340,7 @@ impl Mmap {
         const PR_MTE_TAG_SHIFT: i32 = 3;
 
         unsafe {
-            // We want to exlcude tags 0b0000 (tag for freed memory) and 0b0001 (tag for custom uninitialized memory)
+            // We want to exclude tags 0b0000 (MTE_DEFAULT_FREE_TAG) and 0b0001 (MTE_LINEAR_MEMORY_FREE_TAG)
             // This bit mask represents all included tags
             let included_tags: u64 = 0b1111_1111_1111_1100;
 
@@ -603,9 +602,7 @@ fn _assert() {
     _assert_send_sync::<Mmap>();
 }
 
-// TODO: consider adding own custom mte file that contains this stuff
-const MTE_LINEAR_MEMORY_FREE_TAG: u8 = 0b0001;
-const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+use wasmtime_cranelift_shared::constants::{MTE_DEFAULT_FREE_TAG, MTE_LINEAR_MEMORY_FREE_TAG};
 
 // TODO: just for debugging
 fn to_hex(value: i64) -> String {
@@ -622,29 +619,41 @@ fn to_hex(value: i64) -> String {
     String::from("0x") + result.chars().rev().collect::<String>().as_ref()
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-#[target_feature(enable = "mte")]
-unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) {
+/// Tag a memory address with a custom tag, and return the tagged address.
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte"))]
+fn tag_memory_address(mem_addr: i64, custom_tag: u8) -> i64 {
+    use wasmtime_cranelift_shared::constants::{BIT_MASK_EXCLUDING_MTE_TAG, MTE_TAG_LEAST_SIG_BIT};
+
     // TODO: check if i break the pointer
     // println!("base_addr before removing tag: {:#x}", base_addr);
 
-    assert_eq!(base_addr & 0xFF, 0, "base_addr should be 32-byte aligned");
+    assert_eq!(mem_addr & 0xFF, 0, "base_addr should be 32-byte aligned");
 
-    // MTE tag is stored in bits 56-59
-    let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-    let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
+    let custom_tag_mask: i64 = i64::from(custom_tag) << MTE_TAG_LEAST_SIG_BIT;
     // Remove existing tag in base_addr
-    let base_addr = base_addr & mte_tag_bits_mask;
-    // Set custom tag in base_addr
+    let base_addr = mem_addr & BIT_MASK_EXCLUDING_MTE_TAG;
     // TODO: only put tag into tagged_ptr
     // TODO: get tagged_ptr that already includes offset
+    // Set custom tag in base_addr
     let tagged_ptr = base_addr | custom_tag_mask;
 
+    tagged_ptr
+}
+
+// TODO: optimize away, this is unnecessary. use conditional compilation better
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte")))]
+fn tag_memory_address(mem_addr: i64, _custom_tag: u8) -> i64 {
+    mem_addr
+}
+
+/// Tag a memory region with the tag contained in a specific memory address.
+#[cfg(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte"))]
+unsafe fn tag_memory_region(tagged_addr: i64, size_to_tag: usize) {
+    use std::arch::asm;
+
     println!(
-        "st2g: base_ptr: {}, tagged_ptr: {}, custom_tag: {}, size : {} bytes",
-        to_hex(base_addr),
-        to_hex(tagged_ptr),
-        custom_tag,
+        "st2g: tagged_addr: {}, size : {} bytes",
+        to_hex(tagged_addr),
         size_to_tag
     );
 
@@ -652,16 +661,22 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
         // if i == 32 {
         //     println!("executing second loop iteration of st2g, indicating that it didn't fail for the first");
         // }
+
         // TODO: proper error handling
         let i: i64 = i.try_into().unwrap();
         // TODO: what quantity are we adding here? in terms of bytes?
-        let addr = base_addr + i;
+        let addr = tagged_addr + i;
 
+        // TODO: potential issue: tagged_ptr or addr isn't properly aligned (to 16 bytes)?
         // TODO: turn into debug_assert to save runtime performance
-        assert_eq!(base_addr & 0xF, 0, "addr should be 16-byte aligned");
-        assert_eq!(tagged_ptr & 0xF, 0, "tagged_ptr should be 16-byte aligned");
-        assert_eq!(base_addr & 0xFF, 0, "addr should be 32-byte aligned");
-        assert_eq!(tagged_ptr & 0xFF, 0, "tagged_ptr should be 32-byte aligned");
+        assert_eq!(tagged_addr & 0xF, 0, "addr should be 16-byte aligned");
+        assert_eq!(tagged_addr & 0xF, 0, "tagged_ptr should be 16-byte aligned");
+        assert_eq!(tagged_addr & 0xFF, 0, "addr should be 32-byte aligned");
+        assert_eq!(
+            tagged_addr & 0xFF,
+            0,
+            "tagged_ptr should be 32-byte aligned"
+        );
 
         // let ptr: *const i64 = addr as *const i64;
         // let value_before = *ptr;
@@ -675,9 +690,10 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
         //     tagged_ptr, addr
         // );
 
-        // TODO: potential issue: tagged_ptr or addr isn't properly aligned (to 16 bytes)?
-        // If `st2g` instruction is not supported, it would just be replaced by `nop`
-        asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_ptr, addr = in(reg) addr);
+        // If `st2g` instruction is not supported, it would just be replaced by
+        // `nop`, though it should be supported, since we only target archs with
+        // the "mte" feature.
+        asm!("st2g {tag}, [{addr}]", tag = in(reg) tagged_addr, addr = in(reg) addr);
 
         // let ptr: *const i64 = addr as *const i64;
         // let value_before = *ptr;
@@ -690,8 +706,8 @@ unsafe fn tag_memory_region(base_addr: i64, custom_tag: u8, size_to_tag: usize) 
     println!("Finished st2g loop",);
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
-unsafe fn tag_memory_region(_base_addr: i64, _custom_tag: u8, _size_to_tag: usize) {}
+#[cfg(not(all(target_arch = "aarch64", target_os = "linux", target_feature = "mte")))]
+unsafe fn tag_memory_region(_tagged_addr: i64, _size_to_tag: usize) {}
 
 #[derive(Debug)]
 struct AccessibleMemoryRegion {
@@ -710,17 +726,21 @@ impl AccessibleMemoryRegion {
     }
 }
 
+// TODO: make the whole use of this TaggedMap only available if aarch64 with MTE is targeted with conditional compilation somehow
+
 /// A wrapper around Mmap that is meant to be used as the low-level
 /// implementation of Linear Memory. What it adds compared to Mmap itself is
 /// tagging (and untagging) the entire Linear Memory, in order to avoid bounds
 /// checks at runtime.
-/// Crucially, this does not tag the pointer/index that points into the linear
-/// memory, since we don't want to cause arithmetic exceptions in the
-/// forwarded method calls to the Mmap. Therefore, we expect that the `Mmap.ptr`
-/// is tagged anytime it is used/computed in `bounds_checks::compute_addr`.
+///
+/// A crucial design decision we decided on was to also tag the pointer/index
+/// that points into the linear memory, here, instead of tagging it in
+/// `bounds_checks::computer_addr`. This means we have to be careful with
+/// artithmetic operations executed on the pointer/index, because it now
+/// contains a tag.
 #[derive(Debug)]
 pub struct TaggedMmap {
-    mmap: Mmap,
+    mmap: InnerTaggedMmap,
     // TODO: if regions overlap, we might be tagging addresses multiple times
     accessible_regions: Vec<AccessibleMemoryRegion>,
 }
@@ -728,58 +748,67 @@ pub struct TaggedMmap {
 impl From<Mmap> for TaggedMmap {
     fn from(mmap: Mmap) -> Self {
         Self {
-            mmap,
+            mmap: InnerTaggedMmap::new(mmap),
             accessible_regions: vec![],
         }
     }
 }
 
-impl TaggedMmap {
-    // // #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    // fn tag_memory_address(&mut self, base_addr: i64, custom_tag: u8, size_to_tag: usize) {
-    //     // MTE tag is stored in bits 56-59
-    //     let mte_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-    //     let custom_tag_mask: i64 = i64::from(custom_tag) << 56;
-    //     // Remove existing tag in base_addr
-    //     let base_addr = base_addr & mte_tag_bits_mask;
-    //     // Set custom tag in base_addr
-    //     let tagged_ptr = base_addr | custom_tag_mask;
-    // }
+/// A direct wrapper around `Mmap`. Used to keep `Mmap` and
+/// `AccessibleMemoryRegions` separate inside `TaggedMap`.
+#[derive(Debug)]
+struct InnerTaggedMmap(Mmap);
 
+impl InnerTaggedMmap {
+    /// Create a new instance from a `Mmap`.
+    fn new(mut mmap: Mmap) -> Self {
+        // We are initializing new free memory, so tag with linear memory free tag.
+        // TODO: do I need to cast here, or actually convert using From<>?
+        let tagged_addr = tag_memory_address(mmap.ptr as i64, MTE_LINEAR_MEMORY_FREE_TAG);
+        mmap.ptr = tagged_addr as usize;
+
+        Self(mmap)
+    }
+
+    fn tag_accessible_region_with_tag(&mut self, tag: u8, region: &AccessibleMemoryRegion) {
+        println!(
+            "Tagging memory region from start {} and length {} with tag {}; the length of the underlying mmap is: {}",
+            region.start, region.len, tag, self.0.len
+        );
+
+        // Tag the memory address
+        // TODO: do I need to cast here, or actually convert using From<>?
+        let tagged_addr = tag_memory_address(self.0.ptr as i64, tag);
+        self.0.ptr = tagged_addr as usize;
+
+        // Tag the memory region with tagged_addr
+        unsafe {
+            tag_memory_region(
+                // TODO: do I need to cast here, or actually convert using From<>?
+                (self.0.ptr + region.start) as i64,
+                region.len,
+            );
+        }
+    }
+}
+
+// TODO: maybe a bug: right now, we are only untagging regions when we detruct (i.e. when wasmtime shuts down). shouldn't we be untagging things before as well?
+
+impl TaggedMmap {
     fn add_accessible_region(&mut self, region: AccessibleMemoryRegion) {
         self.accessible_regions.push(region);
     }
 
-    fn tag_accessible_region_with_tag(&self, tag: u8, region: &AccessibleMemoryRegion) {
-        println!(
-            "Tagging memory region from start {} and length {} with tag {}; the length of the underlying mmap is: {}",
-            region.start, region.len, tag, self.mmap.len
-        );
-        unsafe {
-            tag_memory_region(
-                (self.mmap.ptr + region.start).try_into().unwrap(),
-                tag,
-                region.len,
-            );
-        }
-        // TODO: tag ptr as well, but this is a design decision
-    }
-
-    fn tag_accessible_region(&self, accessible_region: &AccessibleMemoryRegion) {
-        self.tag_accessible_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, accessible_region);
-    }
-
-    /// Tag the entire memory.
-    fn tag_all_accessible_regions(&self) {
-        for accessible_region in &self.accessible_regions {
-            self.tag_accessible_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, accessible_region);
-        }
+    fn tag_accessible_region(&mut self, accessible_region: &AccessibleMemoryRegion) {
+        self.mmap
+            .tag_accessible_region_with_tag(MTE_LINEAR_MEMORY_FREE_TAG, accessible_region);
     }
 
     /// Untag the entire memory.
-    fn untag_all_accessible_regions(&self) {
-        for accessible_region in &self.accessible_regions {
-            self.tag_accessible_region_with_tag(MTE_DEFAULT_FREE_TAG, accessible_region);
+    fn untag_all_accessible_regions(&mut self) {
+        for accessible_region in self.accessible_regions.iter() {
+            self.mmap
+                .tag_accessible_region_with_tag(MTE_DEFAULT_FREE_TAG, accessible_region);
         }
     }
 
@@ -808,7 +837,7 @@ impl TaggedMmap {
     pub fn make_accessible(&mut self, start: usize, len: usize) -> Result<()> {
         // TODO: do i have to add tagging here as well?
         // We don't have to tag here, since we already tagged this part before, because this doesn't create/request from OS "new" memory.
-        self.mmap.make_accessible(start, len)?;
+        self.mmap.0.make_accessible(start, len)?;
 
         println!(
             "make_accessible was called with start={} and len={}",
@@ -823,22 +852,22 @@ impl TaggedMmap {
 
     /// Return the allocated memory as a slice of u8.
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.mmap.ptr as *const u8, self.mmap.len) }
+        unsafe { slice::from_raw_parts(self.mmap.0.ptr as *const u8, self.mmap.0.len) }
     }
 
     /// Return the allocated memory as a mutable slice of u8.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.mmap.ptr as *mut u8, self.mmap.len) }
+        unsafe { slice::from_raw_parts_mut(self.mmap.0.ptr as *mut u8, self.mmap.0.len) }
     }
 
     /// Return the allocated memory as a mutable pointer to u8.
     pub fn as_mut_ptr(&self) -> *mut u8 {
-        self.mmap.ptr as *mut u8
+        self.mmap.0.ptr as *mut u8
     }
 
     /// Return the length of the allocated memory.
     pub fn len(&self) -> usize {
-        self.mmap.len
+        self.mmap.0.len
     }
 }
 
