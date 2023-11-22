@@ -767,12 +767,12 @@ impl MachInstEmit for Inst {
                 let top11 = 0b1101_1001_001;
                 let rt = allocs.next(rt);
                 let (offset, op_11_10, rn) = match mem {
-                    &AMode::Unscaled { rn, simm9 } => (simm9.bits() as i64, 0b10, allocs.next(rn)),
-                    &AMode::SPPreIndexed { simm9 } => (simm9.bits() as i64, 0b11, stack_reg()),
-                    &AMode::SPPostIndexed { simm9 } => (simm9.bits() as i64, 0b01, stack_reg()),
+                    &AMode::Unscaled { rn, simm9 } => (simm9.value() as i64, 0b10, allocs.next(rn)),
+                    &AMode::SPPreIndexed { simm9 } => (simm9.value() as i64, 0b11, stack_reg()),
+                    &AMode::SPPostIndexed { simm9 } => (simm9.value() as i64, 0b01, stack_reg()),
                     &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
                     &AMode::UnsignedOffset { rn, uimm12 } => {
-                        (uimm12.bits() as i64, 0b10, allocs.next(rn))
+                        (uimm12.value() as i64, 0b10, allocs.next(rn))
                     }
                     _ => panic!("unsupported addressing mode for stg: {:?}", mem),
                 };
@@ -788,12 +788,12 @@ impl MachInstEmit for Inst {
                 let top11 = 0b1101_1001_101;
                 let rt = allocs.next(rt);
                 let (offset, op_11_10, rn) = match mem {
-                    &AMode::Unscaled { rn, simm9 } => (simm9.bits() as i64, 0b10, allocs.next(rn)),
-                    &AMode::SPPreIndexed { simm9 } => (simm9.bits() as i64, 0b11, stack_reg()),
-                    &AMode::SPPostIndexed { simm9 } => (simm9.bits() as i64, 0b01, stack_reg()),
+                    &AMode::Unscaled { rn, simm9 } => (simm9.value() as i64, 0b10, allocs.next(rn)),
+                    &AMode::SPPreIndexed { simm9 } => (simm9.value() as i64, 0b11, stack_reg()),
+                    &AMode::SPPostIndexed { simm9 } => (simm9.value() as i64, 0b01, stack_reg()),
                     &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
                     &AMode::UnsignedOffset { rn, uimm12 } => {
-                        (uimm12.bits() as i64, 0b10, allocs.next(rn))
+                        (uimm12.value() as i64, 0b10, allocs.next(rn))
                     }
                     _ => panic!("unsupported addressing mode for st2g: {:?}", mem),
                 };
