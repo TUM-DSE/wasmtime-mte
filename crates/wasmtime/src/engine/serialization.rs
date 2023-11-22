@@ -411,11 +411,7 @@ impl Metadata<'_> {
             "relaxed simd deterministic semantics",
         )?;
         Self::check_bool(tail_callable, other.tail_callable, "WebAssembly tail calls")?;
-        Self::check_bool(
-            enable_mte,
-            other.enable_mte,
-            "mte protection"
-        )?;
+        Self::check_bool(enable_mte, other.enable_mte, "mte protection")?;
 
         Ok(())
     }

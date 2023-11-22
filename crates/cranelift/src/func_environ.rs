@@ -1846,19 +1846,20 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
 
         // If we have a declared maximum, we can make this a "static" heap, which is
         // allocated up front and never moved.
-        let (offset_guard_size, heap_style, readonly_base, base_fact, memory_type) = match self.module.memory_plans[index] {
-            MemoryPlan {
-                style: MemoryStyle::Dynamic { .. },
-                offset_guard_size,
-                pre_guard_size: _,
-                memory: _,
-                mte_protected: _,
-            } => {
-                let heap_bound = func.create_global_value(ir::GlobalValueData::Load {
-                    base: ptr,
-                    offset: Offset32::new(current_length_offset),
-                    global_type: pointer_type,
-                    flags: MemFlags::trusted(),
+        let (offset_guard_size, heap_style, readonly_base, base_fact, memory_type) =
+            match self.module.memory_plans[index] {
+                MemoryPlan {
+                    style: MemoryStyle::Dynamic { .. },
+                    offset_guard_size,
+                    pre_guard_size: _,
+                    memory: _,
+                    mte_protected: _,
+                } => {
+                    let heap_bound = func.create_global_value(ir::GlobalValueData::Load {
+                        base: ptr,
+                        offset: Offset32::new(current_length_offset),
+                        global_type: pointer_type,
+                        flags: MemFlags::trusted(),
                     });
 
                     let (base_fact, data_mt) = if let Some(ptr_memtype) = ptr_memtype {
@@ -1929,8 +1930,8 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     offset_guard_size,
                     pre_guard_size: _,
                     memory: _,
-                mte_protected: _,
-            } => {
+                    mte_protected: _,
+                } => {
                     let bound_bytes = u64::from(bound_pages) * u64::from(WASM_PAGE_SIZE);
                     let (base_fact, data_mt) = if let Some(ptr_memtype) = ptr_memtype {
                         // Create a memtype representing the untyped memory region.

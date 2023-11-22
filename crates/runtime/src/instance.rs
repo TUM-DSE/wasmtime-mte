@@ -895,12 +895,20 @@ impl Instance {
     }
 
     fn validate_inbounds(&self, max: usize, ptr: u64, len: u64) -> Result<usize, Trap> {
-        #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte"))]
+        #[cfg(all(
+            target_arch = "aarch64",
+            any(target_os = "linux", target_os = "android"),
+            target_feature = "mte"
+        ))]
         fn strip_mte_tag(ptr: u64) -> u64 {
             ptr & 0xF0FF_FFFF_FFFF_FFFF
         }
 
-        #[cfg(not(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte")))]
+        #[cfg(not(all(
+            target_arch = "aarch64",
+            any(target_os = "linux", target_os = "android"),
+            target_feature = "mte"
+        )))]
         fn strip_mte_tag(ptr: u64) -> u64 {
             ptr
         }

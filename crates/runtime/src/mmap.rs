@@ -64,7 +64,11 @@ impl Mmap {
     ///
     /// This function will panic if `accessible_size` is greater than
     /// `mapping_size` or if either of them are not page-aligned.
-    pub fn accessible_reserved(accessible_size: usize, mapping_size: usize, mte_protected: bool) -> Result<Self> {
+    pub fn accessible_reserved(
+        accessible_size: usize,
+        mapping_size: usize,
+        mte_protected: bool,
+    ) -> Result<Self> {
         let page_size = crate::page_size();
         assert!(accessible_size <= mapping_size);
         assert_eq!(mapping_size & (page_size - 1), 0);

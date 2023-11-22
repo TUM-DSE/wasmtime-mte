@@ -293,7 +293,8 @@ impl RuntimeLinearMemory for MmapMemory {
                 .and_then(|s| s.checked_add(self.offset_guard_size))
                 .ok_or_else(|| format_err!("overflow calculating size of memory allocation"))?;
 
-            let mut new_mmap = Mmap::accessible_reserved(0, request_bytes, self.mmap.mte_protected())?;
+            let mut new_mmap =
+                Mmap::accessible_reserved(0, request_bytes, self.mmap.mte_protected())?;
             new_mmap.make_accessible(self.pre_guard_size, new_size)?;
 
             // This method has an exclusive reference to `self.mmap` and just

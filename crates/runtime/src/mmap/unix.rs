@@ -89,7 +89,11 @@ impl Mmap {
     }
 
     /// Make memory accessible while enabling mte
-    #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte"))]
+    #[cfg(all(
+        target_arch = "aarch64",
+        any(target_os = "linux", target_os = "android"),
+        target_feature = "mte"
+    ))]
     fn make_accessible_with_mte(&mut self, start: usize, len: usize) -> Result<()> {
         use std::io;
 
@@ -120,8 +124,7 @@ impl Mmap {
         let ptr = unsafe { self.memory.as_ptr().cast::<u8>().add(start) };
         eprintln!(
             "enabling mte for memory (enable_mte): ptr = 0x{:x}, len = 0x{:x}",
-            ptr as usize,
-            len
+            ptr as usize, len
         );
 
         unsafe {
@@ -134,9 +137,17 @@ impl Mmap {
     }
 
     /// We don't support MTE on non arm64 linux
-    #[cfg(not(all(target_arch = "aarch64", any(target_os = "linux", target_os = "android"), target_feature = "mte")))]
+    #[cfg(not(all(
+        target_arch = "aarch64",
+        any(target_os = "linux", target_os = "android"),
+        target_feature = "mte"
+    )))]
     fn make_accessible_with_mte(&mut self, _start: usize, _len: usize) -> Result<()> {
-        anyhow::bail!("cannot enable mte on os {}, arch {}", std::env::consts::OS, std::env::consts::ARCH)
+        anyhow::bail!(
+            "cannot enable mte on os {}, arch {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
     }
 
     #[inline]
