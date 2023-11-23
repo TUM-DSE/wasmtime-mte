@@ -9,6 +9,8 @@ use crate::{HashMap, Occupied, Vacant};
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
 use cranelift_frontend::FunctionBuilder;
+use once_cell::sync::Lazy;
+use rand::Rng;
 use std::vec::Vec;
 
 /// Information about the presence of an associated `else` for an `if`, or the
@@ -244,56 +246,127 @@ pub struct FuncTranslationState {
     // Stores both the function reference and the number of WebAssembly arguments
     functions: HashMap<FuncIndex, (ir::FuncRef, usize)>,
 
+    // TODO: maybe split into two separate members, latest_tagged_index and latest_tag. but having together makes sense due to the Option, whether each member is Some or None should always be the same
+
     // In each (C) function, stack arrays are allocated contiguously. We want
     // to deterministically guarantee that no two consecutive stack allocations
     // share the same MTE tag. Therefore, we generate an initial MTE tag
-    // randomly, and, consequently, increment that value (and apply modulo of
-    // course) and use that as the tag.
-    // We store the whole tagged index, which includes the MTE tag in its upper
-    // bits, instead of just the MTE tag.
-    latest_tagged_index: Option<Value>,
+    // randomly, and deterministically generate the next tags using that initial
+    // tag, ensuring that no consecutive generated tags are equal.
+    // We store the last tagged index (as `Value`) and the last random tag.
+    latest_tagged_index_and_tag: Option<(Value, RandomMteTag)>,
 }
 
 const MTE_NON_TAG_BITS_MASK: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-const MTE_TAG_BITS_MASK: i64 = 0xF << 56;
-const MTE_TAG_ONE: i64 = 0x1 << 56;
+// const MTE_TAG_BITS_MASK: i64 = 0xF << 56;
+const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
+const MTE_TAG_MIN_VALUE: u8 = 0b0000;
+const MTE_TAG_MAX_VALUE: u8 = 0b1111;
+
+/// When generating random MTE tags, these values can never be generated.
+const EXCLUDED_MTE_TAGS: [u8; 1] = [MTE_DEFAULT_FREE_TAG];
+static ALL_POSSIBLE_RANDOM_MTE_TAGS: Lazy<(usize, Vec<u8>)> = Lazy::new(|| {
+    // Iterate over all valid MTE tag values (0..=15).
+    let vector: Vec<u8> = (MTE_TAG_MIN_VALUE..=MTE_TAG_MAX_VALUE)
+        // Remove excluded (special) MTE tags so they never get generated.
+        .filter(|x| !EXCLUDED_MTE_TAGS.contains(x))
+        .collect();
+    (vector.len(), vector)
+});
+
+/// A 4-bit MTE (Memory Tagging Extension) tag that is randomly generated at
+/// compile-time. Importantly, the generated tag must be a valid MTE tag
+/// (between 0b0000 and 0b1111) and must not be one of the special free tags
+/// from `EXCLUDED_MTE_TAGS`.
+struct RandomMteTag {
+    tag: u8,
+    // TODO: we could probably make this a u8 for efficieny as well, but vector.len() natively returns usize, so we use that for now
+    index: usize,
+}
+
+impl RandomMteTag {
+    /// Generate the initial random MTE tag.
+    fn generate_initial() -> Self {
+        let (all_possible_values_len, all_possible_tags) = &*ALL_POSSIBLE_RANDOM_MTE_TAGS;
+        let initial_random_index = rand::thread_rng().gen_range(0..*all_possible_values_len);
+        let initial_random_tag = all_possible_tags[initial_random_index];
+
+        Self {
+            tag: initial_random_tag,
+            index: initial_random_index,
+        }
+    }
+
+    /// Given the current MTE tag, generate the next MTE tag deterministically
+    /// so that it never has the same value as the current MTE tag.
+    fn generate_next(self) -> Self {
+        let (all_possible_values_len, all_possible_tags) = &*ALL_POSSIBLE_RANDOM_MTE_TAGS;
+        // Get next index by incrementing, and wrapping around once max index is reached.
+        let next_random_index = (self.index + 1) % all_possible_values_len;
+        let next_random_tag = all_possible_tags[next_random_index];
+
+        Self {
+            tag: next_random_tag,
+            index: next_random_index,
+        }
+    }
+
+    /// Tag an index, which has never been tagged, with this random tag.
+    /// Returns the newly tagged index.
+    fn tag_untagged_index(&self, untagged_index: Value, builder: &mut FunctionBuilder) -> Value {
+        // Tag with random tag.
+        let new_tagged_index = builder
+            .ins()
+            .bor_imm(untagged_index, (self.tag as i64) << 56);
+
+        new_tagged_index
+    }
+
+    /// Tag an index, which is already tagged, with this random tag.
+    /// Returns the newly tagged index.
+    fn tag_tagged_index(&self, tagged_index: Value, builder: &mut FunctionBuilder) -> Value {
+        // Remove tag from already tagged index.
+        let untagged_index = builder.ins().band_imm(tagged_index, MTE_NON_TAG_BITS_MASK);
+        // Tag with random tag.
+        let new_tagged_index = builder
+            .ins()
+            .bor_imm(untagged_index, (self.tag as i64) << 56);
+
+        new_tagged_index
+    }
+}
 
 impl FuncTranslationState {
-    /// Tag the index with an MTE tag. If an initial tag has already been
-    /// generated, increment and use that, otherwise generate a new random tag
-    /// with IRG. Returns tagged index.
+    /// Tag the `index` with an MTE tag, and return the tagged index.
+    /// The index of the first allocation in a (C) function will always be
+    /// tagged with a (compile-time generated) random tag, and subsequent
+    /// allocation indexes will be tagged in a way so that their tags are
+    /// deterministically never equal to the tag of their predecessor.
     pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
-        let new_tagged_index = match self.latest_tagged_index.take() {
+        let (new_tagged_index, new_random_tag) = match self.latest_tagged_index_and_tag.take() {
+            // Generate initial random tag.
             None => {
-                println!("called irg");
-                // Generate random tag with IRG
-                let tagged_index = builder.ins().arm64_irg(index);
+                let initial_random_tag = RandomMteTag::generate_initial();
+                let tagged_index = initial_random_tag.tag_untagged_index(index, builder);
+                // TODO: we don't use irg anymore, so remove
+                // let tagged_index = builder.ins().arm64_irg(index);
 
+                // TODO: this was some previous idea I had, didn't quite work, so we should remove it
                 // Insert value into value storage (since values need to be typed).
                 // let tagged_index = builder.func.dfg.insert_value(I64, tagged_index);
 
-                tagged_index
+                (tagged_index, initial_random_tag)
             }
-            Some(tagged_index) => {
-                // Extract random tag
-                let latest_tag = builder.ins().band_imm(tagged_index, MTE_TAG_BITS_MASK);
+            Some((tagged_index, random_tag)) => {
+                // Generate next random tag.
+                let next_random_tag = random_tag.generate_next();
+                let tagged_index = next_random_tag.tag_tagged_index(tagged_index, builder);
 
-                // Increment saved, and wrap around if 16-byte overflow would occur.
-                // (tagged_index + MTE_TAG_ONE) & MTE_TAG_BITS_MASK
-                let incremented_tag = builder.ins().iadd_imm(latest_tag, MTE_TAG_ONE);
-                let incremented_tag = builder.ins().band_imm(incremented_tag, MTE_TAG_BITS_MASK);
-
-                // Remove previous tag from index.
-                let index_tag_removed = builder.ins().band_imm(index, MTE_NON_TAG_BITS_MASK);
-
-                // Tag index.
-                let tagged_index = builder.ins().bor(index_tag_removed, incremented_tag);
-
-                tagged_index
+                (tagged_index, next_random_tag)
             }
         };
 
-        self.latest_tagged_index = Some(new_tagged_index);
+        self.latest_tagged_index_and_tag = Some((new_tagged_index, new_random_tag));
         new_tagged_index
     }
 }
@@ -320,7 +393,7 @@ impl FuncTranslationState {
             signatures: HashMap::new(),
             functions: HashMap::new(),
             // Don't use a random (irg return) value from a previous function
-            latest_tagged_index: None,
+            latest_tagged_index_and_tag: None,
         }
     }
 
@@ -334,7 +407,7 @@ impl FuncTranslationState {
         self.signatures.clear();
         self.functions.clear();
         // Don't use a random (irg return) value from a previous function
-        self.latest_tagged_index = None;
+        self.latest_tagged_index_and_tag = None;
     }
 
     /// Initialize the state for compiling a function with the given signature.
