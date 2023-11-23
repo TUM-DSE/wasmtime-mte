@@ -2388,10 +2388,9 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             // base_ptr:  pointer to the memory that should be freed by tagging it
             // size:      size of the memory (in bytes) that should be freed
 
-            // MTE tag is stored in bits 56-59
-            let special_free_tag = 0b0000;
-            let special_free_tag_mask: i64 = special_free_tag << 56;
-            let non_tag_bits_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
+            // TODO: move to dedicated central location where all constants are stored
+            const SPECIAL_FREE_TAG: u8 = 0b0000;
+            const NON_TAG_BITS_MASK: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
 
             let size = state.pop1();
 
@@ -2401,11 +2400,13 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             );
 
             // remove existing tag in base_ptr
-            let base_ptr = builder.ins().band_imm(base_ptr, non_tag_bits_mask);
+            let base_ptr = builder.ins().band_imm(base_ptr, NON_TAG_BITS_MASK);
 
             // TODO: this was a bug, OR is correct intead of AND, fix in other branches (doesn't show because tag here is 0 anyways, but if special tags is != 0, it would still be tagged with 0)
             // set new special free tag in base_ptr
-            let tagged_ptr: Value = builder.ins().bor_imm(base_ptr, special_free_tag_mask);
+            let tagged_ptr: Value = builder
+                .ins()
+                .bor_imm(base_ptr, (SPECIAL_FREE_TAG as i64) << 56);
 
             tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
         }
