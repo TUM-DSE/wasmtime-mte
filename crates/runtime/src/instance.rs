@@ -895,6 +895,7 @@ impl Instance {
     }
 
     fn validate_inbounds(&self, max: usize, ptr: u64, len: u64) -> Result<usize, Trap> {
+        // TODO: only do this when -C mte=y is passed
         #[cfg(all(
             target_arch = "aarch64",
             any(target_os = "linux", target_os = "android"),

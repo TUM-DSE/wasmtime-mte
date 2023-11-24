@@ -168,15 +168,37 @@ pub unsafe trait GuestMemory: Send + Sync {
 /// later on.
 fn validate_size_align<'a, T: GuestTypeTransparent<'a>>(
     mem: &'a dyn GuestMemory,
-    offset: u64,
+    tagged_offset: u64,
     len: u64,
 ) -> Result<(&[UnsafeCell<T>], Region), GuestError> {
+    // TODO: only do this when -C mte=y is passed
+    #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "linux", target_os = "android"),
+    target_feature = "mte"
+    ))]
+    fn strip_mte_tag(ptr: u64) -> u64 {
+        ptr & 0xF0FF_FFFF_FFFF_FFFF
+    }
+
+    #[cfg(not(all(
+    target_arch = "aarch64",
+    any(target_os = "linux", target_os = "android"),
+    target_feature = "mte"
+    )))]
+    fn strip_mte_tag(ptr: u64) -> u64 {
+        ptr
+    }
+
+    let offset = strip_mte_tag(tagged_offset);
+    let tag = offset ^ tagged_offset;
+
     let base = mem.base();
     let byte_len = len
         .checked_mul(T::guest_size())
         .ok_or(GuestError::PtrOverflow)?;
     let region = Region {
-        start: offset,
+        start: tagged_offset,
         len: byte_len,
     };
     let offset = usize::try_from(offset)?;
@@ -198,6 +220,17 @@ fn validate_size_align<'a, T: GuestTypeTransparent<'a>>(
     if start.len() > 0 || end.len() > 0 {
         return Err(GuestError::PtrNotAligned(region, T::guest_align() as u64));
     }
+
+    let mid = if tag != 0 {
+        unsafe {
+            let thin_ptr = mid.as_ptr();
+            let len = mid.len();
+            let tagged_addr = thin_ptr as u64 | tag;
+            slice::from_raw_parts(tagged_addr as *const UnsafeCell<T>, len)
+        }
+    } else {
+        mid
+    };
     Ok((mid, region))
 }
 
