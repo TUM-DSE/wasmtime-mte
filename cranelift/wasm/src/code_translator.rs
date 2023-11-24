@@ -2527,11 +2527,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         }
         Operator::SegmentSetTag { memarg } => {
             let size = state.pop1();
-
-            let (_, _, tag) = unwrap_or_return_unreachable_state!(
-                state,
-                prepare_addr(memarg, 16, builder, state, environ)?
-            );
+            let tag = state.pop1();
             let (_, _, base_ptr) = unwrap_or_return_unreachable_state!(
                 state,
                 prepare_addr(memarg, 16, builder, state, environ)?
