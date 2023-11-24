@@ -6,7 +6,6 @@
 use crate::environ::{FuncEnvironment, GlobalVariable};
 use crate::{FuncIndex, GlobalIndex, Heap, MemoryIndex, TableIndex, TypeIndex, WasmResult};
 use crate::{HashMap, Occupied, Vacant};
-use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
 use cranelift_frontend::FunctionBuilder;
 use once_cell::sync::Lazy;
@@ -252,19 +251,22 @@ pub struct FuncTranslationState {
     // to deterministically guarantee that no two consecutive stack allocations
     // share the same MTE tag. Therefore, we generate an initial MTE tag
     // randomly, and deterministically generate the next tags using that initial
-    // tag, ensuring that no consecutive generated tags are equal.
-    // We store the last tagged index (as `Value`) and the last random tag.
-    latest_tagged_index_and_tag: Option<(Value, RandomMteTag)>,
+    // tag, ensuring that no consecutively generated tags are equal.
+    // We store the lastest random tag, which we always need to calculate the
+    // next random tag.
+    latest_random_mte_tag: Option<RandomMteTag>,
 }
 
 const MTE_NON_TAG_BITS_MASK: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-// const MTE_TAG_BITS_MASK: i64 = 0xF << 56;
 const MTE_DEFAULT_FREE_TAG: u8 = 0b0000;
 const MTE_TAG_MIN_VALUE: u8 = 0b0000;
 const MTE_TAG_MAX_VALUE: u8 = 0b1111;
 
 /// When generating random MTE tags, these values can never be generated.
 const EXCLUDED_MTE_TAGS: [u8; 1] = [MTE_DEFAULT_FREE_TAG];
+
+/// All possible values of random MTE tags that are allowed to be generated.
+/// This includes all valid MTE values (0-15) without `EXCLUDED_MTE_TAGS`.
 static ALL_POSSIBLE_RANDOM_MTE_TAGS: Lazy<(usize, Vec<u8>)> = Lazy::new(|| {
     // Iterate over all valid MTE tag values (0..=15).
     let vector: Vec<u8> = (MTE_TAG_MIN_VALUE..=MTE_TAG_MAX_VALUE)
@@ -278,6 +280,7 @@ static ALL_POSSIBLE_RANDOM_MTE_TAGS: Lazy<(usize, Vec<u8>)> = Lazy::new(|| {
 /// compile-time. Importantly, the generated tag must be a valid MTE tag
 /// (between 0b0000 and 0b1111) and must not be one of the special free tags
 /// from `EXCLUDED_MTE_TAGS`.
+#[derive(Debug)]
 struct RandomMteTag {
     tag: u8,
     // TODO: we could probably make this a u8 for efficieny as well, but vector.len() natively returns usize, so we use that for now
@@ -313,8 +316,8 @@ impl RandomMteTag {
 
     /// Tag an index, which has never been tagged, with this random tag.
     /// Returns the newly tagged index.
-    fn tag_untagged_index(&self, untagged_index: Value, builder: &mut FunctionBuilder) -> Value {
-        // Tag with random tag.
+    fn _tag_untagged_index(&self, untagged_index: Value, builder: &mut FunctionBuilder) -> Value {
+        // Tag with this tag.
         let new_tagged_index = builder
             .ins()
             .bor_imm(untagged_index, (self.tag as i64) << 56);
@@ -327,7 +330,7 @@ impl RandomMteTag {
     fn tag_tagged_index(&self, tagged_index: Value, builder: &mut FunctionBuilder) -> Value {
         // Remove tag from already tagged index.
         let untagged_index = builder.ins().band_imm(tagged_index, MTE_NON_TAG_BITS_MASK);
-        // Tag with random tag.
+        // Tag with this tag.
         let new_tagged_index = builder
             .ins()
             .bor_imm(untagged_index, (self.tag as i64) << 56);
@@ -343,30 +346,15 @@ impl FuncTranslationState {
     /// allocation indexes will be tagged in a way so that their tags are
     /// deterministically never equal to the tag of their predecessor.
     pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
-        let (new_tagged_index, new_random_tag) = match self.latest_tagged_index_and_tag.take() {
-            // Generate initial random tag.
-            None => {
-                let initial_random_tag = RandomMteTag::generate_initial();
-                let tagged_index = initial_random_tag.tag_untagged_index(index, builder);
-                // TODO: we don't use irg anymore, so remove
-                // let tagged_index = builder.ins().arm64_irg(index);
-
-                // TODO: this was some previous idea I had, didn't quite work, so we should remove it
-                // Insert value into value storage (since values need to be typed).
-                // let tagged_index = builder.func.dfg.insert_value(I64, tagged_index);
-
-                (tagged_index, initial_random_tag)
-            }
-            Some((tagged_index, random_tag)) => {
-                // Generate next random tag.
-                let next_random_tag = random_tag.generate_next();
-                let tagged_index = next_random_tag.tag_tagged_index(tagged_index, builder);
-
-                (tagged_index, next_random_tag)
-            }
+        let new_random_tag = match self.latest_random_mte_tag.take() {
+            None => RandomMteTag::generate_initial(),
+            Some(previous_random_tag) => previous_random_tag.generate_next(),
         };
 
-        self.latest_tagged_index_and_tag = Some((new_tagged_index, new_random_tag));
+        // TODO: once everything works, maybe optimize by using tag_untagged_index for initial => inserts one inst less
+        let new_tagged_index = new_random_tag.tag_tagged_index(index, builder);
+
+        self.latest_random_mte_tag = Some(new_random_tag);
         new_tagged_index
     }
 }
@@ -392,8 +380,8 @@ impl FuncTranslationState {
             tables: HashMap::new(),
             signatures: HashMap::new(),
             functions: HashMap::new(),
-            // Don't use a random (irg return) value from a previous function
-            latest_tagged_index_and_tag: None,
+            // Generate a new initial random value for the next (C) function.
+            latest_random_mte_tag: None,
         }
     }
 
@@ -406,8 +394,8 @@ impl FuncTranslationState {
         self.tables.clear();
         self.signatures.clear();
         self.functions.clear();
-        // Don't use a random (irg return) value from a previous function
-        self.latest_tagged_index_and_tag = None;
+        // Generate a new initial random value for the next (C) function.
+        self.latest_random_mte_tag = None;
     }
 
     /// Initialize the state for compiling a function with the given signature.
