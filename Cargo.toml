@@ -416,3 +416,7 @@ incremental = false
 debug-assertions = false
 overflow-checks = false
 opt-level = 's'
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
