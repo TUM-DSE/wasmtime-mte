@@ -77,6 +77,33 @@ pub(crate) fn define() -> SettingGroup {
         false,
     );
 
+    settings.add_bool(
+        "enable_mte",
+        "Enable mte.",
+        r#"
+            This enables MTE.
+        "#,
+        false,
+    );
+
+    settings.add_bool(
+        "enable_mte_bounds_checks",
+        "Enable mte bounds checks.",
+        r#"
+            This enables MTE bounds checks. This requires the mte setting.
+        "#,
+        false,
+    );
+
+    settings.add_bool(
+        "enable_mte_mem_safety",
+        "Enable the mte mem safety.",
+        r#"
+            This enables the MTE mem safety feature
+        "#,
+        false,
+    );
+
     // Note that Cranelift doesn't currently need an is_pie flag, because PIE is
     // just PIC where symbols can't be pre-empted, which can be expressed with the
     // `colocated` flag on external functions and global values.

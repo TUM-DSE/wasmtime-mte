@@ -3,6 +3,7 @@ use super::{
     index_allocator::{SimpleIndexAllocator, SlotId},
     round_up_to_pow2,
 };
+use crate::mte::MTEConfig;
 use crate::{Mmap, PoolingInstanceAllocatorConfig};
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -49,8 +50,9 @@ impl StackPool {
             .ok_or_else(|| anyhow!("total size of execution stacks exceeds addressable memory"))?;
 
         // TODO: support mte in stack pools
-        let mapping = Mmap::accessible_reserved(allocation_size, allocation_size, false)
-            .context("failed to create stack pool mapping")?;
+        let mapping =
+            Mmap::accessible_reserved(allocation_size, allocation_size, MTEConfig::default())
+                .context("failed to create stack pool mapping")?;
 
         // Set up the stack guard pages.
         if allocation_size > 0 {

@@ -1,6 +1,7 @@
 //! Low-level abstraction for allocating and managing zero-filled pages
 //! of memory.
 
+use crate::mte::MTEConfig;
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::ops::Range;
@@ -26,16 +27,15 @@ cfg_if::cfg_if! {
 pub struct Mmap {
     sys: sys::Mmap,
     file: Option<Arc<File>>,
-    mte_protected: bool,
 }
 
 impl Mmap {
     /// Create a new `Mmap` pointing to at least `size` bytes of page-aligned
     /// accessible memory.
-    pub fn with_at_least(size: usize, mte_protected: bool) -> Result<Self> {
+    pub fn with_at_least(size: usize, mte_config: MTEConfig) -> Result<Self> {
         let page_size = crate::page_size();
         let rounded_size = (size + (page_size - 1)) & !(page_size - 1);
-        Self::accessible_reserved(rounded_size, rounded_size, mte_protected)
+        Self::accessible_reserved(rounded_size, rounded_size, mte_config)
     }
 
     /// Creates a new `Mmap` by opening the file located at `path` and mapping
@@ -52,7 +52,6 @@ impl Mmap {
         Ok(Mmap {
             sys,
             file: Some(Arc::new(file)),
-            mte_protected: false,
         })
     }
 
@@ -67,7 +66,7 @@ impl Mmap {
     pub fn accessible_reserved(
         accessible_size: usize,
         mapping_size: usize,
-        mte_protected: bool,
+        mte: MTEConfig,
     ) -> Result<Self> {
         let page_size = crate::page_size();
         assert!(accessible_size <= mapping_size);
@@ -76,23 +75,20 @@ impl Mmap {
 
         if mapping_size == 0 {
             Ok(Mmap {
-                sys: sys::Mmap::new_empty(),
+                sys: sys::Mmap::new_empty(mte),
                 file: None,
-                mte_protected,
             })
         } else if accessible_size == mapping_size {
             Ok(Mmap {
-                sys: sys::Mmap::new(mapping_size)
+                sys: sys::Mmap::new(mapping_size, mte)
                     .context(format!("mmap failed to allocate {mapping_size:#x} bytes"))?,
                 file: None,
-                mte_protected,
             })
         } else {
             let mut result = Mmap {
-                sys: sys::Mmap::reserve(mapping_size)
+                sys: sys::Mmap::reserve(mapping_size, mte)
                     .context(format!("mmap failed to reserve {mapping_size:#x} bytes"))?,
                 file: None,
-                mte_protected,
             };
             if accessible_size > 0 {
                 result.make_accessible(0, accessible_size).context(format!(
@@ -118,7 +114,7 @@ impl Mmap {
         assert!(len <= self.len());
         assert!(start <= self.len() - len);
 
-        self.sys.make_accessible(start, len, self.mte_protected)
+        self.sys.make_accessible(start, len)
     }
 
     /// Return the allocated memory as a slice of u8.
@@ -181,8 +177,8 @@ impl Mmap {
     }
 
     /// Return whether mte is enabled for this memory
-    pub fn mte_protected(&self) -> bool {
-        self.mte_protected
+    pub fn mte_config(&self) -> MTEConfig {
+        self.sys.mte_config()
     }
 
     /// Makes the specified `range` within this `Mmap` to be read/execute.

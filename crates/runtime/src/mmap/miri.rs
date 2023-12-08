@@ -72,6 +72,11 @@ impl Mmap {
         unsafe { (*self.memory.as_ptr()).len() }
     }
 
+    #[inline]
+    pub fn mte_protected(&self) -> bool {
+        false
+    }
+
     pub unsafe fn make_executable(
         &self,
         _range: Range<usize>,

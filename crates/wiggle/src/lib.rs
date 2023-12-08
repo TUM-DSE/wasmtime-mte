@@ -173,18 +173,18 @@ fn validate_size_align<'a, T: GuestTypeTransparent<'a>>(
 ) -> Result<(&[UnsafeCell<T>], Region), GuestError> {
     // TODO: only do this when -C mte=y is passed
     #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "linux", target_os = "android"),
-    target_feature = "mte"
+        target_arch = "aarch64",
+        any(target_os = "linux", target_os = "android"),
+        target_feature = "mte"
     ))]
     fn strip_mte_tag(ptr: u64) -> u64 {
         ptr & 0xF0FF_FFFF_FFFF_FFFF
     }
 
     #[cfg(not(all(
-    target_arch = "aarch64",
-    any(target_os = "linux", target_os = "android"),
-    target_feature = "mte"
+        target_arch = "aarch64",
+        any(target_os = "linux", target_os = "android"),
+        target_feature = "mte"
     )))]
     fn strip_mte_tag(ptr: u64) -> u64 {
         ptr

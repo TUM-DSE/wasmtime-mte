@@ -265,6 +265,18 @@ impl<'dummy_environment> TargetEnvironment for DummyFuncEnvironment<'dummy_envir
     fn proof_carrying_code(&self) -> bool {
         false
     }
+
+    fn mte(&self) -> bool {
+        false
+    }
+
+    fn mte_bounds_checks(&self) -> bool {
+        false
+    }
+
+    fn mem_safety(&self) -> bool {
+        false
+    }
 }
 
 impl<'dummy_environment> FuncEnvironment for DummyFuncEnvironment<'dummy_environment> {
@@ -719,6 +731,18 @@ impl TargetEnvironment for DummyEnvironment {
     }
 
     fn proof_carrying_code(&self) -> bool {
+        false
+    }
+
+    fn mte(&self) -> bool {
+        false
+    }
+
+    fn mte_bounds_checks(&self) -> bool {
+        false
+    }
+
+    fn mem_safety(&self) -> bool {
         false
     }
 }

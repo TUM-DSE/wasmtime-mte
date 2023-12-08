@@ -3,7 +3,7 @@
 
 #![cfg_attr(any(not(unix), miri), allow(unused_imports, unused_variables))]
 
-use crate::{MmapVec, SendSyncPtr};
+use crate::{mte, MmapVec, SendSyncPtr};
 use anyhow::Result;
 use libc::c_void;
 use std::fs::File;
@@ -207,14 +207,14 @@ impl MemoryImage {
         cfg_if::cfg_if! {
             if #[cfg(all(unix, not(miri)))] {
                 let ptr = rustix::mm::mmap(
-                    base.add(self.linear_memory_offset).cast(),
+                    mte::untag_ptr(base.add(self.linear_memory_offset).cast()),
                     self.len,
                     rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
                     rustix::mm::MapFlags::PRIVATE | rustix::mm::MapFlags::FIXED,
                     self.fd.as_file(),
                     self.fd_offset,
                 )?;
-                assert_eq!(ptr, base.add(self.linear_memory_offset).cast());
+                assert_eq!(ptr, mte::untag_ptr(base.add(self.linear_memory_offset).cast()));
                 Ok(())
             } else {
                 match self.fd {}
@@ -226,12 +226,12 @@ impl MemoryImage {
         cfg_if::cfg_if! {
             if #[cfg(unix)] {
                 let ptr = rustix::mm::mmap_anonymous(
-                    base.add(self.linear_memory_offset).cast(),
+                    mte::untag_ptr(base.add(self.linear_memory_offset).cast()),
                     self.len,
                     rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
                     rustix::mm::MapFlags::PRIVATE | rustix::mm::MapFlags::FIXED,
                 )?;
-                assert_eq!(ptr.cast(), base.add(self.linear_memory_offset));
+                assert_eq!(ptr, mte::untag_ptr(base.add(self.linear_memory_offset).cast()));
                 Ok(())
             } else {
                 match self.fd {}
@@ -780,12 +780,12 @@ impl MemoryImageSlot {
                     std::ptr::write_bytes(self.base.as_ptr(), 0, self.static_size);
                 } else if #[cfg(unix)] {
                     let ptr = rustix::mm::mmap_anonymous(
-                        self.base.as_ptr().cast(),
+                        mte::untag_ptr(self.base.as_ptr().cast()),
                         self.static_size,
                         rustix::mm::ProtFlags::empty(),
                         rustix::mm::MapFlags::PRIVATE | rustix::mm::MapFlags::FIXED,
                     )?;
-                    assert_eq!(ptr, self.base.as_ptr().cast());
+                    assert_eq!(ptr, mte::untag_ptr(self.base.as_ptr().cast()));
                 } else {
                     use windows_sys::Win32::System::Memory::*;
                     if VirtualFree(self.base.as_ptr().cast(), self.static_size, MEM_DECOMMIT) == 0 {
@@ -885,6 +885,8 @@ mod test {
             },
             pre_guard_size: 0,
             offset_guard_size: 0,
+            mte: false,
+            mte_bounds_checks: false,
         }
     }
 
@@ -892,7 +894,7 @@ mod test {
     fn instantiate_no_image() {
         let plan = dummy_memory_plan(MemoryStyle::Static { bound: 4 << 30 });
         // 4 MiB mmap'd area, not accessible
-        let mut mmap = Mmap::accessible_reserved(0, 4 << 20).unwrap();
+        let mut mmap = Mmap::accessible_reserved(0, 4 << 20, false).unwrap();
         // Create a MemoryImageSlot on top of it
         let mut memfd = MemoryImageSlot::create(mmap.as_mut_ptr() as *mut _, 0, 4 << 20);
         memfd.no_clear_on_drop();
@@ -925,7 +927,7 @@ mod test {
     fn instantiate_image() {
         let plan = dummy_memory_plan(MemoryStyle::Static { bound: 4 << 30 });
         // 4 MiB mmap'd area, not accessible
-        let mut mmap = Mmap::accessible_reserved(0, 4 << 20).unwrap();
+        let mut mmap = Mmap::accessible_reserved(0, 4 << 20, false).unwrap();
         // Create a MemoryImageSlot on top of it
         let mut memfd = MemoryImageSlot::create(mmap.as_mut_ptr() as *mut _, 0, 4 << 20);
         memfd.no_clear_on_drop();
@@ -972,7 +974,7 @@ mod test {
     #[cfg(target_os = "linux")]
     fn memset_instead_of_madvise() {
         let plan = dummy_memory_plan(MemoryStyle::Static { bound: 100 });
-        let mut mmap = Mmap::accessible_reserved(0, 4 << 20).unwrap();
+        let mut mmap = Mmap::accessible_reserved(0, 4 << 20, false).unwrap();
         let mut memfd = MemoryImageSlot::create(mmap.as_mut_ptr() as *mut _, 0, 4 << 20);
         memfd.no_clear_on_drop();
 
@@ -1011,7 +1013,7 @@ mod test {
     fn dynamic() {
         let plan = dummy_memory_plan(MemoryStyle::Dynamic { reserve: 200 });
 
-        let mut mmap = Mmap::accessible_reserved(0, 4 << 20).unwrap();
+        let mut mmap = Mmap::accessible_reserved(0, 4 << 20, false).unwrap();
         let mut memfd = MemoryImageSlot::create(mmap.as_mut_ptr() as *mut _, 0, 4 << 20);
         memfd.no_clear_on_drop();
         let image = Arc::new(create_memfd_with_data(4096, &[1, 2, 3, 4]).unwrap());

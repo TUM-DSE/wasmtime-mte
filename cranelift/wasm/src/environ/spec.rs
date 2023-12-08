@@ -54,16 +54,20 @@ pub trait TargetEnvironment: TypeConvert {
     /// Whether to add proof-carrying-code facts to verify memory accesses.
     fn proof_carrying_code(&self) -> bool;
 
+    /// Whether we have mte
+    fn mte(&self) -> bool;
+
+    /// Whether to use mte to do bounds checks
+    fn mte_bounds_checks(&self) -> bool;
+
+    /// Whether to use mte to do bounds checks
+    fn mem_safety(&self) -> bool;
+
     /// Get the Cranelift integer type to use for native pointers.
     ///
     /// This returns `I64` for 64-bit architectures and `I32` for 32-bit architectures.
     fn pointer_type(&self) -> ir::Type {
         ir::Type::int(u16::from(self.target_config().pointer_bits())).unwrap()
-    }
-
-    /// If the target has mte
-    fn has_mte(&self) -> bool {
-        self.target_config().has_mte()
     }
 
     /// Get the size of a native pointer, in bytes.

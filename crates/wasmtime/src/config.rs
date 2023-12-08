@@ -789,6 +789,22 @@ impl Config {
     /// This is `false` by default.
     pub fn enable_mte(&mut self, enable: bool) -> &mut Self {
         self.tunables.enable_mte = enable;
+        let val = if enable { "true" } else { "false" };
+        self.compiler_config
+            .settings
+            .insert("enable_mte".to_string(), val.to_string());
+        self
+    }
+
+    /// Enable mte bounds checks for memories
+    ///
+    /// This is `false` by default.
+    pub fn enable_mte_bounds_checks(&mut self, enable: bool) -> &mut Self {
+        self.tunables.enable_mte_bounds_checks = enable;
+        let val = if enable { "true" } else { "false" };
+        self.compiler_config
+            .settings
+            .insert("enable_mte_bounds_checks".to_string(), val.to_string());
         self
     }
 
@@ -882,6 +898,10 @@ impl Config {
     /// This is `false` by default.
     pub fn wasm_mem_safety(&mut self, enable: bool) -> &mut Self {
         self.features.mem_safety = enable;
+        let val = if enable { "true" } else { "false" };
+        self.compiler_config
+            .settings
+            .insert("enable_mte_mem_safety".to_string(), val.to_string());
         self
     }
 

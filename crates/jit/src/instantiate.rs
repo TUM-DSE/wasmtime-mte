@@ -19,6 +19,7 @@ use wasmtime_environ::{
     DefinedFuncIndex, FuncIndex, FunctionLoc, MemoryInitialization, Module, ModuleTranslation,
     PrimaryMap, SignatureIndex, StackMapInformation, Tunables, WasmFunctionInfo,
 };
+use wasmtime_runtime::mte::MTEConfig;
 use wasmtime_runtime::{
     CompiledModuleId, CompiledModuleIdAllocator, GdbJitImageRegistration, MmapVec,
 };
@@ -355,7 +356,7 @@ impl<'a> ObjectBuilder<'a> {
     /// The returned `MmapVec` will contain the serialized version of `self`
     /// and is sized appropriately to the exact size of the object serialized.
     pub fn finish(self) -> Result<MmapVec> {
-        let mut result = ObjectMmap::default();
+        let mut result = ObjectMmap::new(MTEConfig::new(&self.tunables));
         return match self.obj.emit(&mut result) {
             Ok(()) => {
                 assert!(result.mmap.is_some(), "no reserve");
@@ -376,11 +377,22 @@ impl<'a> ObjectBuilder<'a> {
         /// immediately usable for execution after compilation. This implementation
         /// relies on a call to `reserve` happening once up front with all the needed
         /// data, and the mmap internally does not attempt to grow afterwards.
-        #[derive(Default)]
         struct ObjectMmap {
             mmap: Option<MmapVec>,
             len: usize,
             err: Option<Error>,
+            mte_config: MTEConfig,
+        }
+
+        impl ObjectMmap {
+            fn new(mte_config: MTEConfig) -> Self {
+                Self {
+                    mmap: None,
+                    len: 0,
+                    err: None,
+                    mte_config,
+                }
+            }
         }
 
         impl WritableBuffer for ObjectMmap {
@@ -390,7 +402,7 @@ impl<'a> ObjectBuilder<'a> {
 
             fn reserve(&mut self, additional: usize) -> Result<(), ()> {
                 assert!(self.mmap.is_none(), "cannot reserve twice");
-                self.mmap = match MmapVec::with_capacity(additional) {
+                self.mmap = match MmapVec::with_capacity(additional, self.mte_config) {
                     Ok(mmap) => Some(mmap),
                     Err(e) => {
                         self.err = Some(e);

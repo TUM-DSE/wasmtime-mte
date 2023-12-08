@@ -33,6 +33,7 @@ mod vmcontext;
 pub mod debug_builtins;
 pub mod libcalls;
 pub mod mpk;
+pub mod mte;
 
 pub use wasmtime_jit_debug::gdb_jit_int::GdbJitImageRegistration;
 

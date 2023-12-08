@@ -59,14 +59,14 @@ where
         &mut builder.cursor(),
     );
 
-    // TODO: need to check if this code works
     // if this a tagged addr, we need to mask out the tag for bounds checks
-    let index = if env.target_config().has_mte {
+    let index = if env.mem_safety() {
+        debug_assert!(env.mte());
         builder
             .ins()
             .band_imm(index_addr, 0xF0FF_FFFF_FFFF_FFFFu64 as i64)
     } else {
-        index_addr
+        index
     };
 
     let offset_and_size = offset_plus_size(offset, access_size);
@@ -124,6 +124,24 @@ where
         }
         result
     };
+
+    // if we have mte, we do not need to do bounds checks
+    if env.mte_bounds_checks() {
+        debug_assert!(env.mte());
+        if pcc {
+            unimplemented!();
+        }
+
+        return Ok(Reachable(compute_addr(
+            &mut builder.cursor(),
+            heap,
+            env.pointer_type(),
+            index_addr,
+            offset,
+            env.mem_safety(),
+            None,
+        )));
+    }
 
     // We need to emit code that will trap (or compute an address that will trap
     // when accessed) if
@@ -378,6 +396,7 @@ where
                 env.pointer_type(),
                 index_addr,
                 offset,
+                false,
                 AddrPcc::static32(
                     heap.memory_type,
                     u64::from(bound) + u64::from(heap.offset_guard_size),
@@ -564,7 +583,7 @@ fn explicit_check_oob_condition_and_compute_addr(
             .trapnz(oob_condition, ir::TrapCode::HeapOutOfBounds);
     }
 
-    let mut addr = compute_addr(pos, heap, addr_ty, index, offset, pcc);
+    let mut addr = compute_addr(pos, heap, addr_ty, index, offset, false, pcc);
 
     if spectre_mitigations_enabled {
         let null = pos.ins().iconst(addr_ty, 0);
@@ -617,11 +636,17 @@ fn compute_addr(
     addr_ty: ir::Type,
     index: ir::Value,
     offset: u32,
+    mask_heap: bool,
     pcc: Option<AddrPcc>,
 ) -> ir::Value {
     debug_assert_eq!(pos.func.dfg.value_type(index), addr_ty);
 
-    let heap_base = pos.ins().global_value(addr_ty, heap.base);
+    let mut heap_base = pos.ins().global_value(addr_ty, heap.base);
+    if mask_heap {
+        heap_base = pos
+            .ins()
+            .band_imm(heap_base, 0xF0FF_FFFF_FFFF_FFFFu64 as i64);
+    }
 
     match pcc {
         None => {}

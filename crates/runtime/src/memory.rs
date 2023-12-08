@@ -3,6 +3,7 @@
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
 use crate::mmap::Mmap;
+use crate::mte::MTEConfig;
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
 use crate::{MemoryImage, MemoryImageSlot, SendSyncPtr, Store, WaitResult};
@@ -233,7 +234,14 @@ impl MmapMemory {
             .and_then(|i| i.checked_add(extra_to_reserve_on_growth))
             .and_then(|i| i.checked_add(offset_guard_bytes))
             .ok_or_else(|| format_err!("cannot allocate {} with guard regions", minimum))?;
-        let mut mmap = Mmap::accessible_reserved(0, request_bytes, plan.mte_protected)?;
+        let mut mmap = Mmap::accessible_reserved(
+            0,
+            request_bytes,
+            MTEConfig {
+                enabled: plan.mte,
+                bounds_checks: plan.mte_bounds_checks,
+            },
+        )?;
 
         if minimum > 0 {
             mmap.make_accessible(pre_guard_bytes, minimum)?;
@@ -293,8 +301,7 @@ impl RuntimeLinearMemory for MmapMemory {
                 .and_then(|s| s.checked_add(self.offset_guard_size))
                 .ok_or_else(|| format_err!("overflow calculating size of memory allocation"))?;
 
-            let mut new_mmap =
-                Mmap::accessible_reserved(0, request_bytes, self.mmap.mte_protected())?;
+            let mut new_mmap = Mmap::accessible_reserved(0, request_bytes, self.mmap.mte_config())?;
             new_mmap.make_accessible(self.pre_guard_size, new_size)?;
 
             // This method has an exclusive reference to `self.mmap` and just

@@ -103,6 +103,8 @@ wasmtime_option_group! {
         pub pcc: Option<bool>,
         /// Whether to enable mte
         pub mte: Option<bool>,
+        /// Whether to enable mte bounds checks
+        pub mte_bounds_checks: Option<bool>,
 
         #[prefixed = "cranelift"]
         /// Set a cranelift-specific option. Use `wasmtime settings` to see
@@ -477,6 +479,13 @@ impl CommonOptions {
 
         if let Some(enable) = self.codegen.mte {
             config.enable_mte(enable);
+        }
+        if let Some(enable) = self.codegen.mte_bounds_checks {
+            if let Some(true) = self.codegen.mte {
+                config.enable_mte_bounds_checks(enable);
+            } else {
+                anyhow::bail!("mte needs to be enabled for mte bounds checks");
+            }
         }
 
         if let Some(max) = self.opts.static_memory_maximum_size {

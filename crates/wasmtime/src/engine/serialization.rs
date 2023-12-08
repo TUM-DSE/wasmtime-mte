@@ -350,6 +350,7 @@ impl Metadata<'_> {
             relaxed_simd_deterministic,
             tail_callable,
             enable_mte,
+            enable_mte_bounds_checks,
 
             // This doesn't affect compilation, it's just a runtime setting.
             dynamic_memory_growth_reserve: _,
@@ -412,6 +413,11 @@ impl Metadata<'_> {
         )?;
         Self::check_bool(tail_callable, other.tail_callable, "WebAssembly tail calls")?;
         Self::check_bool(enable_mte, other.enable_mte, "mte protection")?;
+        Self::check_bool(
+            enable_mte_bounds_checks,
+            other.enable_mte_bounds_checks,
+            "mte bounds checks",
+        )?;
 
         Ok(())
     }

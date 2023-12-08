@@ -3,6 +3,7 @@ use super::{
     index_allocator::{SimpleIndexAllocator, SlotId},
     round_up_to_pow2, TableAllocationIndex,
 };
+use crate::mte::MTEConfig;
 use crate::{InstanceAllocationRequest, Mmap, PoolingInstanceAllocatorConfig, SendSyncPtr, Table};
 use anyhow::{anyhow, bail, Context, Result};
 use std::mem;
@@ -45,8 +46,9 @@ impl TablePool {
             .ok_or_else(|| anyhow!("total size of tables exceeds addressable memory"))?;
 
         // TODO: support mte in table pools
-        let mapping = Mmap::accessible_reserved(allocation_size, allocation_size, false)
-            .context("failed to create table pool mapping")?;
+        let mapping =
+            Mmap::accessible_reserved(allocation_size, allocation_size, MTEConfig::default())
+                .context("failed to create table pool mapping")?;
 
         Ok(Self {
             index_allocator: SimpleIndexAllocator::new(config.limits.total_tables),

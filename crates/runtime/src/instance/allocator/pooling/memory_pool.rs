@@ -63,6 +63,7 @@ use super::{
     MemoryAllocationIndex,
 };
 use crate::mpk::{self, ProtectionKey, ProtectionMask};
+use crate::mte::MTEConfig;
 use crate::{
     CompiledModuleId, InstanceAllocationRequest, InstanceLimits, Memory, MemoryImageSlot, Mmap,
     MpkEnabled, PoolingInstanceAllocatorConfig,
@@ -191,8 +192,9 @@ impl MemoryPool {
         let layout = calculate(&constraints)?;
         log::debug!("creating memory pool: {constraints:?} -> {layout:?}");
         // TODO: support mte in mem pools
-        let mut mapping = Mmap::accessible_reserved(0, layout.total_slab_bytes()?, false)
-            .context("failed to create memory pool mapping")?;
+        let mut mapping =
+            Mmap::accessible_reserved(0, layout.total_slab_bytes()?, MTEConfig::default())
+                .context("failed to create memory pool mapping")?;
 
         // Then, stripe the memory with the available protection keys. This is
         // unnecessary if there is only one stripe color.

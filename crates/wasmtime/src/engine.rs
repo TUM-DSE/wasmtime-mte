@@ -15,6 +15,7 @@ use wasmtime_cache::CacheConfig;
 use wasmtime_environ::obj;
 use wasmtime_environ::{FlagValue, ObjectKind};
 use wasmtime_jit::{profiling::ProfilingAgent, CodeMemory};
+use wasmtime_runtime::mte::MTEConfig;
 use wasmtime_runtime::{CompiledModuleIdAllocator, InstanceAllocator, MmapVec};
 
 mod serialization;
@@ -409,6 +410,15 @@ impl Engine {
                 }
             }
 
+            // only available on linux
+            "enable_mte" | "enable_mte_mem_safety" | "enable_mte_bounds_checks" => {
+                if target.operating_system != target_lexicon::OperatingSystem::Linux {
+                    *value == FlagValue::Bool(false)
+                } else {
+                    return Ok(())
+                }
+            }
+
             // These settings don't affect the interface or functionality of
             // the module itself, so their configuration values shouldn't
             // matter.
@@ -612,7 +622,10 @@ impl Engine {
         bytes: &[u8],
         expected: ObjectKind,
     ) -> Result<Arc<CodeMemory>> {
-        self.load_code(MmapVec::from_slice(bytes)?, expected)
+        self.load_code(
+            MmapVec::from_slice(bytes, MTEConfig::new(&self.config().tunables))?,
+            expected,
+        )
     }
 
     /// Like `load_code_bytes`, but creates a mmap from a file on disk.

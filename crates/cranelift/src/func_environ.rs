@@ -1225,6 +1225,18 @@ impl<'module_environment> TargetEnvironment for FuncEnvironment<'module_environm
     fn proof_carrying_code(&self) -> bool {
         self.isa.flags().enable_pcc()
     }
+
+    fn mte(&self) -> bool {
+        self.isa.flags().enable_mte()
+    }
+
+    fn mte_bounds_checks(&self) -> bool {
+        self.isa.flags().enable_mte_bounds_checks()
+    }
+
+    fn mem_safety(&self) -> bool {
+        self.isa.flags().enable_mte_mem_safety()
+    }
 }
 
 impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'module_environment> {
@@ -1853,7 +1865,8 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     offset_guard_size,
                     pre_guard_size: _,
                     memory: _,
-                    mte_protected: _,
+                    mte: _,
+                    mte_bounds_checks: _,
                 } => {
                     let heap_bound = func.create_global_value(ir::GlobalValueData::Load {
                         base: ptr,
@@ -1930,7 +1943,8 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     offset_guard_size,
                     pre_guard_size: _,
                     memory: _,
-                    mte_protected: _,
+                    mte: _,
+                    mte_bounds_checks: _,
                 } => {
                     let bound_bytes = u64::from(bound_pages) * u64::from(WASM_PAGE_SIZE);
                     let (base_fact, data_mt) = if let Some(ptr_memtype) = ptr_memtype {

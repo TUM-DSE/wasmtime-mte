@@ -1,3 +1,4 @@
+use crate::mte::MTEConfig;
 use crate::Mmap;
 use anyhow::{Context, Result};
 use std::fs::File;
@@ -39,9 +40,9 @@ impl MmapVec {
     /// This commit will return a new `MmapVec` suitably sized to hold `size`
     /// bytes. All bytes will be initialized to zero since this is a fresh OS
     /// page allocation.
-    pub fn with_capacity(size: usize) -> Result<MmapVec> {
+    pub fn with_capacity(size: usize, mte_config: MTEConfig) -> Result<MmapVec> {
         // TODO: at some point, check if we can also enable mte here.
-        Ok(MmapVec::new(Mmap::with_at_least(size, false)?, size))
+        Ok(MmapVec::new(Mmap::with_at_least(size, mte_config)?, size))
     }
 
     /// Creates a new `MmapVec` from the contents of an existing `slice`.
@@ -49,8 +50,8 @@ impl MmapVec {
     /// A new `MmapVec` is allocated to hold the contents of `slice` and then
     /// `slice` is copied into the new mmap. It's recommended to avoid this
     /// method if possible to avoid the need to copy data around.
-    pub fn from_slice(slice: &[u8]) -> Result<MmapVec> {
-        let mut result = MmapVec::with_capacity(slice.len())?;
+    pub fn from_slice(slice: &[u8], mte_config: MTEConfig) -> Result<MmapVec> {
+        let mut result = MmapVec::with_capacity(slice.len(), mte_config)?;
         result.copy_from_slice(slice);
         Ok(result)
     }

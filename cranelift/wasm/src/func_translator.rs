@@ -326,7 +326,6 @@ mod tests {
         let runtime = DummyEnvironment::new(isa::TargetFrontendConfig {
             default_call_conv: isa::CallConv::Fast,
             pointer_width: PointerWidth::U64,
-            has_mte: false,
         });
 
         let mut ctx = Context::new();
@@ -362,7 +361,6 @@ mod tests {
         let runtime = DummyEnvironment::new(isa::TargetFrontendConfig {
             default_call_conv: isa::CallConv::Fast,
             pointer_width: PointerWidth::U64,
-            has_mte: false,
         });
 
         let mut ctx = Context::new();
@@ -403,7 +401,6 @@ mod tests {
         let runtime = DummyEnvironment::new(isa::TargetFrontendConfig {
             default_call_conv: isa::CallConv::Fast,
             pointer_width: PointerWidth::U64,
-            has_mte: false,
         });
 
         let mut ctx = Context::new();

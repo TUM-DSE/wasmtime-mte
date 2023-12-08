@@ -21,6 +21,8 @@ pub struct ModuleEnv {
     pub config: TestConfig,
     pub heap_access_spectre_mitigation: bool,
     pub proof_carrying_code: bool,
+    pub mte: bool,
+    pub mte_bounds_checks: bool,
 }
 
 impl ModuleEnv {
@@ -33,6 +35,8 @@ impl ModuleEnv {
                 .flags()
                 .enable_heap_access_spectre_mitigation(),
             proof_carrying_code: target_isa.flags().enable_pcc(),
+            mte: target_isa.flags().enable_mte(),
+            mte_bounds_checks: target_isa.flags().enable_mte_bounds_checks(),
         }
     }
 }
@@ -54,6 +58,10 @@ impl<'data> ModuleEnvironment<'data> for ModuleEnv {
                 self.config.clone(),
                 self.heap_access_spectre_mitigation,
                 self.proof_carrying_code,
+                self.mte,
+                self.mte_bounds_checks,
+                // TODO: currently disabled in the testing environment. Enable at some point.
+                false,
             );
             let func_index = FuncIndex::new(
                 self.inner.get_num_func_imports() + self.inner.info.function_bodies.len(),
@@ -248,6 +256,9 @@ pub struct FuncEnv<'a> {
     pub next_heap: usize,
     pub heap_access_spectre_mitigation: bool,
     pub proof_carrying_code: bool,
+    pub mte: bool,
+    pub mte_bounds_checks: bool,
+    pub mem_safety: bool,
 }
 
 impl<'a> FuncEnv<'a> {
@@ -257,6 +268,9 @@ impl<'a> FuncEnv<'a> {
         config: TestConfig,
         heap_access_spectre_mitigation: bool,
         proof_carrying_code: bool,
+        mte: bool,
+        mte_bounds_checks: bool,
+        mem_safety: bool,
     ) -> Self {
         let inner = cranelift_wasm::DummyFuncEnvironment::new(mod_info, expected_reachability);
         Self {
@@ -266,6 +280,9 @@ impl<'a> FuncEnv<'a> {
             next_heap: 0,
             heap_access_spectre_mitigation,
             proof_carrying_code,
+            mte,
+            mte_bounds_checks,
+            mem_safety,
         }
     }
 }
@@ -287,6 +304,18 @@ impl<'a> TargetEnvironment for FuncEnv<'a> {
 
     fn proof_carrying_code(&self) -> bool {
         self.proof_carrying_code
+    }
+
+    fn mte(&self) -> bool {
+        self.mte
+    }
+
+    fn mte_bounds_checks(&self) -> bool {
+        self.mte_bounds_checks
+    }
+
+    fn mem_safety(&self) -> bool {
+        self.mem_safety
     }
 }
 

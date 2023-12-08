@@ -57,6 +57,9 @@ pub struct Tunables {
 
     /// Whether mte should be enabled for memories
     pub enable_mte: bool,
+
+    /// Whether mte bounds checks should be enabled for memories
+    pub enable_mte_bounds_checks: bool,
 }
 
 impl Default for Tunables {
@@ -116,6 +119,7 @@ impl Default for Tunables {
             relaxed_simd_deterministic: false,
             tail_callable: false,
             enable_mte: false,
+            enable_mte_bounds_checks: false,
         }
     }
 }

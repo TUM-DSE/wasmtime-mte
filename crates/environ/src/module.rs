@@ -81,7 +81,9 @@ pub struct MemoryPlan {
     /// Our chosen offset-guard size.
     pub offset_guard_size: u64,
     /// If the memory should enable mte
-    pub mte_protected: bool,
+    pub mte: bool,
+    /// If bounds checks are done using mte
+    pub mte_bounds_checks: bool,
 }
 
 impl MemoryPlan {
@@ -97,7 +99,8 @@ impl MemoryPlan {
             } else {
                 0
             },
-            mte_protected: tunables.enable_mte,
+            mte: tunables.enable_mte,
+            mte_bounds_checks: tunables.enable_mte_bounds_checks,
         }
     }
 }
