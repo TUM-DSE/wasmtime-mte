@@ -789,8 +789,6 @@ impl MachInstEmit for Inst {
                 let rt = allocs.next(rt);
                 let (offset, op_11_10, rn) = match mem {
                     &AMode::Unscaled { rn, simm9 } => (simm9.value() as i64, 0b10, allocs.next(rn)),
-                    &AMode::SPPreIndexed { simm9 } => (simm9.value() as i64, 0b11, stack_reg()),
-                    &AMode::SPPostIndexed { simm9 } => (simm9.value() as i64, 0b01, stack_reg()),
                     &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
                     &AMode::UnsignedOffset { rn, uimm12 } => {
                         (uimm12.value() as i64, 0b10, allocs.next(rn))

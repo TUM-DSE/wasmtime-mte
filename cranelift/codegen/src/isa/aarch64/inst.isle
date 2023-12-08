@@ -3215,6 +3215,27 @@
         (add_imm $I64 x imm12))
 (rule 2 (amode_add x 0) x)
 
+;; STG amodes
+(decl stg_amode (Type Value i32) AMode)
+(rule 0 (stg_amode ty val offset)
+        (stg_amode_no_more_iconst ty val offset))
+(rule 1 (stg_amode ty (iadd x (iconst (simm32 y))) offset)
+        (if-let new_offset (s32_add_fallible y offset))
+        (stg_amode_no_more_iconst ty x new_offset))
+(rule 2 (stg_amode ty (iadd (iconst (simm32 x)) y) offset)
+        (if-let new_offset (s32_add_fallible x offset))
+        (stg_amode_no_more_iconst ty y new_offset))
+
+(decl stg_amode_no_more_iconst (Type Value i32) AMode)
+;; Optimize cases where the `offset` provided fits into a immediates of
+;; various kinds of addressing modes.
+(rule 1 (stg_amode_no_more_iconst ty val offset)
+        (if-let simm9 (simm9_from_i64 offset))
+        (AMode.Unscaled val simm9))
+(rule 2 (stg_amode_no_more_iconst ty val offset)
+        (if-let uimm12 (uimm12_scaled_from_i64 offset ty))
+        (AMode.UnsignedOffset val uimm12))
+
 ;; Creates a `PairAMode` for the `Value` provided plus the `i32` constant
 ;; offset provided.
 (decl pair_amode (Value i32) PairAMode)

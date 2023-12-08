@@ -2931,10 +2931,10 @@
 
 
 (rule (lower (arm64_stg src dst))
-      (side_effect (emit_arm64_stg src (amode $I32 dst 0))))
+      (side_effect (emit_arm64_stg src (stg_amode $I32 dst 0))))
 
 (rule (lower (arm64_st2g src dst))
-      (side_effect (emit_arm64_st2g src (amode $I32 dst 0))))
+      (side_effect (emit_arm64_st2g src (stg_amode $I32 dst 0))))
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
