@@ -3,10 +3,10 @@
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
 use crate::mmap::Mmap;
-use crate::mte::MTEConfig;
+use crate::mte::{MTEConfig, MTEMode};
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
-use crate::{MemoryImage, MemoryImageSlot, SendSyncPtr, Store, WaitResult};
+use crate::{MemoryImage, MemoryImageSlot, mte, SendSyncPtr, Store, WaitResult};
 use anyhow::Error;
 use anyhow::{bail, format_err, Result};
 use std::convert::TryFrom;
@@ -308,10 +308,21 @@ impl RuntimeLinearMemory for MmapMemory {
             // created `new_mmap` so it should be safe to acquire references
             // into both of them and copy between them.
             unsafe {
+                if self.mmap.mte_config().enabled {
+                    // We need to do a few things here to make sure our implementation is fast.
+                    // First, disable mte so the normal memcpy routines an be used.
+                    mte::enable_mte(MTEMode::None)?;
+                }
                 let range = self.pre_guard_size..self.pre_guard_size + self.accessible;
                 let src = self.mmap.slice(range.clone());
-                let dst = new_mmap.slice_mut(range);
+                let dst = new_mmap.slice_mut(range.clone());
                 dst.copy_from_slice(src);
+                if self.mmap.mte_config().enabled {
+                    // Now we need to copy over the tags.
+                    // first, re-enable mte
+                    mte::enable_mte(MTEMode::Sync)?;
+                    new_mmap.copy_tags_from(&self.mmap, range);
+                }
             }
 
             // Now drop the MemoryImageSlot, if any. We've lost the CoW

@@ -7,6 +7,7 @@ use std::fs::File;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use crate::mte;
 
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
@@ -179,6 +180,18 @@ impl Mmap {
     /// Return whether mte is enabled for this memory
     pub fn mte_config(&self) -> MTEConfig {
         self.sys.mte_config()
+    }
+
+    /// Copy tags from another mmap memory to this one
+    pub fn copy_tags_from(&mut self, from: &Mmap, range: Range<usize>) {
+        assert!(self.mte_config().enabled);
+        assert!(from.mte_config().enabled);
+
+        unsafe {
+            let from = from.slice(range.clone()).as_ptr();
+            let to = self.slice_mut(range.clone()).as_mut_ptr();
+            mte::copy_tags(from, to, range.len());
+        }
     }
 
     /// Makes the specified `range` within this `Mmap` to be read/execute.

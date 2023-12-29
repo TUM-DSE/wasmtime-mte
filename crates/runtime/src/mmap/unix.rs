@@ -118,7 +118,7 @@ impl Mmap {
     fn enable_mte(memory: SendSyncPtr<[u8]>, tag_memory: bool) -> Result<SendSyncPtr<[u8]>> {
         use crate::mte;
 
-        mte::enable_mte()?;
+        mte::enable_mte(mte::MTEMode::Sync)?;
 
         if tag_memory {
             // then tag the base pointer

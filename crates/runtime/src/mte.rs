@@ -25,20 +25,39 @@ pub fn untag_ptr<T>(ptr: *mut T) -> *mut T {
     ptr
 }
 
+/// In which mode MTE should be enabled
+#[derive(Copy, Clone)]
+pub enum MTEMode {
+    /// Ignore tag check faults
+    None,
+    /// Synchronous tag check fault mode
+    Sync,
+    /// Asynchronous tag check fault mode
+    Async,
+}
+
+impl MTEMode {
+    fn mask(&self) -> u64 {
+        const PR_MTE_TCF_SHIFT: i32 = 1;
+        match self {
+            MTEMode::None => 0,
+            MTEMode::Sync => 1u64 << PR_MTE_TCF_SHIFT,
+            MTEMode::Async => 2u64 << PR_MTE_TCF_SHIFT,
+        }
+    }
+}
+
 /// Enable mte for the current process
 #[cfg(all(
     target_feature = "mte",
     any(target_os = "linux", target_os = "android"),
     target_arch = "aarch64"
 ))]
-pub fn enable_mte() -> Result<()> {
+pub fn enable_mte(mode: MTEMode) -> Result<()> {
     use std::io;
 
     const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
     const PR_TAGGED_ADDR_ENABLE: u64 = 1 << 0;
-    const PR_MTE_TCF_SHIFT: i32 = 1;
-    const PR_MTE_TCF_SYNC: u64 = 1u64 << PR_MTE_TCF_SHIFT;
-    // const PR_MTE_TCF_ASYNC: u64 = 2u64 << PR_MTE_TCF_SHIFT;
     const PR_MTE_TAG_SHIFT: i32 = 3;
 
     // first we enable MTE for the current process
@@ -46,8 +65,7 @@ pub fn enable_mte() -> Result<()> {
         if libc::prctl(
             PR_SET_TAGGED_ADDR_CTRL,
             PR_TAGGED_ADDR_ENABLE
-                | PR_MTE_TCF_SYNC
-                // | PR_MTE_TCF_ASYNC
+                | mode.mask()
                 | (0xfffeu64 << PR_MTE_TAG_SHIFT),
             0,
             0,
@@ -67,13 +85,57 @@ pub fn enable_mte() -> Result<()> {
     any(target_os = "linux", target_os = "android"),
     target_arch = "aarch64"
 )))]
-pub fn enable_mte() -> Result<()> {
+pub fn enable_mte(_mode: MTEMode) -> Result<()> {
     anyhow::bail!(
         "cannot enable mte on os {}, arch {}",
         std::env::consts::OS,
         std::env::consts::ARCH
     )
 }
+
+
+/// Copy the tags from one mmapped memory region to another
+/// The caller must ensure a few things:
+/// - Both memory regions are valid and have enabled mte
+/// - [from] and [to] are both at least [len] bytes long
+/// - [from], [to], and [len] are aligned on MTE boundaries, i.e. 16 bytes
+#[cfg(all(
+target_arch = "aarch64",
+any(target_os = "linux", target_os = "android"),
+target_feature = "mte"
+))]
+pub unsafe fn copy_tags(from: *const u8, to: *mut u8, len: usize) {
+    use std::arch::asm;
+
+    assert_eq!(len % 16, 0);
+
+    let mut from = from;
+    let mut to = to;
+
+    let end = to.offset(len as isize);
+
+    while to != end {
+        let mut tagged_ptr: u64;
+        asm!("ldg {tagged_ptr}, [{from}]", tagged_ptr = out(reg) tagged_ptr, from = inout(reg) from);
+        from = from.offset(16);
+        asm!("stg {tagged_ptr}, [{to}], #16", tagged_ptr = in(reg) tagged_ptr, to = inout(reg) to);
+    }
+}
+
+
+/// Copy the tags from one mmapped memory region to another
+/// The caller must ensure a few things:
+/// - Both memory regions are valid and have enabled mte
+/// - [from] and [to] are both at least [len] bytes long
+/// - [from], [to], and [len] are aligned on MTE boundaries, i.e. 16 bytes
+#[cfg(not(all(
+target_arch = "aarch64",
+any(target_os = "linux", target_os = "android"),
+target_feature = "mte"
+)))]
+pub unsafe fn copy_tags(_from: *const u8, _to: *mut u8, _len: usize) {
+}
+
 
 /// Mark memory as accessible and enable mte
 /// Unsafe as the caller may only call this on mmaped memory
@@ -86,10 +148,6 @@ pub unsafe fn make_accessible(ptr: *mut c_void, len: usize) -> Result<()> {
     use std::io;
 
     let prot = libc::PROT_READ | libc::PROT_WRITE | 0x20 /* PROT_MTE */;
-    eprintln!(
-        "making memory accessible with mte: ptr = 0x{:x}, len = 0x{:x}",
-        ptr as usize, len
-    );
 
     unsafe {
         if libc::mprotect(ptr.cast(), len, prot) != 0 {
