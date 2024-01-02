@@ -3905,54 +3905,40 @@ where
     assert_16_byte_aligned(size, builder);
 
     // Trap if (iter_ptr + size) overflows, so we can use non-trapping instructions later
-    builder
+    let end = builder
         .ins()
         .uadd_overflow_trap(iter_ptr, size, ir::TrapCode::HeapOutOfBounds);
 
     // === Block definitions
-    // loop_condition_block(size, iter_ptr)
-    let loop_cond_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+    // loop_condition_block(iter_ptr)
+    let loop_cond_block = block_with_params(builder, [ValType::I64], environ)?;
 
-    // loop_body_block(size, iter_ptr)
-    let loop_body_block = block_with_params(builder, [ValType::I64, ValType::I64], environ)?;
+    // loop_body_block(iter_ptr)
+    let loop_body_block = block_with_params(builder, [ValType::I64], environ)?;
 
     // next_block()
     let next_block = block_with_params(builder, [], environ)?;
 
-    builder.ins().jump(loop_cond_block, &[size, iter_ptr]);
+    builder.ins().jump(loop_cond_block, &[iter_ptr]);
 
     // === loop condition block
     builder.switch_to_block(loop_cond_block);
 
-    let size = builder.block_params(loop_cond_block)[0];
-    let iter_ptr = builder.block_params(loop_cond_block)[1];
+    let iter_ptr = builder.block_params(loop_cond_block)[0];
 
-    let cond = builder
-        .ins()
-        .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, size, 16);
-    canonicalise_brif(
-        builder,
-        cond,
-        loop_body_block,
-        &[size, iter_ptr],
-        next_block,
-        &[],
-    );
+    let cond = builder.ins().icmp(IntCC::UnsignedLessThan, iter_ptr, end);
+    canonicalise_brif(builder, cond, loop_body_block, &[iter_ptr], next_block, &[]);
 
     // === loop body block
     builder.switch_to_block(loop_body_block);
 
-    let size_counter = builder.block_params(loop_body_block)[0];
-    let iter_ptr = builder.block_params(loop_body_block)[1];
+    let iter_ptr = builder.block_params(loop_body_block)[0];
 
     builder.ins().arm64_stzg(tagged_ptr, iter_ptr);
 
-    let size_counter = builder.ins().iadd_imm(size_counter, -16);
     let iter_ptr = builder.ins().iadd_imm(iter_ptr, 16);
 
-    builder
-        .ins()
-        .jump(loop_cond_block, &[size_counter, iter_ptr]);
+    builder.ins().jump(loop_cond_block, &[iter_ptr]);
 
     builder.seal_block(loop_body_block);
     builder.seal_block(loop_cond_block);
