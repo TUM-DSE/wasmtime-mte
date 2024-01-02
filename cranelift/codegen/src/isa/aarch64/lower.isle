@@ -2936,5 +2936,8 @@
 (rule (lower (arm64_st2g src dst))
       (side_effect (emit_arm64_st2g src (stg_amode $I32 dst 0))))
 
+(rule (lower (arm64_stzg src dst))
+      (side_effect (emit_arm64_stzg src (stg_amode $I32 dst 0))))
+
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))

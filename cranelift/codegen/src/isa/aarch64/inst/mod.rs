@@ -423,6 +423,10 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_use(rt);
             memarg_operands(mem, collector);
         }
+        &Inst::Stzg { rt, ref mem } => {
+            collector.reg_use(rt);
+            memarg_operands(mem, collector);
+        }
         &Inst::AluRRR { rd, rn, rm, .. } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1290,6 +1294,15 @@ impl Inst {
             }
             &Inst::St2g { rt, ref mem } => {
                 let op = "st2g";
+                let rt = pretty_print_ireg(rt, OperandSize::Size64, allocs);
+                let mem = mem.with_allocs(allocs);
+                let (mem_str, mem) = mem_finalize_for_show(&mem, state);
+                let mem = mem.pretty_print_default();
+
+                format!("{}{} {}, {}", mem_str, op, rt, mem)
+            }
+            &Inst::Stzg { rt, ref mem } => {
+                let op = "stzg";
                 let rt = pretty_print_ireg(rt, OperandSize::Size64, allocs);
                 let mem = mem.with_allocs(allocs);
                 let (mem_str, mem) = mem_finalize_for_show(&mem, state);

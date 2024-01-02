@@ -802,6 +802,25 @@ impl MachInstEmit for Inst {
 
                 sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
             }
+            &MInst::Stzg { rt, ref mem } => {
+                const LOG2_TAG_GRANULE: u32 = 4;
+                let top11 = 0b110_1100_1011;
+                let rt = allocs.next(rt);
+                let (offset, op_11_10, rn) = match mem {
+                    &AMode::Unscaled { rn, simm9 } => (simm9.value() as i64, 0b10, allocs.next(rn)),
+                    &AMode::RegOffset { rn, off, .. } => (off, 0b10, allocs.next(rn)),
+                    &AMode::UnsignedOffset { rn, uimm12 } => {
+                        (uimm12.value() as i64, 0b10, allocs.next(rn))
+                    }
+                    _ => panic!("unsupported addressing mode for stzg: {:?}", mem),
+                };
+                let offset = offset >> LOG2_TAG_GRANULE;
+                let Some(simm9) = SImm9::maybe_from_i64(offset) else {
+                    panic!("stg offset out of range: {}", offset);
+                };
+
+                sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
+            }
             &Inst::AluRRR {
                 alu_op,
                 size,

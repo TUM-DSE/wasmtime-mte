@@ -3853,4 +3853,20 @@ pub(crate) fn define(
         .can_store()
         .other_side_effects(),
     );
+
+    ig.push(
+        Inst::new(
+            "arm64_stzg",
+            r#"
+        Store tag to tag memory, zeroing assosiacted data location.
+        "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("x", iAddr).with_doc("Register holding tag"),
+            Operand::new("y", iAddr).with_doc("Address to region"),
+        ])
+        .can_store()
+        .other_side_effects(),
+    );
 }

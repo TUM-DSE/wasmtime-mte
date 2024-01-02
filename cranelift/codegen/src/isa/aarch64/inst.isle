@@ -924,12 +924,13 @@
        (Irg (rd WritableReg) (rn Reg))
 
        ;; STG
-       ;; TODO: not all addressing modes are supported; maybe change this?
        (Stg (rt Reg) (mem AMode))
 
        ;; ST2G
-       ;; TODO: not all addressing modes are supported; maybe change this?
        (St2g (rt Reg) (mem AMode))
+
+       ;; ST2G
+       (Stzg (rt Reg) (mem AMode))
 
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
@@ -1868,6 +1869,10 @@
 (decl emit_arm64_st2g (Reg AMode) SideEffectNoResult)
 (rule (emit_arm64_st2g src amode)
       (SideEffectNoResult.Inst (MInst.St2g src amode)))
+
+(decl emit_arm64_stzg (Reg AMode) SideEffectNoResult)
+(rule (emit_arm64_stzg src amode)
+      (SideEffectNoResult.Inst (MInst.Stzg src amode)))
 
 (decl emit_arm64_irg (Reg) Reg)
 (rule (emit_arm64_irg src)
