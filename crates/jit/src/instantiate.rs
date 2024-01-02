@@ -356,7 +356,7 @@ impl<'a> ObjectBuilder<'a> {
     /// The returned `MmapVec` will contain the serialized version of `self`
     /// and is sized appropriately to the exact size of the object serialized.
     pub fn finish(self) -> Result<MmapVec> {
-        let mut result = ObjectMmap::new(MTEConfig::new(&self.tunables));
+        let mut result = ObjectMmap::new(MTEConfig::disabled());
         return match self.obj.emit(&mut result) {
             Ok(()) => {
                 assert!(result.mmap.is_some(), "no reserve");

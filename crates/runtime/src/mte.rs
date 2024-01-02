@@ -233,4 +233,9 @@ impl MTEConfig {
             bounds_checks: tunables.enable_mte_bounds_checks,
         }
     }
+
+    /// Create a new MTEConfig with mte disabled
+    pub fn disabled() -> Self {
+        Self::default()
+    }
 }
