@@ -483,7 +483,7 @@ impl CommonOptions {
         if let Some(enable) = self.codegen.mte_bounds_checks {
             if let Some(true) = self.codegen.mte {
                 config.enable_mte_bounds_checks(enable);
-            } else {
+            } else if enable {
                 anyhow::bail!("mte needs to be enabled for mte bounds checks");
             }
         }

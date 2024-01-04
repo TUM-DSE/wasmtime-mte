@@ -188,8 +188,6 @@ impl Context {
             self.egraph_pass(isa)?;
         }
 
-        // eprintln!("{}", self.func.display());
-
         Ok(())
     }
 

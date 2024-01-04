@@ -36,6 +36,34 @@ pub enum MTEMode {
     Async,
 }
 
+/// Which tags should be excluded from being randomly generated.
+#[derive(Copy, Clone)]
+pub enum ExcludedTags {
+    /// Exclude no tags
+    None,
+    /// Excludes all tags that have the bit 0 set.
+    DefaultHeap,
+}
+
+impl ExcludedTags {
+    /// Create a new ExcludedTags from the config
+    pub fn new(config: MTEConfig) -> Self {
+        if config.bounds_checks {
+            Self::DefaultHeap
+        } else {
+            Self::None
+        }
+    }
+
+    /// Get the include mask for the excluded tags
+    pub fn include_mask(&self) -> u64 {
+        match self {
+            ExcludedTags::None => 0xffff,
+            ExcludedTags::DefaultHeap => 0x5555,
+        }
+    }
+}
+
 impl MTEMode {
     fn mask(&self) -> u64 {
         const PR_MTE_TCF_SHIFT: i32 = 1;
@@ -53,7 +81,7 @@ impl MTEMode {
     any(target_os = "linux", target_os = "android"),
     target_arch = "aarch64"
 ))]
-pub fn enable_mte(mode: MTEMode) -> Result<()> {
+pub fn enable_mte(mode: MTEMode, excluded_tags: ExcludedTags) -> Result<()> {
     use std::io;
 
     const PR_SET_TAGGED_ADDR_CTRL: i32 = 55;
@@ -66,7 +94,7 @@ pub fn enable_mte(mode: MTEMode) -> Result<()> {
             PR_SET_TAGGED_ADDR_CTRL,
             PR_TAGGED_ADDR_ENABLE
                 | mode.mask()
-                | (0xfffeu64 << PR_MTE_TAG_SHIFT),
+                | (excluded_tags.include_mask() << PR_MTE_TAG_SHIFT),
             0,
             0,
             0,
@@ -85,7 +113,7 @@ pub fn enable_mte(mode: MTEMode) -> Result<()> {
     any(target_os = "linux", target_os = "android"),
     target_arch = "aarch64"
 )))]
-pub fn enable_mte(_mode: MTEMode) -> Result<()> {
+pub fn enable_mte(_mode: MTEMode, _excluded_tags: ExcludedTags) -> Result<()> {
     anyhow::bail!(
         "cannot enable mte on os {}, arch {}",
         std::env::consts::OS,
@@ -93,16 +121,15 @@ pub fn enable_mte(_mode: MTEMode) -> Result<()> {
     )
 }
 
-
 /// Copy the tags from one mmapped memory region to another
 /// The caller must ensure a few things:
 /// - Both memory regions are valid and have enabled mte
 /// - [from] and [to] are both at least [len] bytes long
 /// - [from], [to], and [len] are aligned on MTE boundaries, i.e. 16 bytes
 #[cfg(all(
-target_arch = "aarch64",
-any(target_os = "linux", target_os = "android"),
-target_feature = "mte"
+    target_arch = "aarch64",
+    any(target_os = "linux", target_os = "android"),
+    target_feature = "mte"
 ))]
 pub unsafe fn copy_tags(from: *const u8, to: *mut u8, len: usize) {
     use std::arch::asm;
@@ -112,16 +139,15 @@ pub unsafe fn copy_tags(from: *const u8, to: *mut u8, len: usize) {
     let mut from = from;
     let mut to = to;
 
-    let end = to.offset(len as isize);
+    let end = to.add(len);
 
     while to != end {
         let mut tagged_ptr: u64;
         asm!("ldg {tagged_ptr}, [{from}]", tagged_ptr = out(reg) tagged_ptr, from = inout(reg) from);
-        from = from.offset(16);
+        from = from.add(16);
         asm!("stg {tagged_ptr}, [{to}], #16", tagged_ptr = in(reg) tagged_ptr, to = inout(reg) to);
     }
 }
-
 
 /// Copy the tags from one mmapped memory region to another
 /// The caller must ensure a few things:
@@ -129,13 +155,11 @@ pub unsafe fn copy_tags(from: *const u8, to: *mut u8, len: usize) {
 /// - [from] and [to] are both at least [len] bytes long
 /// - [from], [to], and [len] are aligned on MTE boundaries, i.e. 16 bytes
 #[cfg(not(all(
-target_arch = "aarch64",
-any(target_os = "linux", target_os = "android"),
-target_feature = "mte"
+    target_arch = "aarch64",
+    any(target_os = "linux", target_os = "android"),
+    target_feature = "mte"
 )))]
-pub unsafe fn copy_tags(_from: *const u8, _to: *mut u8, _len: usize) {
-}
-
+pub unsafe fn copy_tags(_from: *const u8, _to: *mut u8, _len: usize) {}
 
 /// Mark memory as accessible and enable mte
 /// Unsafe as the caller may only call this on mmaped memory
@@ -184,20 +208,14 @@ pub unsafe fn tag_memory(tag: *mut c_void, ptr: *mut c_void, len: usize) -> Resu
     assert_eq!((ptr as usize) % 16, 0, "memory must be aligned to 16 bytes");
     assert_eq!(len % 16, 0, "memory length must be aligned to 16 bytes");
 
-    let mut i = 0usize;
-    while i + 32 <= len {
-        let ptr = ptr.offset(i as isize);
-        asm!("st2g {tag}, [{ptr}]", tag = in(reg) tag, ptr = in(reg) ptr);
-        i += 32;
+    let end = ptr.add(len);
+    let mut ptr = ptr;
+
+    while ptr < end {
+        asm!("stg {tag}, [{ptr}], #16", tag = in(reg) tag, ptr = inout(reg) ptr);
     }
 
-    if i + 16 <= len {
-        let ptr = ptr.offset(i as isize);
-        asm!("stg {tag}, [{ptr}]", tag = in(reg) tag, ptr = in(reg) ptr);
-        i += 16;
-    }
-
-    assert_eq!(i, len);
+    debug_assert_eq!(ptr, end, "ptr must be at the end of the memory region");
 
     Ok(())
 }

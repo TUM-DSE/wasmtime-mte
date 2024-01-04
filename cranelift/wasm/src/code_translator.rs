@@ -2521,7 +2521,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 prepare_addr(memarg, 16, builder, state, environ)?
             );
 
-            tag_memory_region(base_ptr, base_ptr, size, builder, environ)?;
+            tag_memory_region(base_ptr, tagged_index, size, builder, environ)?;
 
             state.push1(tagged_index);
         }
@@ -2536,17 +2536,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             tag_memory_region(base_ptr, tag, size, builder, environ)?;
         }
         Operator::SegmentFree { memarg } => {
-            // This instruction iterates over the base_ptr (for size bytes) and
-            // tags every 16 bytes of memory with a special free tag.
-
-            // Parameters (saved in state):
-            // base_ptr:  pointer to the memory that should be freed by tagging it
-            // size:      size of the memory (in bytes) that should be freed
-
-            // MTE tag is stored in bits 56-59
-            let special_free_tag: i64 = 0b0000;
-            let tag_mask: i64 = 0xF0FF_FFFF_FFFF_FFFFu64 as i64;
-            let special_free_tag_mask = (special_free_tag << 56) | tag_mask;
+            let free_tag = builder.ins().iconst(I64, 0);
 
             let size = state.pop1();
 
@@ -2555,13 +2545,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
                 prepare_addr(memarg, 16, builder, state, environ)?
             );
 
-            // remove existing tag in base_ptr
-            let base_ptr = builder.ins().band_imm(base_ptr, tag_mask);
-
-            // set new special free tag in base_ptr
-            let tagged_ptr: Value = builder.ins().band_imm(base_ptr, special_free_tag_mask);
-
-            tag_memory_region(base_ptr, tagged_ptr, size, builder, environ)?;
+            tag_memory_region(base_ptr, free_tag, size, builder, environ)?;
         }
     };
     Ok(())
@@ -3714,8 +3698,8 @@ fn assert_16_byte_aligned(val: Value, builder: &mut FunctionBuilder) {
 /// every 16 bytes of memory using the ARM `stg` instruction with the tag
 /// found in `tagged_ptr`.
 fn tag_memory_region<FE>(
-    iter_ptr: Value,
-    tagged_ptr: Value,
+    ptr: Value,
+    mut tag: Value,
     size: Value,
     builder: &mut FunctionBuilder,
     environ: &mut FE,
@@ -3723,6 +3707,10 @@ fn tag_memory_region<FE>(
 where
     FE: FuncEnvironment + ?Sized,
 {
+    if environ.mte_bounds_checks() {
+        tag = builder.ins().bor_imm(tag, 1 << 56);
+    }
+
     // Perform compile-time loop unrolling if size is a constant value (known at compile-time)
     if let ValueDef::Result(inst, _) = builder.func.dfg.value_def(size) {
         if let InstructionData::UnaryImm {
@@ -3730,20 +3718,11 @@ where
             imm,
         } = builder.func.dfg.insts[inst]
         {
-            let size_static = imm.bits() as u64;
-
-            return tag_memory_region_static(
-                iter_ptr,
-                tagged_ptr,
-                size_static,
-                size,
-                builder,
-                environ,
-            );
+            return tag_memory_region_static(ptr, tag, imm.bits() as u64, size, builder, environ);
         }
     }
 
-    tag_memory_region_dynamic(iter_ptr, tagged_ptr, size, builder, environ)
+    tag_memory_region_dynamic(ptr, tag, size, builder, environ)
 }
 
 /// Tag a memory region which has a static size known at compile-time.
@@ -3893,8 +3872,8 @@ where
 
 /// Tag a memory region which has a dynamic size unknown at compile-time.
 fn tag_memory_region_dynamic<FE>(
-    iter_ptr: Value,
-    tagged_ptr: Value,
+    ptr: Value,
+    tag: Value,
     size: Value,
     builder: &mut FunctionBuilder,
     environ: &mut FE,
@@ -3907,7 +3886,7 @@ where
     // Trap if (iter_ptr + size) overflows, so we can use non-trapping instructions later
     let end = builder
         .ins()
-        .uadd_overflow_trap(iter_ptr, size, ir::TrapCode::HeapOutOfBounds);
+        .uadd_overflow_trap(ptr, size, ir::TrapCode::HeapOutOfBounds);
 
     // === Block definitions
     // loop_condition_block(iter_ptr)
@@ -3919,7 +3898,7 @@ where
     // next_block()
     let next_block = block_with_params(builder, [], environ)?;
 
-    builder.ins().jump(loop_cond_block, &[iter_ptr]);
+    builder.ins().jump(loop_cond_block, &[ptr]);
 
     // === loop condition block
     builder.switch_to_block(loop_cond_block);
@@ -3934,7 +3913,7 @@ where
 
     let iter_ptr = builder.block_params(loop_body_block)[0];
 
-    builder.ins().arm64_stzg(tagged_ptr, iter_ptr);
+    builder.ins().arm64_stzg(tag, iter_ptr);
 
     let iter_ptr = builder.ins().iadd_imm(iter_ptr, 16);
 

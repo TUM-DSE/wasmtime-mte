@@ -3,7 +3,7 @@
 //! `RuntimeLinearMemory` is to WebAssembly linear memories what `Table` is to WebAssembly tables.
 
 use crate::mmap::Mmap;
-use crate::mte::{MTEConfig, MTEMode};
+use crate::mte::{ExcludedTags, MTEConfig, MTEMode};
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
 use crate::{MemoryImage, MemoryImageSlot, mte, SendSyncPtr, Store, WaitResult};
@@ -311,7 +311,7 @@ impl RuntimeLinearMemory for MmapMemory {
                 if self.mmap.mte_config().enabled {
                     // We need to do a few things here to make sure our implementation is fast.
                     // First, disable mte so the normal memcpy routines an be used.
-                    mte::enable_mte(MTEMode::None)?;
+                    mte::enable_mte(MTEMode::None, ExcludedTags::new(self.mmap.mte_config()))?;
                 }
                 let range = self.pre_guard_size..self.pre_guard_size + self.accessible;
                 let src = self.mmap.slice(range.clone());
@@ -320,7 +320,7 @@ impl RuntimeLinearMemory for MmapMemory {
                 if self.mmap.mte_config().enabled {
                     // Now we need to copy over the tags.
                     // first, re-enable mte
-                    mte::enable_mte(MTEMode::Sync)?;
+                    mte::enable_mte(MTEMode::Sync, ExcludedTags::new(self.mmap.mte_config()))?;
                     new_mmap.copy_tags_from(&self.mmap, range);
                 }
             }

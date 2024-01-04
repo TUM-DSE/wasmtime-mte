@@ -91,10 +91,9 @@ impl Mmap {
         let ptr = self.memory.as_ptr().cast::<u8>();
         if self.mte.enabled {
             unsafe {
-                let start = ptr.offset(start as isize);
-                mte::make_accessible(start.cast(), len)?;
+                mte::make_accessible(ptr.add(start).cast(), len)?;
                 if self.mte.bounds_checks {
-                    mte::tag_memory(ptr.cast(), start.cast(), len)?;
+                    mte::tag_memory(ptr.cast(), ptr.add(start).cast(), len)?;
                 }
             }
         } else {
@@ -118,7 +117,14 @@ impl Mmap {
     fn enable_mte(memory: SendSyncPtr<[u8]>, tag_memory: bool) -> Result<SendSyncPtr<[u8]>> {
         use crate::mte;
 
-        mte::enable_mte(mte::MTEMode::Sync)?;
+        mte::enable_mte(
+            mte::MTEMode::Sync,
+            if tag_memory {
+                mte::ExcludedTags::DefaultHeap
+            } else {
+                mte::ExcludedTags::None
+            },
+        )?;
 
         if tag_memory {
             // then tag the base pointer
