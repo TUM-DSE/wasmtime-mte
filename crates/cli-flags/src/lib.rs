@@ -481,11 +481,19 @@ impl CommonOptions {
             config.enable_mte(enable);
         }
         if let Some(enable) = self.codegen.mte_bounds_checks {
-            if let Some(true) = self.codegen.mte {
-                config.enable_mte_bounds_checks(enable);
-            } else if enable {
-                anyhow::bail!("mte needs to be enabled for mte bounds checks");
+            if enable {
+                if let Some(false) = self.codegen.mte {
+                    anyhow::bail!("mte needs to be enabled for mte bounds checks");
+                }
+
+                if self.opts.dynamic_memory_guard_size.is_none() {
+                    config.dynamic_memory_guard_size(0);
+                }
+                if self.opts.static_memory_guard_size.is_none() {
+                    config.static_memory_guard_size(0);
+                }
             }
+            config.enable_mte_bounds_checks(enable);
         }
 
         if let Some(max) = self.opts.static_memory_maximum_size {
