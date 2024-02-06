@@ -282,8 +282,8 @@ static ALL_POSSIBLE_RANDOM_MTE_TAGS: Lazy<(usize, Vec<u8>)> = Lazy::new(|| {
 /// from `EXCLUDED_MTE_TAGS`.
 #[derive(Debug)]
 struct RandomMteTag {
-    /// The 4-bit random MTE tag.
-    tag: u8,
+    /// The 4-bit random MTE tag, which is a `Value` generated at runtime.
+    tag: Value,
     /// The index that was used to index into `ALL_POSSIBLE_RANDOM_MTE_TAGS` to
     /// receive `tag`. This is stored here because it is needed to generate the
     /// next random tag.
