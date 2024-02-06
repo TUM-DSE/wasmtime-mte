@@ -3796,6 +3796,24 @@ pub(crate) fn define(
 
     ig.push(
         Inst::new(
+            "arm64_add_to_tag",
+            r#"
+        Add immediate to tag
+        "#,
+            &formats.binary_imm8,
+        )
+        .operands_in(vec![
+            Operand::new("Xn", iAddr).with_doc("Source register"),
+            Operand::new("imm4", &imm.uimm8)
+                .with_doc("Unsigned immediate that is added to tag of the address"),
+        ])
+        .operands_out(vec![
+            Operand::new("Xd", iAddr).with_doc("Destination register")
+        ]),
+    );
+
+    ig.push(
+        Inst::new(
             "arm64_stg",
             r#"
         Store tag to tag memory

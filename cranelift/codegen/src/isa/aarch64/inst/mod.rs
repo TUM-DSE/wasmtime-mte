@@ -398,6 +398,10 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_def(rd);
             collector.reg_use(rn);
         }
+        &Inst::Addg { rd, rn, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
         &Inst::Stg { rt, ref mem } => {
             collector.reg_use(rt);
             memarg_operands(mem, collector);
@@ -1185,6 +1189,11 @@ impl Inst {
                 let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
                 // let rm = pretty_print_ireg(zero_reg(), OperandSize::Size64, allocs);
                 format!("irg {} {}", rd, rn)
+            }
+            &Inst::Addg { rd, rn, imm6, imm4 } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
+                format!("{} {} {} {}", rd, rn, imm6, imm4)
             }
             &Inst::Stg { rt, ref mem } => {
                 let rt = pretty_print_ireg(rt, OperandSize::Size64, allocs);

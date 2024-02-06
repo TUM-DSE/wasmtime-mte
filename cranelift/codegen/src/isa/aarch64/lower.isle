@@ -2676,3 +2676,6 @@
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
+
+(rule (lower (arm64_add_to_tag src (u8_from_uimm8 imm4)))
+      (emit_arm64_addg src imm4))

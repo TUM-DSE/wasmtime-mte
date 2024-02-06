@@ -891,6 +891,13 @@
        ;; IRG
        (Irg (rd WritableReg) (rn Reg))
 
+       ;; ADDG
+       (Addg
+        (rd WritableReg)
+        (rn Reg)
+        (imm6 u8)
+        (imm4 u8))
+
        ;; STG
        ;; TODO: not all addressing modes are supported; maybe change this?
        (Stg (rt Reg) (mem AMode))
@@ -1805,19 +1812,30 @@
             (imm $I64 (ImmExtend.Zero) 0)))
 
 
-;; Helper for emitting MTE instructions
+;; Helpers for emitting MTE instructions
+
+;; Helper for emitting `MInst.Stg` instructions.
 (decl emit_arm64_stg (Reg AMode) SideEffectNoResult)
 (rule (emit_arm64_stg src amode)
       (SideEffectNoResult.Inst (MInst.Stg src amode)))
 
+;; Helper for emitting `MInst.St2g` instructions.
 (decl emit_arm64_st2g (Reg AMode) SideEffectNoResult)
 (rule (emit_arm64_st2g src amode)
       (SideEffectNoResult.Inst (MInst.St2g src amode)))
 
+;; Helper for emitting `MInst.Irg` instructions.
 (decl emit_arm64_irg (Reg) Reg)
 (rule (emit_arm64_irg src)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.Irg dst src))))
+        dst))
+
+;; Helper for emitting `MInst.Addg` instructions.
+(decl emit_arm64_addg (Reg u8) Reg)
+(rule (emit_arm64_addg src imm4)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Addg dst src 0 imm4))))
         dst))
 
 

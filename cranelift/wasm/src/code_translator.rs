@@ -2350,7 +2350,7 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             ));
         }
         // TODO: now we really actually do need SegmentStackNew and SegmentNew, since we employ deterministic tagging for (consecutive) stack arrays
-        Operator::SegmentNew => {
+        Operator::SegmentNew { .. } => {
             // builder
             // .ins()
             // .Store(opcode, val_ty, flags, Offset32::new(0), val, base);

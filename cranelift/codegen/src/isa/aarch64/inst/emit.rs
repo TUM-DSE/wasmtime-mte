@@ -729,6 +729,22 @@ impl MachInstEmit for Inst {
                 }
                 sink.put4(enc_arith_rrr(top11, bit15_10, rd, rn, zero_reg()));
             }
+            &MInst::Addg { rd, rn, imm6, imm4 } => {
+                // 1001000110{imm6}00{imm4}{Xn=rn}{Xd=rd}
+                let bits_31_22 = 0b1001000110;
+                let bits_15_14 = 0b00;
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+
+                sink.put4(
+                    (bits_31_22 << 22)
+                        | (u32::from(imm6) << 16)
+                        | (bits_15_14 << 14)
+                        | (u32::from(imm4) << 10)
+                        | (machreg_to_gpr(rn) << 4)
+                        | (machreg_to_gpr(rd.to_reg())),
+                );
+            }
             &MInst::Stg { rt, ref mem } => {
                 const LOG2_TAG_GRANULE: u32 = 4;
                 let top11 = 0b1101_1001_001;
