@@ -265,14 +265,14 @@ fn insert_tag_from_index_into_index(
     to_index: Value,
     builder: &mut FunctionBuilder,
 ) -> Value {
-    // tag = from && 0x0F00... (keep only tag)
+    // tag = from & 0x0F00... (keep only tag)
     let tag = builder.ins().band_imm(from_index, MTE_TAG_BITS_MASK);
 
-    // to = to && 0xF0FF... (remove tag, keep rest)
-    let index_b = builder.ins().band_imm(to_index, MTE_NON_TAG_BITS_MASK);
+    // to = to & 0xF0FF... (remove tag, keep rest)
+    let to_index = builder.ins().band_imm(to_index, MTE_NON_TAG_BITS_MASK);
 
-    // to && tag
-    builder.ins().band(index_b, tag)
+    // to | tag
+    builder.ins().bor(to_index, tag)
 }
 
 impl FuncTranslationState {

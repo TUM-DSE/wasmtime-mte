@@ -732,16 +732,18 @@ impl MachInstEmit for Inst {
             &MInst::Addg { rd, rn, imm6, imm4 } => {
                 // 1001000110{imm6}00{imm4}{Xn=rn}{Xd=rd}
                 let bits_31_22 = 0b1001000110;
+                let imm6: u32 = imm6.into();
                 let bits_15_14 = 0b00;
+                let imm4: u32 = imm4.into();
                 let rd = allocs.next_writable(rd);
                 let rn = allocs.next(rn);
 
                 sink.put4(
                     (bits_31_22 << 22)
-                        | (u32::from(imm6) << 16)
+                        | (imm6 << 16)
                         | (bits_15_14 << 14)
-                        | (u32::from(imm4) << 10)
-                        | (machreg_to_gpr(rn) << 4)
+                        | (imm4 << 10)
+                        | (machreg_to_gpr(rn) << 5)
                         | (machreg_to_gpr(rd.to_reg())),
                 );
             }
