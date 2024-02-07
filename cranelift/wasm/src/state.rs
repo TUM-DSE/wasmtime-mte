@@ -8,8 +8,6 @@ use crate::{FuncIndex, GlobalIndex, Heap, MemoryIndex, TableIndex, TypeIndex, Wa
 use crate::{HashMap, Occupied, Vacant};
 use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
 use cranelift_frontend::FunctionBuilder;
-use once_cell::sync::Lazy;
-use rand::Rng;
 use std::vec::Vec;
 
 /// Information about the presence of an associated `else` for an `if`, or the
