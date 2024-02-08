@@ -275,8 +275,8 @@ fn insert_tag_from_index_into_index(
 
 impl FuncTranslationState {
     /// Tag the `index` with an MTE tag, and return the tagged index.
-    /// Contiguous stack allocations are guaranteed to have different random
-    /// tags.
+    /// Contiguous stack allocations in the same C function are guaranteed
+    /// to have different random tags.
     pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
         let new_tagged_index = match self.latest_tagged_index.take() {
             None => builder.ins().arm64_irg(index),
