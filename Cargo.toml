@@ -213,15 +213,15 @@ is-terminal = "0.4.0"
 wit-bindgen = { version = "0.13.1", default-features = false }
 
 # wasm-tools family:
-wasmparser = { path = "../wasm-tools/crates/wasmparser" }
-wat = { path = "../wasm-tools/crates/wat" }
-wast = { path = "../wasm-tools/crates/wast" }
-wasmprinter = { path = "../wasm-tools/crates/wasmprinter" }
-wasm-encoder = { path = "../wasm-tools/crates/wasm-encoder" }
-wasm-smith = { path = "../wasm-tools/crates/wasm-smith" }
-wasm-mutate = { path = "../wasm-tools/crates/wasm-mutate" }
-wit-parser = { path = "../wasm-tools/crates/wit-parser" }
-wit-component = { path = "../wasm-tools/crates/wit-component" }
+wasmparser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmparser", branch = "main" }
+wat = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wat", branch = "main" }
+wast = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wast", branch = "main" }
+wasmprinter = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmprinter", branch = "main" }
+wasm-encoder = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-encoder", branch = "main" }
+wasm-smith = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-smith", branch = "main" }
+wasm-mutate = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-mutate", branch = "main" }
+wit-parser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-parser", branch = "main" }
+wit-component = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-component", branch = "main" }
 
 # Non-Bytecode Alliance maintained dependencies:
 # --------------------------
