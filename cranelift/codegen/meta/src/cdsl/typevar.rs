@@ -56,9 +56,13 @@ impl TypeVar {
         let mut builder = TypeSetBuilder::new();
 
         let (scalar_type, num_lanes) = match value_type {
-            ValueType::Reference(ReferenceType(reference_type)) => {
+            ValueType::Reference(ReferenceType::ReferenceType(reference_type)) => {
                 let bits = reference_type as RangeBound;
                 return TypeVar::new(name, doc, builder.refs(bits..bits).build());
+            }
+            ValueType::Reference(ReferenceType::CapPointer(reference_type)) => {
+                let bits = reference_type as RangeBound;
+                return TypeVar::new(name, doc, builder.cap_ptrs(bits..bits).build());
             }
             ValueType::Lane(lane_type) => (lane_type, 1),
             ValueType::Vector(vec_type) => {
@@ -395,6 +399,7 @@ pub(crate) struct TypeSet {
     pub ints: NumSet,
     pub floats: NumSet,
     pub refs: NumSet,
+    pub cap_ptrs: NumSet,
 }
 
 impl TypeSet {
@@ -404,6 +409,7 @@ impl TypeSet {
         ints: NumSet,
         floats: NumSet,
         refs: NumSet,
+        cap_ptrs: NumSet,
     ) -> Self {
         Self {
             lanes,
@@ -411,12 +417,14 @@ impl TypeSet {
             ints,
             floats,
             refs,
+            cap_ptrs,
         }
     }
 
     /// Return the number of concrete types represented by this typeset.
     pub fn size(&self) -> usize {
-        self.lanes.len() * (self.ints.len() + self.floats.len() + self.refs.len())
+        self.lanes.len()
+            * (self.ints.len() + self.floats.len() + self.refs.len() + self.cap_ptrs.len())
             + self.dynamic_lanes.len() * (self.ints.len() + self.floats.len() + self.refs.len())
     }
 
@@ -524,6 +532,9 @@ impl TypeSet {
             for &bits in &self.refs {
                 ret.push(ReferenceType::ref_from_bits(bits).into());
             }
+            for &bits in &self.cap_ptrs {
+                ret.push(ReferenceType::cap_from_bits(bits).into());
+            }
         }
         for &num_lanes in &self.dynamic_lanes {
             for &bits in &self.ints {
@@ -579,6 +590,14 @@ impl fmt::Debug for TypeSet {
                 Vec::from_iter(self.refs.iter().map(|x| x.to_string())).join(", ")
             ));
         }
+        if !self.cap_ptrs.is_empty() {
+            subsets.push(format!(
+                "cap_ptrs={{{}}}",
+                Vec::from_iter(self.cap_ptrs.iter().map(|x| x.to_string())).join(", ")
+            ));
+        } else {
+            subsets.push("cap_ptrs={}".to_string());
+        }
 
         write!(fmt, "{})", subsets.join(", "))?;
         Ok(())
@@ -589,6 +608,7 @@ pub(crate) struct TypeSetBuilder {
     ints: Interval,
     floats: Interval,
     refs: Interval,
+    cap_ptrs: Interval,
     includes_scalars: bool,
     simd_lanes: Interval,
     dynamic_simd_lanes: Interval,
@@ -600,6 +620,7 @@ impl TypeSetBuilder {
             ints: Interval::None,
             floats: Interval::None,
             refs: Interval::None,
+            cap_ptrs: Interval::None,
             includes_scalars: true,
             simd_lanes: Interval::None,
             dynamic_simd_lanes: Interval::None,
@@ -619,6 +640,11 @@ impl TypeSetBuilder {
     pub fn refs(mut self, interval: impl Into<Interval>) -> Self {
         assert!(self.refs == Interval::None);
         self.refs = interval.into();
+        self
+    }
+    pub fn cap_ptrs(mut self, interval: impl Into<Interval>) -> Self {
+        assert!(self.cap_ptrs == Interval::None);
+        self.cap_ptrs = interval.into();
         self
     }
     pub fn includes_scalars(mut self, includes_scalars: bool) -> Self {
@@ -645,6 +671,7 @@ impl TypeSetBuilder {
             range_to_set(self.ints.to_range(8..MAX_BITS, None)),
             range_to_set(self.floats.to_range(32..64, None)),
             range_to_set(self.refs.to_range(32..64, None)),
+            range_to_set(self.cap_ptrs.to_range(128..128, None)),
         )
     }
 }
@@ -704,6 +731,12 @@ fn range_to_set(range: Option<Range>) -> NumSet {
 
 #[test]
 fn test_typevar_builder() {
+    let type_set = TypeSetBuilder::new().cap_ptrs(Interval::All).build();
+    assert_eq!(type_set.lanes, num_set![1]);
+    assert!(type_set.floats.is_empty());
+    assert!(type_set.ints.is_empty());
+    assert_eq!(type_set.cap_ptrs, num_set![128]);
+
     let type_set = TypeSetBuilder::new().ints(Interval::All).build();
     assert_eq!(type_set.lanes, num_set![1]);
     assert!(type_set.floats.is_empty());

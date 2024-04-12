@@ -194,12 +194,28 @@ pub trait PtrSize {
 
     /// The offset of the `current_length` field.
     #[inline]
+    #[cfg(feature = "cheri")]
+    fn vmmemory_definition_current_length(&self) -> u8 {
+        2 * self.size()
+    }
+
+    /// The offset of the `current_length` field.
+    #[inline]
+    #[cfg(not(feature = "cheri"))]
     fn vmmemory_definition_current_length(&self) -> u8 {
         1 * self.size()
     }
 
     /// Return the size of `VMMemoryDefinition`.
     #[inline]
+    #[cfg(feature = "cheri")]
+    fn size_of_vmmemory_definition(&self) -> u8 {
+        3 * self.size()
+    }
+
+    /// Return the size of `VMMemoryDefinition`.
+    #[inline]
+    #[cfg(not(feature = "cheri"))]
     fn size_of_vmmemory_definition(&self) -> u8 {
         2 * self.size()
     }

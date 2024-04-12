@@ -1,7 +1,7 @@
 //! This module defines aarch64-specific machine instruction types.
 
 use crate::binemit::{Addend, CodeOffset, Reloc};
-use crate::ir::types::{F32, F64, I128, I16, I32, I64, I8, I8X16, R32, R64};
+use crate::ir::types::{C64, F32, F64, I128, I16, I32, I64, I8, I8X16, R32, R64};
 use crate::ir::{types, ExternalName, MemFlags, Opcode, Type};
 use crate::isa::{CallConv, FunctionAlignment};
 use crate::machinst::*;
@@ -16,12 +16,19 @@ use std::fmt::Write;
 use std::string::{String, ToString};
 
 pub(crate) mod regs;
+
 pub(crate) use self::regs::*;
+
 pub mod imms;
+
 pub use self::imms::*;
+
 pub mod args;
+
 pub use self::args::*;
+
 pub mod emit;
+
 pub(crate) use self::emit::*;
 use crate::isa::aarch64::abi::AArch64MachineDeps;
 
@@ -33,6 +40,7 @@ mod emit_tests;
 //=============================================================================
 // Instructions (top level): definition
 
+use crate::isa::aarch64::lower::isle::generated_code::CapOp;
 pub use crate::isa::aarch64::lower::isle::generated_code::{
     ALUOp, ALUOp3, AMode, APIKey, AtomicRMWLoopOp, AtomicRMWOp, BitOp, BranchTargetType, FPUOp1,
     FPUOp2, FPUOp3, FpuRoundMode, FpuToIntOp, IntToFpuOp, MInst as Inst, MoveWideOp, VecALUModOp,
@@ -299,6 +307,7 @@ impl Inst {
                 mem,
                 flags,
             },
+            C64 => todo!(),
             _ => {
                 if ty.is_vector() {
                     let bits = ty_bits(ty);
@@ -350,6 +359,7 @@ impl Inst {
                 mem,
                 flags,
             },
+            C64 => todo!(),
             _ => {
                 if ty.is_vector() {
                     let bits = ty_bits(ty);
@@ -409,6 +419,32 @@ fn pairmemarg_operands<F: Fn(VReg) -> VReg>(
     }
 }
 
+fn capmemarg_operands<F: Fn(VReg) -> VReg>(
+    capmemarg: &CapAMode,
+    collector: &mut OperandCollector<'_, F>,
+) {
+    // This should match `CapAMode::with_allocs()`.
+    match capmemarg {
+        &CapAMode::Unscaled { rn, .. } | &CapAMode::UnsignedOffset { rn, .. } => {
+            collector.reg_use(rn);
+        }
+        &CapAMode::RegReg { rn, rm, .. }
+        | &CapAMode::RegScaled { rn, rm, .. }
+        | &CapAMode::RegScaledExtended { rn, rm, .. }
+        | &CapAMode::RegExtended { rn, rm, .. } => {
+            collector.reg_use(rn);
+            collector.reg_use(rm);
+        }
+        &CapAMode::SPPreIndexed { .. } | &CapAMode::SPPostIndexed { .. } => {}
+        &CapAMode::FPOffset { .. } => {}
+        &CapAMode::SPOffset { .. } | &CapAMode::NominalSPOffset { .. } => {}
+        &CapAMode::RegOffset { rn, .. } => {
+            collector.reg_use(rn);
+        }
+        &CapAMode::Label { .. } | &CapAMode::Const { .. } => {}
+    }
+}
+
 fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCollector<'_, F>) {
     match inst {
         &Inst::AluRRR { rd, rn, rm, .. } => {
@@ -448,22 +484,56 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_def(rd);
             collector.reg_use(rn);
         }
+        &Inst::CapOpRRR { rd, rn, rm, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+            collector.reg_use(rm);
+        }
+        &Inst::CapOpImm12 { rd, rn, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        &Inst::MovCap { rd, rm, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rm);
+        }
         &Inst::ULoad8 { rd, ref mem, .. }
         | &Inst::SLoad8 { rd, ref mem, .. }
         | &Inst::ULoad16 { rd, ref mem, .. }
         | &Inst::SLoad16 { rd, ref mem, .. }
         | &Inst::ULoad32 { rd, ref mem, .. }
         | &Inst::SLoad32 { rd, ref mem, .. }
-        | &Inst::ULoad64 { rd, ref mem, .. } => {
+        | &Inst::ULoad64 { rd, ref mem, .. }
+        | &Inst::LoadC64 { rd, ref mem, .. } => {
             collector.reg_def(rd);
             memarg_operands(mem, collector);
+        }
+        &Inst::LoadC64Alt { rd, ref mem, .. }
+        | &Inst::ULoad8Alt { rd, ref mem, .. }
+        | &Inst::SLoad8Alt { rd, ref mem, .. }
+        | &Inst::ULoad16Alt { rd, ref mem, .. }
+        | &Inst::SLoad16Alt { rd, ref mem, .. }
+        | &Inst::ULoad32Alt { rd, ref mem, .. }
+        | &Inst::SLoad32Alt { rd, ref mem, .. }
+        | &Inst::ULoad64Alt { rd, ref mem, .. } => {
+            collector.reg_def(rd);
+            capmemarg_operands(mem, collector);
         }
         &Inst::Store8 { rd, ref mem, .. }
         | &Inst::Store16 { rd, ref mem, .. }
         | &Inst::Store32 { rd, ref mem, .. }
-        | &Inst::Store64 { rd, ref mem, .. } => {
+        | &Inst::Store64 { rd, ref mem, .. }
+        | &Inst::StoreC64 { rd, ref mem, .. } => {
             collector.reg_use(rd);
             memarg_operands(mem, collector);
+        }
+        &Inst::StoreC64Alt { rd, ref mem, .. }
+        | &Inst::Store8Alt { rd, ref mem, .. }
+        | &Inst::Store16Alt { rd, ref mem, .. }
+        | &Inst::Store32Alt { rd, ref mem, .. }
+        | &Inst::Store64Alt { rd, ref mem, .. } => {
+            collector.reg_use(rd);
+            capmemarg_operands(mem, collector);
         }
         &Inst::StoreP64 {
             rt, rt2, ref mem, ..
@@ -707,6 +777,30 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
         &Inst::FpuStore128 { rd, ref mem, .. } => {
             collector.reg_use(rd);
             memarg_operands(mem, collector);
+        }
+        &Inst::FpuLoad32Alt { rd, ref mem, .. } => {
+            collector.reg_def(rd);
+            capmemarg_operands(mem, collector);
+        }
+        &Inst::FpuLoad64Alt { rd, ref mem, .. } => {
+            collector.reg_def(rd);
+            capmemarg_operands(mem, collector);
+        }
+        &Inst::FpuLoad128Alt { rd, ref mem, .. } => {
+            collector.reg_def(rd);
+            capmemarg_operands(mem, collector);
+        }
+        &Inst::FpuStore32Alt { rd, ref mem, .. } => {
+            collector.reg_use(rd);
+            capmemarg_operands(mem, collector);
+        }
+        &Inst::FpuStore64Alt { rd, ref mem, .. } => {
+            collector.reg_use(rd);
+            capmemarg_operands(mem, collector);
+        }
+        &Inst::FpuStore128Alt { rd, ref mem, .. } => {
+            collector.reg_use(rd);
+            capmemarg_operands(mem, collector);
         }
         &Inst::FpuLoadP64 {
             rt, rt2, ref mem, ..
@@ -968,6 +1062,26 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_early_def(start);
             collector.reg_use(end);
         }
+        &Inst::Mrs { rd } => {
+            collector.reg_def(rd);
+        }
+        &Inst::Scbnds { rd, rn, rm } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+            collector.reg_use(rm);
+        }
+        &Inst::ScbndsImm { rd, rn, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        &Inst::Cvtdz { rd, rn } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
+        &Inst::Cvtp { rd, rn } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
     }
 }
 
@@ -1075,7 +1189,26 @@ impl MachInst for Inst {
             | &Inst::StoreP64 { .. }
             | &Inst::FpuStore32 { .. }
             | &Inst::FpuStore64 { .. }
-            | &Inst::FpuStore128 { .. } => true,
+            | &Inst::FpuStore128 { .. }
+            | &Inst::ULoad8Alt { .. }
+            | &Inst::SLoad8Alt { .. }
+            | &Inst::ULoad16Alt { .. }
+            | &Inst::SLoad16Alt { .. }
+            | &Inst::ULoad32Alt { .. }
+            | &Inst::SLoad32Alt { .. }
+            | &Inst::ULoad64Alt { .. }
+            | &Inst::FpuLoad32Alt { .. }
+            | &Inst::FpuLoad64Alt { .. }
+            | &Inst::FpuLoad128Alt { .. }
+            | &Inst::Store8Alt { .. }
+            | &Inst::Store16Alt { .. }
+            | &Inst::Store32Alt { .. }
+            | &Inst::Store64Alt { .. }
+            | &Inst::FpuStore32Alt { .. }
+            | &Inst::FpuStore64Alt { .. }
+            | &Inst::FpuStore128Alt { .. }
+            | &Inst::LoadC64Alt { .. }
+            | &Inst::StoreC64Alt { .. } => true,
             // TODO: verify this carefully
             _ => false,
         }
@@ -1086,6 +1219,7 @@ impl MachInst for Inst {
 
         assert!(bits <= 128);
         assert!(to_reg.to_reg().class() == from_reg.class());
+        // TODO(MF): check if we need to use a cheri move here
         match from_reg.class() {
             RegClass::Int => Inst::Mov {
                 size: OperandSize::Size64,
@@ -1140,6 +1274,7 @@ impl MachInst for Inst {
             I64 => Ok((&[RegClass::Int], &[I64])),
             R32 => panic!("32-bit reftype pointer should never be seen on AArch64"),
             R64 => Ok((&[RegClass::Int], &[R64])),
+            C64 => Ok((&[RegClass::Int], &[C64])),
             F32 => Ok((&[RegClass::Float], &[F32])),
             F64 => Ok((&[RegClass::Float], &[F64])),
             I128 => Ok((&[RegClass::Int, RegClass::Int], &[I64, I64])),
@@ -1255,6 +1390,13 @@ impl Inst {
                 ALUOp::AdcS => "adcs",
                 ALUOp::Sbc => "sbc",
                 ALUOp::SbcS => "sbcs",
+            }
+        }
+
+        fn cap_op_name(cap_op: CapOp) -> &'static str {
+            match cap_op {
+                CapOp::Add => "add",
+                CapOp::Sub => "sub",
             }
         }
 
@@ -1379,13 +1521,54 @@ impl Inst {
                 let rn = pretty_print_ireg(rn, size, allocs);
                 format!("{} {}, {}", op, rd, rn)
             }
+            &Inst::CapOpRRR {
+                cap_op,
+                rd,
+                rn,
+                rm,
+                extendop,
+            } => {
+                let op = cap_op_name(cap_op);
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let rm_size = match extendop {
+                    ExtendOp::UXTB
+                    | ExtendOp::SXTB
+                    | ExtendOp::UXTH
+                    | ExtendOp::SXTH
+                    | ExtendOp::UXTW
+                    | ExtendOp::SXTW => OperandSize::Size32,
+                    ExtendOp::UXTX | ExtendOp::SXTX => OperandSize::Size64,
+                };
+                let rm = pretty_print_ireg(rm, rm_size, allocs);
+                let extendop = extendop.pretty_print(0, allocs);
+                format!("{} {}, {}, {}, {}", op, rd, rn, rm, extendop)
+            }
+            &Inst::CapOpImm12 {
+                cap_op,
+                rd,
+                rn,
+                ref imm12,
+            } => {
+                let op = cap_op_name(cap_op);
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let imm12 = imm12.pretty_print(0, allocs);
+                format!("{} {}, {}, {}", op, rd, rn, imm12)
+            }
+            &Inst::MovCap { rd, rm } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rm = pretty_print_ireg(rm, OperandSize::Size64C, allocs);
+                format!("mov {}, {}", rd, rm)
+            }
             &Inst::ULoad8 { rd, ref mem, .. }
             | &Inst::SLoad8 { rd, ref mem, .. }
             | &Inst::ULoad16 { rd, ref mem, .. }
             | &Inst::SLoad16 { rd, ref mem, .. }
             | &Inst::ULoad32 { rd, ref mem, .. }
             | &Inst::SLoad32 { rd, ref mem, .. }
-            | &Inst::ULoad64 { rd, ref mem, .. } => {
+            | &Inst::ULoad64 { rd, ref mem, .. }
+            | &Inst::LoadC64 { rd, ref mem, .. } => {
                 let is_unscaled = match &mem {
                     &AMode::Unscaled { .. } => true,
                     _ => false,
@@ -1405,6 +1588,8 @@ impl Inst {
                     (&Inst::SLoad32 { .. }, true) => ("ldursw", OperandSize::Size64),
                     (&Inst::ULoad64 { .. }, false) => ("ldr", OperandSize::Size64),
                     (&Inst::ULoad64 { .. }, true) => ("ldur", OperandSize::Size64),
+                    (&Inst::LoadC64 { .. }, false) => ("ldr", OperandSize::Size64C),
+                    (&Inst::LoadC64 { .. }, true) => ("ldur", OperandSize::Size64C),
                     _ => unreachable!(),
                 };
 
@@ -1415,10 +1600,46 @@ impl Inst {
 
                 format!("{}{} {}, {}", mem_str, op, rd, mem)
             }
+            &Inst::ULoad8Alt { rd, ref mem, .. }
+            | &Inst::SLoad8Alt { rd, ref mem, .. }
+            | &Inst::ULoad16Alt { rd, ref mem, .. }
+            | &Inst::SLoad16Alt { rd, ref mem, .. }
+            | &Inst::ULoad32Alt { rd, ref mem, .. }
+            | &Inst::SLoad32Alt { rd, ref mem, .. }
+            | &Inst::ULoad64Alt { rd, ref mem, .. }
+            | &Inst::LoadC64Alt { rd, ref mem, .. } => {
+                let is_unscaled = matches!(mem, &CapAMode::Unscaled { .. });
+                let (op, size) = match (self, is_unscaled) {
+                    (&Inst::ULoad8Alt { .. }, false) => ("ldrb", OperandSize::Size32),
+                    (&Inst::ULoad8Alt { .. }, true) => ("ldurb", OperandSize::Size32),
+                    (&Inst::SLoad8Alt { .. }, false) => ("ldrsb", OperandSize::Size64),
+                    (&Inst::SLoad8Alt { .. }, true) => ("ldursb", OperandSize::Size64),
+                    (&Inst::ULoad16Alt { .. }, false) => ("ldrh", OperandSize::Size32),
+                    (&Inst::ULoad16Alt { .. }, true) => ("ldurh", OperandSize::Size32),
+                    (&Inst::SLoad16Alt { .. }, false) => ("ldrsh", OperandSize::Size64),
+                    (&Inst::SLoad16Alt { .. }, true) => ("ldursh", OperandSize::Size64),
+                    (&Inst::ULoad32Alt { .. }, false) => ("ldr", OperandSize::Size32),
+                    (&Inst::ULoad32Alt { .. }, true) => ("ldur", OperandSize::Size32),
+                    (&Inst::SLoad32Alt { .. }, false) => ("ldrsw", OperandSize::Size64),
+                    (&Inst::SLoad32Alt { .. }, true) => ("ldursw", OperandSize::Size64),
+                    (&Inst::ULoad64Alt { .. }, false) => ("ldr", OperandSize::Size64),
+                    (&Inst::ULoad64Alt { .. }, true) => ("ldur", OperandSize::Size64),
+                    (&Inst::LoadC64Alt { .. }, false) => ("ldr", OperandSize::Size64C),
+                    (&Inst::LoadC64Alt { .. }, true) => ("ldur", OperandSize::Size64C),
+                    _ => unreachable!(),
+                };
+
+                let rd = pretty_print_ireg(rd.to_reg(), size, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+
+                format!("{} {}, {}", op, rd, mem)
+            }
             &Inst::Store8 { rd, ref mem, .. }
             | &Inst::Store16 { rd, ref mem, .. }
             | &Inst::Store32 { rd, ref mem, .. }
-            | &Inst::Store64 { rd, ref mem, .. } => {
+            | &Inst::Store64 { rd, ref mem, .. }
+            | &Inst::StoreC64 { rd, ref mem, .. } => {
                 let is_unscaled = match &mem {
                     &AMode::Unscaled { .. } => true,
                     _ => false,
@@ -1432,6 +1653,8 @@ impl Inst {
                     (&Inst::Store32 { .. }, true) => ("stur", OperandSize::Size32),
                     (&Inst::Store64 { .. }, false) => ("str", OperandSize::Size64),
                     (&Inst::Store64 { .. }, true) => ("stur", OperandSize::Size64),
+                    (&Inst::StoreC64 { .. }, false) => ("str", OperandSize::Size64C),
+                    (&Inst::StoreC64 { .. }, true) => ("stur", OperandSize::Size64C),
                     _ => unreachable!(),
                 };
 
@@ -1441,6 +1664,32 @@ impl Inst {
                 let mem = mem.pretty_print_default();
 
                 format!("{}{} {}, {}", mem_str, op, rd, mem)
+            }
+            &Inst::Store8Alt { rd, ref mem, .. }
+            | &Inst::Store16Alt { rd, ref mem, .. }
+            | &Inst::Store32Alt { rd, ref mem, .. }
+            | &Inst::Store64Alt { rd, ref mem, .. }
+            | &Inst::StoreC64Alt { rd, ref mem, .. } => {
+                let is_unscaled = matches!(mem, &CapAMode::Unscaled { .. });
+                let (op, size) = match (self, is_unscaled) {
+                    (&Inst::Store8Alt { .. }, false) => ("strb", OperandSize::Size32),
+                    (&Inst::Store8Alt { .. }, true) => ("sturb", OperandSize::Size32),
+                    (&Inst::Store16Alt { .. }, false) => ("strh", OperandSize::Size32),
+                    (&Inst::Store16Alt { .. }, true) => ("sturh", OperandSize::Size32),
+                    (&Inst::Store32Alt { .. }, false) => ("str", OperandSize::Size32),
+                    (&Inst::Store32Alt { .. }, true) => ("stur", OperandSize::Size32),
+                    (&Inst::Store64Alt { .. }, false) => ("str", OperandSize::Size64),
+                    (&Inst::Store64Alt { .. }, true) => ("stur", OperandSize::Size64),
+                    (&Inst::StoreC64Alt { .. }, false) => ("str", OperandSize::Size64C),
+                    (&Inst::StoreC64Alt { .. }, true) => ("stur", OperandSize::Size64C),
+                    _ => unreachable!(),
+                };
+
+                let rd = pretty_print_ireg(rd, size, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+
+                format!("{} {}, {}", op, rd, mem)
             }
             &Inst::StoreP64 {
                 rt, rt2, ref mem, ..
@@ -1861,6 +2110,44 @@ impl Inst {
                 let (mem_str, mem) = mem_finalize_for_show(&mem, state);
                 let mem = mem.pretty_print_default();
                 format!("{}str {}, {}", mem_str, rd, mem)
+            }
+            &Inst::FpuLoad32Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_vreg_scalar(rd.to_reg(), ScalarSize::Size32, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("ldr {}, {}", rd, mem)
+            }
+            &Inst::FpuLoad64Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_vreg_scalar(rd.to_reg(), ScalarSize::Size64, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("ldr {}, {}", rd, mem)
+            }
+            &Inst::FpuLoad128Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rd = "q".to_string() + &rd[1..];
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("ldr {}, {}", rd, mem)
+            }
+            &Inst::FpuStore32Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_vreg_scalar(rd, ScalarSize::Size32, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("str {}, {}", rd, mem)
+            }
+            &Inst::FpuStore64Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_vreg_scalar(rd, ScalarSize::Size64, allocs);
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("str {}, {}", rd, mem)
+            }
+            &Inst::FpuStore128Alt { rd, ref mem, .. } => {
+                let rd = pretty_print_reg(rd, allocs);
+                let rd = "q".to_string() + &rd[1..];
+                let mem = mem.with_allocs(allocs);
+                let mem = mem.pretty_print_default();
+                format!("str {}, {}", rd, mem)
             }
             &Inst::FpuLoadP64 {
                 rt, rt2, ref mem, ..
@@ -2892,6 +3179,32 @@ impl Inst {
                 let step = step.pretty_print(0, allocs);
                 format!("stack_probe_loop {start}, {end}, {step}")
             }
+            &Inst::Mrs { rd } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                format!("mrs {}, DDC", rd)
+            }
+            &Inst::Scbnds { rd, rn, rm } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let rm = pretty_print_reg(rm, allocs);
+                format!("scbnds {}, {}, {}", rd, rn, rm)
+            }
+            &Inst::ScbndsImm { rd, rn, imm } => {
+                let imm = imm.pretty_print(0, allocs);
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                format!("scbnds {}, {}, {}", rd, rn, imm)
+            }
+            &Inst::Cvtdz { rd, rn } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64C, allocs);
+                let rn = pretty_print_reg(rn, allocs);
+                format!("cvtdz {}, {}", rd, rn)
+            }
+            &Inst::Cvtp { rd, rn } => {
+                let rd = pretty_print_reg(rd.to_reg(), allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                format!("cvtp {}, {}", rd, rn)
+            }
         }
     }
 }
@@ -2916,6 +3229,10 @@ pub enum LabelUse {
     /// in bits 23:5.
     Ldr19,
     #[allow(dead_code)]
+    /// 17-bit offset for LDR (load literal). PC-rel, offset is imm << 4. Immediate is 17 signed bits,
+    /// in bits 21:5.
+    Ldr17,
+    #[allow(dead_code)]
     /// 21-bit offset for ADR (get address of label). PC-rel, offset is not shifted. Immediate is
     /// 21 signed bits, with high 19 bits in bits 23:5 and low 2 bits in bits 30:29.
     Adr21,
@@ -2938,6 +3255,7 @@ impl MachInstLabelUse for LabelUse {
             LabelUse::Branch19 => (1 << 20) - 1,
             LabelUse::Branch26 => (1 << 27) - 1,
             LabelUse::Ldr19 => (1 << 20) - 1,
+            LabelUse::Ldr17 => (1 << 20) - 1,
             // Adr does not shift its immediate, so the 21-bit immediate gives 21 bits of total
             // range.
             LabelUse::Adr21 => (1 << 20) - 1,
@@ -2970,11 +3288,16 @@ impl MachInstLabelUse for LabelUse {
             LabelUse::Branch19 => 0x00ffffe0, // bits 23..5 inclusive
             LabelUse::Branch26 => 0x03ffffff, // bits 25..0 inclusive
             LabelUse::Ldr19 => 0x00ffffe0,    // bits 23..5 inclusive
+            LabelUse::Ldr17 => 0x003fffe0,    // bits 21..5 inclusive
             LabelUse::Adr21 => 0x60ffffe0,    // bits 30..29, 25..5 inclusive
             LabelUse::PCRel32 => 0xffffffff,
         };
         let pc_rel_shifted = match self {
             LabelUse::Adr21 | LabelUse::PCRel32 => pc_rel,
+            LabelUse::Ldr17 => {
+                debug_assert!(pc_rel & 0b1111 == 0);
+                pc_rel >> 4
+            }
             _ => {
                 debug_assert!(pc_rel & 3 == 0);
                 pc_rel >> 2
@@ -2983,6 +3306,7 @@ impl MachInstLabelUse for LabelUse {
         let pc_rel_inserted = match self {
             LabelUse::Branch14 => (pc_rel_shifted & 0x3fff) << 5,
             LabelUse::Branch19 | LabelUse::Ldr19 => (pc_rel_shifted & 0x7ffff) << 5,
+            LabelUse::Ldr17 => (pc_rel_shifted & 0x1ffff) << 5,
             LabelUse::Branch26 => pc_rel_shifted & 0x3ffffff,
             LabelUse::Adr21 => (pc_rel_shifted & 0x7ffff) << 5 | (pc_rel_shifted & 0x180000) << 10,
             LabelUse::PCRel32 => pc_rel_shifted,

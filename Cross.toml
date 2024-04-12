@@ -1,0 +1,6 @@
+[target.aarch64-unknown-freebsd]
+# We need to build std, as aarch64-unknown-freebsd is not a tier 1 rust target
+build-std = true
+image.name = "ghcr.io/cross-rs/aarch64-unknown-freebsd:local"
+image.toolchain = ["linux/arm64/v8=aarch64-unknown-linux-gnu"]
+

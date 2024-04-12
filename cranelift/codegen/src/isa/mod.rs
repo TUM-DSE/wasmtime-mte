@@ -226,7 +226,11 @@ pub struct TargetFrontendConfig {
 impl TargetFrontendConfig {
     /// Get the pointer type of this target.
     pub fn pointer_type(self) -> ir::Type {
-        ir::Type::int(self.pointer_bits() as u16).unwrap()
+        if self.pointer_width == PointerWidth::U128 {
+            ir::Type::cap_ptr()
+        } else {
+            ir::Type::int(self.pointer_bits() as u16).unwrap()
+        }
     }
 
     /// Get the width of pointers on this target, in units of bits.
@@ -393,7 +397,7 @@ impl<'a> dyn TargetIsa + 'a {
 
     /// Get the pointer type of this ISA.
     pub fn pointer_type(&self) -> ir::Type {
-        ir::Type::int(self.pointer_bits() as u16).unwrap()
+        self.frontend_config().pointer_type()
     }
 
     /// Get the width of pointers on this ISA.

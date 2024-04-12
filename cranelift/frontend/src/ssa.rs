@@ -136,7 +136,7 @@ fn emit_zero(ty: Type, mut cur: FuncCursor) -> Value {
     if ty == I128 {
         let zero = cur.ins().iconst(I64, 0);
         cur.ins().uextend(I128, zero)
-    } else if ty.is_int() {
+    } else if ty.is_int() || ty.is_cap_ptr() {
         cur.ins().iconst(ty, 0)
     } else if ty == F32 {
         cur.ins().f32const(Ieee32::with_bits(0))

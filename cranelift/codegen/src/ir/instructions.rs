@@ -623,6 +623,8 @@ pub struct ValueTypeSet {
     pub refs: BitSet8,
     /// Allowed dynamic vectors minimum lane sizes
     pub dynamic_lanes: BitSet16,
+    /// Allowed cheri pointer types
+    pub cap_ptrs: BitSet8,
 }
 
 impl ValueTypeSet {
@@ -637,6 +639,8 @@ impl ValueTypeSet {
             self.floats.contains(l2b)
         } else if scalar.is_ref() {
             self.refs.contains(l2b)
+        } else if scalar.is_cap_ptr() {
+            self.cap_ptrs.contains(l2b)
         } else {
             false
         }
@@ -946,6 +950,7 @@ mod tests {
             floats: BitSet8::from_range(0, 0),
             refs: BitSet8::from_range(5, 7),
             dynamic_lanes: BitSet16::from_range(0, 4),
+            cap_ptrs: BitSet8::from_range(7, 7),
         };
         assert!(!vts.contains(I8));
         assert!(vts.contains(I32));
@@ -955,6 +960,7 @@ mod tests {
         assert!(!vts.contains(F32));
         assert!(vts.contains(R32));
         assert!(vts.contains(R64));
+        assert!(vts.contains(C64));
         assert_eq!(vts.example().to_string(), "i32");
 
         let vts = ValueTypeSet {
@@ -963,6 +969,7 @@ mod tests {
             floats: BitSet8::from_range(5, 7),
             refs: BitSet8::from_range(0, 0),
             dynamic_lanes: BitSet16::from_range(0, 8),
+            cap_ptrs: BitSet8::from_range(0, 0),
         };
         assert_eq!(vts.example().to_string(), "f32");
 
@@ -972,6 +979,7 @@ mod tests {
             floats: BitSet8::from_range(5, 7),
             refs: BitSet8::from_range(0, 0),
             dynamic_lanes: BitSet16::from_range(0, 8),
+            cap_ptrs: BitSet8::from_range(0, 0),
         };
         assert_eq!(vts.example().to_string(), "f32x2");
 
@@ -981,6 +989,7 @@ mod tests {
             floats: BitSet8::from_range(0, 0),
             refs: BitSet8::from_range(0, 0),
             dynamic_lanes: BitSet16::from_range(0, 8),
+            cap_ptrs: BitSet8::from_range(0, 0),
         };
         assert_eq!(vts.example().to_string(), "i32x4");
 
@@ -991,6 +1000,7 @@ mod tests {
             floats: BitSet8::from_range(0, 0),
             refs: BitSet8::from_range(0, 0),
             dynamic_lanes: BitSet16::from_range(0, 8),
+            cap_ptrs: BitSet8::from_range(0, 0),
         };
         assert!(vts.contains(I32));
         assert!(vts.contains(I32X4));

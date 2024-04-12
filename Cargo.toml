@@ -215,7 +215,8 @@ byte-array-literals = { path = "crates/wasi-preview1-component-adapter/byte-arra
 regalloc2 = "0.9.3"
 
 # cap-std family:
-target-lexicon = { version = "0.12.13", default-features = false, features = ["std"] }
+#target-lexicon = { version = "0.12.13", default-features = false, features = ["std"] }
+target-lexicon = { path = "../../../../rust/target-lexicon", default-features = false, features = ["std"] }
 cap-std = "3.0.0"
 cap-rand = { version = "3.0.0", features = ["small_rng"] }
 cap-fs-ext = "3.0.0"
@@ -231,15 +232,15 @@ rustix = "0.38.31"
 wit-bindgen = { version = "0.20.0", default-features = false }
 
 # wasm-tools family:
-wasmparser = "0.201.0"
-wat = "1.201.0"
-wast = "201.0.0"
-wasmprinter = "0.201.0"
-wasm-encoder = "0.201.0"
-wasm-smith = "0.201.0"
-wasm-mutate = "0.201.0"
-wit-parser = "0.201.0"
-wit-component = "0.201.0"
+wasmparser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmparser", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wat = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wat", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wast = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wast", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wasmprinter = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmprinter", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wasm-encoder = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-encoder", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wasm-smith = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-smith", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wasm-mutate = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-mutate", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wit-parser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-parser", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wit-component = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-component", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
 
 # Non-Bytecode Alliance maintained dependencies:
 # --------------------------
@@ -336,6 +337,9 @@ default = [
   # By default include compatibility with the "old" CLI from Wasmtime 13 and
   # prior.
   "old-cli",
+
+  # remove later, just on for convenience
+  "cheri",
 ]
 
 # ========================================
@@ -345,6 +349,7 @@ default = [
 all-arch = ["wasmtime/all-arch"]
 winch = ["wasmtime/winch"]
 wmemcheck = ["wasmtime/wmemcheck"]
+cheri = ["wasmtime/cheri", "wasmtime-cli-flags/cheri"]
 
 # This feature, when enabled, will statically compile out all logging statements
 # throughout Wasmtime and its dependencies.

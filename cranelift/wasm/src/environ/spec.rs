@@ -58,8 +58,11 @@ pub trait TargetEnvironment: TypeConvert {
     ///
     /// This returns `I64` for 64-bit architectures and `I32` for 32-bit architectures.
     fn pointer_type(&self) -> ir::Type {
-        ir::Type::int(u16::from(self.target_config().pointer_bits())).unwrap()
+        self.target_config().pointer_type()
     }
+
+    /// Return if the target has capability carrying pointers (CHERI)
+    fn has_cap_pointers(&self) -> bool;
 
     /// Get the size of a native pointer, in bytes.
     fn pointer_bytes(&self) -> u8 {

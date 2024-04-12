@@ -207,6 +207,7 @@ impl Val {
             ValType::F32 => Val::F32(raw.get_f32()),
             ValType::F64 => Val::F64(raw.get_f64()),
             ValType::V128 => Val::V128(raw.get_v128().into()),
+            ValType::Ptr => unimplemented!("ptr not implemented yet"),
             ValType::Ref(ref_ty) => {
                 let ref_ = match ref_ty.heap_type() {
                     HeapType::Func | HeapType::Concrete(_) => {

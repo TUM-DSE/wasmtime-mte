@@ -59,7 +59,7 @@ impl Type {
             I16 => 4,
             I32 | F32 | R32 => 5,
             I64 | F64 | R64 => 6,
-            I128 => 7,
+            I128 | C64 => 7,
             _ => 0,
         }
     }
@@ -71,7 +71,7 @@ impl Type {
             I16 => 16,
             I32 | F32 | R32 => 32,
             I64 | F64 | R64 => 64,
-            I128 => 128,
+            I128 | C64 => 128,
             _ => 0,
         }
     }
@@ -112,6 +112,11 @@ impl Type {
             128 => Some(I128),
             _ => None,
         }
+    }
+
+    /// Get a capability carrying pointer
+    pub fn cap_ptr() -> Self {
+        C64
     }
 
     /// Get an integer type with the requested number of bytes.
@@ -246,6 +251,14 @@ impl Type {
     pub fn is_ref(self) -> bool {
         match self {
             R32 | R64 => true,
+            _ => false,
+        }
+    }
+
+    /// Is this a cheri pointer type?
+    pub fn is_cap_ptr(self) -> bool {
+        match self {
+            C64 => true,
             _ => false,
         }
     }
@@ -407,6 +420,7 @@ impl Type {
         match triple.pointer_width() {
             Ok(PointerWidth::U16) => I16,
             Ok(PointerWidth::U32) => I32,
+            Ok(PointerWidth::U128) => C64,
             Ok(PointerWidth::U64) => I64,
             Err(()) => panic!("unable to determine architecture pointer width"),
         }
@@ -437,6 +451,13 @@ impl Display for Type {
             write!(f, "{:?}x{}xN", self.lane_type(), self.min_lane_count())
         } else if self.is_ref() {
             write!(f, "r{}", self.lane_bits())
+        } else if self.is_cap_ptr() {
+            assert_eq!(
+                self.lane_bits(),
+                128,
+                "Only supporting c64 (128 bit) pointers for now"
+            );
+            write!(f, "c64")
         } else {
             match *self {
                 INVALID => panic!("INVALID encountered"),
@@ -458,6 +479,13 @@ impl Debug for Type {
             write!(f, "{:?}X{}XN", self.lane_type(), self.min_lane_count())
         } else if self.is_ref() {
             write!(f, "types::R{}", self.lane_bits())
+        } else if self.is_cap_ptr() {
+            assert_eq!(
+                self.lane_bits(),
+                128,
+                "Only supporting c64 (128 bit) pointers for now"
+            );
+            write!(f, "types::C64")
         } else {
             match *self {
                 INVALID => write!(f, "types::INVALID"),

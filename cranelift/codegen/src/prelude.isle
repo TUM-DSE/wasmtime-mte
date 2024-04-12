@@ -29,6 +29,8 @@
 (type i64 (primitive i64))
 (type i128 (primitive i128))
 (type isize (primitive isize))
+;; cheri capability pointer
+(type c64 (primitive i128))
 
 ;; `cranelift-entity`-based identifiers.
 (type Type (primitive Type))
@@ -241,6 +243,7 @@
 (extern const $I32 Type)
 (extern const $I64 Type)
 (extern const $I128 Type)
+(extern const $C64 Type)
 
 (extern const $R32 Type)
 (extern const $R64 Type)

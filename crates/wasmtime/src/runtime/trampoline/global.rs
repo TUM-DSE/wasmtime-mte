@@ -16,7 +16,8 @@ impl Drop for VMHostGlobalContext {
             | crate::ValType::I64
             | crate::ValType::F32
             | crate::ValType::F64
-            | crate::ValType::V128 => {
+            | crate::ValType::V128
+            | crate::ValType::Ptr => {
                 // Nothing to drop.
             }
             crate::ValType::Ref(r) => match r.heap_type() {

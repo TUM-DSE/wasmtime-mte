@@ -338,10 +338,10 @@ impl RuntimeLinearMemory for MmapMemory {
     }
 
     fn vmmemory(&mut self) -> VMMemoryDefinition {
-        VMMemoryDefinition {
-            base: unsafe { self.mmap.as_mut_ptr().add(self.pre_guard_size) },
-            current_length: self.accessible.into(),
-        }
+        VMMemoryDefinition::new(
+            unsafe { self.mmap.as_mut_ptr().add(self.pre_guard_size) },
+            self.accessible,
+        )
     }
 
     fn needs_init(&self) -> bool {
@@ -439,10 +439,7 @@ impl RuntimeLinearMemory for StaticMemory {
     }
 
     fn vmmemory(&mut self) -> VMMemoryDefinition {
-        VMMemoryDefinition {
-            base: self.base.as_ptr(),
-            current_length: self.size.into(),
-        }
+        VMMemoryDefinition::new(self.base.as_ptr(), self.size)
     }
 
     fn needs_init(&self) -> bool {

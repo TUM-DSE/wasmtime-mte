@@ -555,6 +555,7 @@ impl<T> Store<T> {
                         store: StorePtr::empty(),
                         runtime_info: &shim,
                         wmemcheck: engine.config().wmemcheck,
+                        cheri: engine.config().cheri,
                         pkey: None,
                     })
                     .expect("failed to allocate default callee")

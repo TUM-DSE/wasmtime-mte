@@ -214,6 +214,61 @@ impl PairAMode {
     }
 }
 
+pub use crate::isa::aarch64::lower::isle::generated_code::CapAMode;
+
+impl CapAMode {
+    pub(crate) fn with_allocs(&self, allocs: &mut AllocationConsumer<'_>) -> Self {
+        // Should match `capmemarg_operands()`.
+        match self {
+            &CapAMode::Unscaled { rn, simm9 } => CapAMode::Unscaled {
+                rn: allocs.next(rn),
+                simm9,
+            },
+            &CapAMode::UnsignedOffset { rn, uimm9 } => CapAMode::UnsignedOffset {
+                rn: allocs.next(rn),
+                uimm9,
+            },
+            &CapAMode::RegReg { rn, rm } => CapAMode::RegReg {
+                rn: allocs.next(rn),
+                rm: allocs.next(rm),
+            },
+            &CapAMode::RegScaled { rn, rm, ty } => CapAMode::RegScaled {
+                rn: allocs.next(rn),
+                rm: allocs.next(rm),
+                ty,
+            },
+            &CapAMode::RegScaledExtended {
+                rn,
+                rm,
+                ty,
+                extendop,
+            } => CapAMode::RegScaledExtended {
+                rn: allocs.next(rn),
+                rm: allocs.next(rm),
+                ty,
+                extendop,
+            },
+            &CapAMode::RegExtended { rn, rm, extendop } => CapAMode::RegExtended {
+                rn: allocs.next(rn),
+                rm: allocs.next(rm),
+                extendop,
+            },
+            &CapAMode::RegOffset { rn, off, ty } => CapAMode::RegOffset {
+                rn: allocs.next(rn),
+                off,
+                ty,
+            },
+            &CapAMode::SPPreIndexed { .. }
+            | &CapAMode::SPPostIndexed { .. }
+            | &CapAMode::FPOffset { .. }
+            | &CapAMode::SPOffset { .. }
+            | &CapAMode::NominalSPOffset { .. }
+            | &CapAMode::Const { .. }
+            | &CapAMode::Label { .. } => self.clone(),
+        }
+    }
+}
+
 //=============================================================================
 // Instruction sub-components (conditions, branches and branch targets):
 // definitions
@@ -500,6 +555,90 @@ impl PrettyPrint for PairAMode {
     }
 }
 
+impl PrettyPrint for CapAMode {
+    fn pretty_print(&self, _: u8, allocs: &mut AllocationConsumer<'_>) -> String {
+        match self {
+            &CapAMode::Unscaled { rn, simm9 } => {
+                let reg = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                if simm9.value != 0 {
+                    let simm9 = simm9.pretty_print(8, allocs);
+                    format!("[{}, {}]", reg, simm9)
+                } else {
+                    format!("[{}]", reg)
+                }
+            }
+            &CapAMode::UnsignedOffset { rn, uimm9 } => {
+                let reg = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                if uimm9.value != 0 {
+                    let uimm9 = uimm9.pretty_print(8, allocs);
+                    format!("[{}, {}]", reg, uimm9)
+                } else {
+                    format!("[{}]", reg)
+                }
+            }
+            &CapAMode::RegReg { rn, rm } => {
+                let r1 = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let r2 = pretty_print_reg(rm, allocs);
+                format!("[{}, {}]", r1, r2)
+            }
+            &CapAMode::RegScaled { rn, rm, ty } => {
+                let r1 = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let r2 = pretty_print_reg(rm, allocs);
+                let shift = shift_for_type(ty);
+                format!("[{}, {}, LSL #{}]", r1, r2, shift)
+            }
+            &CapAMode::RegScaledExtended {
+                rn,
+                rm,
+                ty,
+                extendop,
+            } => {
+                let shift = shift_for_type(ty);
+                let size = match extendop {
+                    ExtendOp::SXTW | ExtendOp::UXTW => {
+                        crate::isa::aarch64::inst::args::OperandSize::Size32
+                    }
+                    _ => crate::isa::aarch64::inst::args::OperandSize::Size64,
+                };
+                let r1 = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let r2 = pretty_print_ireg(rm, size, allocs);
+                let op = extendop.pretty_print(0, allocs);
+                format!("[{}, {}, {} #{}]", r1, r2, op, shift)
+            }
+            &CapAMode::RegExtended { rn, rm, extendop } => {
+                let size = match extendop {
+                    ExtendOp::SXTW | ExtendOp::UXTW => {
+                        crate::isa::aarch64::inst::args::OperandSize::Size32
+                    }
+                    _ => crate::isa::aarch64::inst::args::OperandSize::Size64,
+                };
+                let r1 = pretty_print_ireg(rn, OperandSize::Size64C, allocs);
+                let r2 = pretty_print_ireg(rm, size, allocs);
+                let op = extendop.pretty_print(0, allocs);
+                format!("[{}, {}, {}]", r1, r2, op)
+            }
+            &CapAMode::SPPreIndexed { simm9 } => {
+                let simm9 = simm9.pretty_print(8, allocs);
+                format!("[sp, {}]!", simm9)
+            }
+            &CapAMode::SPPostIndexed { simm9 } => {
+                let simm9 = simm9.pretty_print(8, allocs);
+                format!("[sp], {}", simm9)
+            }
+            CapAMode::Const { addr } => format!("[const({})]", addr.as_u32()),
+            &CapAMode::Label { ref label } => label.pretty_print(0, allocs),
+
+            // Eliminated by `mem_finalize()`.
+            &CapAMode::SPOffset { .. }
+            | &CapAMode::FPOffset { .. }
+            | &CapAMode::NominalSPOffset { .. }
+            | &CapAMode::RegOffset { .. } => {
+                panic!("Unexpected pseudo mem-arg mode: {:?}", self)
+            }
+        }
+    }
+}
+
 impl PrettyPrint for Cond {
     fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         let mut s = format!("{:?}", self);
@@ -525,6 +664,8 @@ pub enum OperandSize {
     Size32,
     /// 64-bit.
     Size64,
+    /// 64-bit with capability.
+    Size64C,
 }
 
 impl OperandSize {
@@ -536,6 +677,12 @@ impl OperandSize {
     /// 64-bit case?
     pub fn is64(self) -> bool {
         self == OperandSize::Size64
+    }
+
+    /// 64-bit with capability case?
+    #[allow(non_snake_case)]
+    pub fn is64C(self) -> bool {
+        self == OperandSize::Size64C
     }
 
     /// Convert from a needed width to the smallest size that fits.
@@ -554,6 +701,8 @@ impl OperandSize {
         match self {
             OperandSize::Size32 => 32,
             OperandSize::Size64 => 64,
+            // TODO(MF): check if this is correct.
+            OperandSize::Size64C => 64,
         }
     }
 
@@ -569,6 +718,7 @@ impl OperandSize {
         match self {
             OperandSize::Size32 => I32,
             OperandSize::Size64 => I64,
+            OperandSize::Size64C => I64,
         }
     }
 
@@ -579,6 +729,7 @@ impl OperandSize {
         match self {
             OperandSize::Size32 => 0,
             OperandSize::Size64 => 1,
+            OperandSize::Size64C => 1,
         }
     }
 
@@ -587,6 +738,7 @@ impl OperandSize {
         match self {
             OperandSize::Size32 => u32::MAX as u64,
             OperandSize::Size64 => u64::MAX,
+            OperandSize::Size64C => u64::MAX,
         }
     }
 }

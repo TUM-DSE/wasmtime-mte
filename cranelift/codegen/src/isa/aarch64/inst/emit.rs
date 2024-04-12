@@ -78,6 +78,388 @@ pub fn mem_finalize(
     }
 }
 
+/// Memory addressing mode finalization: convert "special" modes (e.g.,
+/// generic arbitrary stack offset) into real addressing modes, possibly by
+/// emitting some helper instructions that come immediately before the use
+/// of this amode.
+pub fn mem_finalize_alt(
+    sink: Option<&mut MachBuffer<Inst>>,
+    mem: &CapAMode,
+    state: &EmitState,
+    inst: &Inst,
+) -> (SmallVec<[Inst; 4]>, CapAMode) {
+    let (mut insts, mem) = match mem {
+        &CapAMode::RegOffset { off, ty, .. }
+        | &CapAMode::SPOffset { off, ty }
+        | &CapAMode::FPOffset { off, ty }
+        | &CapAMode::NominalSPOffset { off, ty } => {
+            let basereg = match mem {
+                &CapAMode::RegOffset { rn, .. } => rn,
+                &CapAMode::SPOffset { .. } | &CapAMode::NominalSPOffset { .. } => stack_reg(),
+                &CapAMode::FPOffset { .. } => fp_reg(),
+                _ => unreachable!(),
+            };
+            let adj = match mem {
+                &CapAMode::NominalSPOffset { .. } => {
+                    trace!(
+                        "mem_finalize: nominal SP offset {} + adj {} -> {}",
+                        off,
+                        state.virtual_sp_offset,
+                        off + state.virtual_sp_offset
+                    );
+                    state.virtual_sp_offset
+                }
+                _ => 0,
+            };
+            let off = off + adj;
+
+            if let Some(simm9) = SImm9::maybe_from_i64(off) {
+                let mem = CapAMode::Unscaled { rn: basereg, simm9 };
+                (smallvec![], mem)
+            } else if let Some(uimm9) = UImm9::maybe_from_i64(off * i64::from(ty.bits())) {
+                let mem = CapAMode::UnsignedOffset { rn: basereg, uimm9 };
+                (smallvec![], mem)
+            } else {
+                let tmp = writable_spilltmp_reg();
+                (
+                    Inst::load_constant(tmp, off as u64, &mut |_| tmp),
+                    CapAMode::RegExtended {
+                        rn: basereg,
+                        rm: tmp.to_reg(),
+                        extendop: ExtendOp::SXTX,
+                    },
+                )
+            }
+        }
+
+        CapAMode::Const { addr } => {
+            let sink = match sink {
+                Some(sink) => sink,
+                None => return (smallvec![], mem.clone()),
+            };
+            let label = sink.get_label_for_constant(*addr);
+            let label = MemLabel::Mach(label);
+            // TODO: do without label
+            (smallvec![], CapAMode::Label { label })
+        }
+
+        _ => (smallvec![], mem.clone()),
+    };
+
+    let (insts_2, mem) = match inst {
+        // SLoad32Alt register offset -> SLoad32Alt unscaled
+        &Inst::SLoad32Alt {
+            mem: CapAMode::RegReg { rn, rm },
+            ..
+        } => {
+            let tmp = writable_spilltmp_reg();
+            (
+                smallvec![Inst::CapOpRRR {
+                    rd: tmp,
+                    rn,
+                    rm,
+                    cap_op: CapOp::Add,
+                    extendop: ExtendOp::UXTX,
+                }],
+                CapAMode::Unscaled {
+                    rn: tmp.to_reg(),
+                    simm9: SImm9::maybe_from_i64(0).unwrap(),
+                },
+            )
+        }
+        &Inst::SLoad32Alt {
+            mem: CapAMode::RegScaled { rn, rm, ty },
+            ..
+        } => {
+            let tmp = writable_spilltmp_reg();
+            assert!(ty.bits().is_power_of_two());
+            (
+                smallvec![
+                    Inst::AluRRImm12 {
+                        alu_op: ALUOp::Lsl,
+                        rd: tmp,
+                        rn: rm,
+                        size: OperandSize::Size64,
+                        imm12: Imm12::maybe_from_u64(ty_bits(ty).ilog2().into()).unwrap(),
+                    },
+                    Inst::CapOpRRR {
+                        rd: tmp,
+                        rn,
+                        rm: tmp.to_reg(),
+                        cap_op: CapOp::Add,
+                        extendop: ExtendOp::UXTX,
+                    },
+                ],
+                CapAMode::Unscaled {
+                    rn: tmp.to_reg(),
+                    simm9: SImm9::maybe_from_i64(0).unwrap(),
+                },
+            )
+        }
+        &Inst::SLoad32Alt {
+            mem: CapAMode::RegExtended { rn, rm, extendop },
+            ..
+        } => {
+            let tmp = writable_spilltmp_reg();
+            (
+                smallvec![Inst::CapOpRRR {
+                    rd: tmp,
+                    rn,
+                    rm,
+                    cap_op: CapOp::Add,
+                    extendop,
+                }],
+                CapAMode::Unscaled {
+                    rn: tmp.to_reg(),
+                    simm9: SImm9::maybe_from_i64(0).unwrap(),
+                },
+            )
+        }
+        &Inst::SLoad32Alt {
+            mem:
+                CapAMode::RegScaledExtended {
+                    rn,
+                    rm,
+                    ty,
+                    extendop,
+                },
+            ..
+        } => {
+            let tmp = writable_spilltmp_reg();
+
+            let (from_bits, to_bits, signed) = match extendop {
+                ExtendOp::UXTB => (8, 64, false),
+                ExtendOp::UXTH => (16, 64, false),
+                ExtendOp::UXTW => (32, 64, false),
+                ExtendOp::UXTX => (64, 64, false),
+                ExtendOp::SXTB => (8, 64, true),
+                ExtendOp::SXTH => (16, 64, true),
+                ExtendOp::SXTW => (32, 64, true),
+                ExtendOp::SXTX => (64, 64, true),
+            };
+            // TODO: for SXTX and UXTX we don't need to have the extend instruction
+
+            (
+                smallvec![
+                    Inst::Extend {
+                        rd: tmp,
+                        rn: rm,
+                        from_bits,
+                        signed,
+                        to_bits,
+                    },
+                    Inst::AluRRImm12 {
+                        alu_op: ALUOp::Lsl,
+                        rd: tmp,
+                        rn: tmp.to_reg(),
+                        size: OperandSize::Size64,
+                        imm12: Imm12::maybe_from_u64(ty_bits(ty).ilog2().into()).unwrap(),
+                    },
+                    Inst::CapOpRRR {
+                        rd: tmp,
+                        rn,
+                        rm: tmp.to_reg(),
+                        cap_op: CapOp::Add,
+                        extendop: ExtendOp::UXTX,
+                    }
+                ],
+                CapAMode::Unscaled {
+                    rn: tmp.to_reg(),
+                    simm9: SImm9::maybe_from_i64(0).unwrap(),
+                },
+            )
+        }
+        // SLoad8Alt unsigned offset -> SLoad8Alt unscaled
+        // ULoad16Alt unsigned offset -> ULoad16Alt unscaled
+        // SLoad16Alt unsigned offset -> SLoad16Alt unscaled
+        // SLoad32Alt unsigned offset -> SLoad32Alt unscaled
+        &Inst::SLoad8Alt {
+            mem: CapAMode::UnsignedOffset { rn, uimm9 },
+            ..
+        }
+        | &Inst::ULoad16Alt {
+            mem: CapAMode::UnsignedOffset { rn, uimm9 },
+            ..
+        }
+        | &Inst::SLoad16Alt {
+            mem: CapAMode::UnsignedOffset { rn, uimm9 },
+            ..
+        }
+        | &Inst::SLoad32Alt {
+            mem: CapAMode::UnsignedOffset { rn, uimm9 },
+            ..
+        } => {
+            // first try to use an unscaled offset
+            if let Some(simm9) = SImm9::maybe_from_i64(uimm9.bits() as i64) {
+                return (smallvec![], CapAMode::Unscaled { rn, simm9 });
+            }
+
+            // otherwise, spill into a register
+            let tmp = writable_spilltmp_reg();
+            (
+                Inst::load_constant(tmp, uimm9.value as u64, &mut |_| tmp),
+                CapAMode::Unscaled {
+                    rn,
+                    simm9: SImm9::maybe_from_i64(0).unwrap(),
+                },
+            )
+        }
+        // FPULoad128Alt -> FPULoad128Alt Unscaled
+        &Inst::FpuLoad128Alt { ref mem, .. } | &Inst::FpuStore128Alt { ref mem, .. }
+            if !matches!(mem, CapAMode::Unscaled { .. }) =>
+        {
+            match mem {
+                &CapAMode::RegReg { rn, rm } => {
+                    let tmp = writable_spilltmp_reg();
+                    (
+                        smallvec![Inst::CapOpRRR {
+                            rd: tmp,
+                            rn,
+                            rm,
+                            cap_op: CapOp::Add,
+                            extendop: ExtendOp::UXTX,
+                        }],
+                        CapAMode::Unscaled {
+                            rn: tmp.to_reg(),
+                            simm9: SImm9::maybe_from_i64(0).unwrap(),
+                        },
+                    )
+                }
+                &CapAMode::RegScaled { rn, rm, ty } => {
+                    let tmp = writable_spilltmp_reg();
+                    assert!(ty.bits().is_power_of_two());
+                    (
+                        smallvec![
+                            Inst::AluRRImm12 {
+                                alu_op: ALUOp::Lsl,
+                                rd: tmp,
+                                rn: rm,
+                                size: OperandSize::Size64,
+                                imm12: Imm12::maybe_from_u64(ty_bits(ty).ilog2().into()).unwrap(),
+                            },
+                            Inst::CapOpRRR {
+                                rd: tmp,
+                                rn,
+                                rm: tmp.to_reg(),
+                                cap_op: CapOp::Add,
+                                extendop: ExtendOp::UXTX,
+                            },
+                        ],
+                        CapAMode::Unscaled {
+                            rn: tmp.to_reg(),
+                            simm9: SImm9::maybe_from_i64(0).unwrap(),
+                        },
+                    )
+                }
+                &CapAMode::RegScaledExtended {
+                    rn,
+                    rm,
+                    ty,
+                    extendop,
+                } => {
+                    let tmp = writable_spilltmp_reg();
+                    let (from_bits, signed) = match extendop {
+                        ExtendOp::UXTB => (8, false),
+                        ExtendOp::UXTH => (16, false),
+                        ExtendOp::UXTW => (32, false),
+                        ExtendOp::UXTX => (64, false),
+                        ExtendOp::SXTB => (8, true),
+                        ExtendOp::SXTH => (16, true),
+                        ExtendOp::SXTW => (32, true),
+                        ExtendOp::SXTX => (64, true),
+                    };
+
+                    (
+                        smallvec![
+                            Inst::Extend {
+                                rd: tmp,
+                                rn: rm,
+                                from_bits,
+                                signed,
+                                to_bits: 64,
+                            },
+                            Inst::AluRRImm12 {
+                                alu_op: ALUOp::Lsl,
+                                rd: tmp,
+                                rn: tmp.to_reg(),
+                                size: OperandSize::Size64,
+                                imm12: Imm12::maybe_from_u64(ty_bits(ty).ilog2().into()).unwrap(),
+                            },
+                            Inst::CapOpRRR {
+                                rd: tmp,
+                                rn,
+                                rm: tmp.to_reg(),
+                                cap_op: CapOp::Add,
+                                extendop: ExtendOp::UXTX,
+                            }
+                        ],
+                        CapAMode::Unscaled {
+                            rn: tmp.to_reg(),
+                            simm9: SImm9::maybe_from_i64(0).unwrap(),
+                        },
+                    )
+                }
+                &CapAMode::RegExtended { rn, rm, extendop } => {
+                    let tmp = writable_spilltmp_reg();
+                    (
+                        smallvec![Inst::CapOpRRR {
+                            rd: tmp,
+                            rn,
+                            rm,
+                            cap_op: CapOp::Add,
+                            extendop,
+                        }],
+                        CapAMode::Unscaled {
+                            rn: tmp.to_reg(),
+                            simm9: SImm9::maybe_from_i64(0).unwrap(),
+                        },
+                    )
+                }
+                &CapAMode::UnsignedOffset { rn, uimm9 } => {
+                    if let Some(simm9) = SImm9::maybe_from_i64(uimm9.bits() as i64) {
+                        return (smallvec![], CapAMode::Unscaled { rn, simm9 });
+                    }
+
+                    let tmp = writable_spilltmp_reg();
+                    (
+                        Inst::load_constant(tmp, uimm9.value as u64, &mut |_| tmp),
+                        CapAMode::Unscaled {
+                            rn: tmp.to_reg(),
+                            simm9: SImm9::maybe_from_i64(0).unwrap(),
+                        },
+                    )
+                }
+                &CapAMode::Label { .. } => {
+                    panic!("unexpected label");
+                }
+                _ => panic!("should not encounter amode {mem:?}"),
+            }
+        }
+        &Inst::FpuLoad32Alt { mem: CapAMode::UnsignedOffset { rn, uimm9 }, .. }
+        | &Inst::FpuLoad64Alt { mem: CapAMode::UnsignedOffset { rn, uimm9 }, .. }
+        | &Inst::FpuStore32Alt { mem: CapAMode::UnsignedOffset { rn, uimm9 }, .. }
+        | &Inst::FpuStore64Alt { mem: CapAMode::UnsignedOffset { rn, uimm9 }, .. } => {
+            if let Some(simm9) = SImm9::maybe_from_i64(uimm9.bits() as i64) {
+                (smallvec![], CapAMode::Unscaled { rn, simm9 })
+            } else {
+                let tmp = writable_spilltmp_reg();
+                (
+                    Inst::load_constant(tmp, uimm9.value as u64, &mut |_| tmp),
+                    CapAMode::Unscaled {
+                        rn: tmp.to_reg(),
+                        simm9: SImm9::maybe_from_i64(0).unwrap(),
+                    },
+                )
+            }
+        }
+        _ => (smallvec![], mem.clone()),
+    };
+
+    insts.extend(insts_2);
+
+    (insts, mem)
+}
+
 //=============================================================================
 // Instructions and subcomponents: emission
 
@@ -121,6 +503,10 @@ fn enc_arith_rr_imm12(
         | (imm12 << 10)
         | (machreg_to_gpr(rn) << 5)
         | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_mov(bits_31_10: u32, rn: Reg, rd: Writable<Reg>) -> u32 {
+    (bits_31_10 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg())
 }
 
 fn enc_arith_rr_imml(bits_31_23: u32, imm_bits: u32, rn: Reg, rd: Writable<Reg>) -> u32 {
@@ -230,9 +616,9 @@ fn enc_ldst_simm9(op_31_22: u32, simm9: SImm9, op_11_10: u32, rn: Reg, rd: Reg) 
         | machreg_to_gpr_or_vec(rd)
 }
 
-fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg) -> u32 {
+fn enc_ldst_uimm12(op_31_22: u32, uimm12: UImm12Scaled, rn: Reg, rd: Reg, is_cap: bool) -> u32 {
     (op_31_22 << 22)
-        | (0b1 << 24)
+        | (if is_cap { 0b0 } else { 0b1 } << 24)
         | (uimm12.bits() << 10)
         | (machreg_to_gpr(rn) << 5)
         | machreg_to_gpr_or_vec(rd)
@@ -341,6 +727,185 @@ fn enc_bit_rr(size: u32, opcode2: u32, opcode1: u32, rn: Reg, rd: Writable<Reg>)
         | machreg_to_gpr(rd.to_reg())
 }
 
+fn enc_cap_op_rrr(
+    op31_21: u32,
+    rd: Writable<Reg>,
+    extendop: ExtendOp,
+    shift: u8,
+    rn: Reg,
+    rm: Reg,
+) -> u32 {
+    let extend_bits: u32 = extendop.bits().into();
+    assert!(shift <= 4, "shift must be <= 4");
+
+    (op31_21 << 21)
+        | (machreg_to_gpr(rm) << 16)
+        | (extend_bits << 13)
+        | (u32::from(shift) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_cap_op_imm12(is_sub: bool, imm12: Imm12, rd: Writable<Reg>, rn: Reg) -> u32 {
+    let is_sub = if is_sub { 1 } else { 0 };
+    let s_bit = if imm12.shift12 { 1 } else { 0 };
+    (0b00000010 << 24)
+        | (is_sub << 23)
+        | (s_bit << 22)
+        | (u32::from(imm12.bits) << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_cpy_cap(rd: Writable<Reg>, rn: Reg) -> u32 {
+    (0b11000010110000011 << 15)
+        | (0b10 << 13)
+        | (0b100 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_ldst_reg_alt(
+    rn: Reg,
+    rm: Reg,
+    op31_21: u32,
+    op11_10: u32,
+    shift: bool,
+    extendop: Option<ExtendOp>,
+    rd: Reg,
+) -> u32 {
+    let s_bit = if shift { 1 } else { 0 };
+    // let size_bits = match size {
+    //     OperandSize::Size32 => 0b00,
+    //     OperandSize::Size64 => 0b01,
+    //     OperandSize::Size64C => 0b11,
+    // };
+    let extend_bits = match extendop {
+        Some(ExtendOp::UXTW) => 0b010,
+        Some(ExtendOp::SXTW) => 0b110,
+        Some(ExtendOp::SXTX) => 0b111,
+        None => 0b011, // LSL
+        _ => panic!("bad extend mode for ld/st CapAMode"),
+    };
+    (op31_21 << 21)
+        | (machreg_to_gpr(rm) << 16)
+        | (extend_bits << 13)
+        | (s_bit << 12)
+        | (op11_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr_or_vec(rd)
+}
+
+fn enc_ldst_simm9_alt(op_31_21: u32, simm9: SImm9, op_11_10: u32, rn: Reg, rd: Reg) -> u32 {
+    (op_31_21 << 21)
+        | (simm9.bits() << 12)
+        | (op_11_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr_or_vec(rd)
+}
+
+fn enc_ldst_imm17(op_31_22: u32, imm17: u32, rd: Reg) -> u32 {
+    (op_31_22 << 22) | (imm17 << 5) | machreg_to_gpr_or_vec(rd)
+}
+
+/*
+
+alt instructions:
+
+ldr cap reg offset
+11000010111 rrrrr s 1 Z S 11 rrrrr rrrrr
+
+ldr int reg offset
+10000000111 rrrrr s 1 Z S 01 rrrrr rrrrr
+
+ldr cap unsigned offset
+10000010011 iiiiiiiii 00 rrrrr rrrrr
+
+ldr int unsigned offset
+10000010011 iiiiiiiii 11 rrrrr rrrrr
+
+ldr byte reg offset
+10000010110 rrrrr s 1 Z S 00 rrrrr rrrrr
+
+ldr byte unsigned offset
+10000010011 iiiiiiiii 01 rrrrr rrrrr
+
+ldr halfword reg offset
+10000010110 rrrrr s 1 Z S 11 rrrrr rrrrr
+
+ldr signed byte register
+dword:
+10000010100 rrrrr s 1 Z S 01 rrrrr rrrrr
+
+word:
+10000010110 rrrrr s 1 Z S 01 rrrrr rrrrr
+
+ldr signed halfword register
+dword:
+10000010100 rrrrr s 1 Z S 10 rrrrr rrrrr
+
+word:
+10000010110 rrrrr s 1 Z S 10 rrrrr rrrrr
+
+ldur capability:
+11100010110 iiiiiiiii 11 rrrrr rrrrr
+
+ldur int:
+dword:
+11100010110 iiiiiiiii 01 rrrrr rrrrr
+
+word:
+11100010100 iiiiiiiii 01 rrrrr rrrrr
+
+ldur byte:
+11100010000 iiiiiiiii 01 rrrrr rrrrr
+
+ldur halfword:
+11100010010 iiiiiiiii 01 rrrrr rrrrr
+
+ldur signed byte:
+dword:
+11100010000 iiiiiiiii 10 rrrrr rrrrr
+
+word:
+11100010000 iiiiiiiii 11 rrrrr rrrrr
+
+ldur signed halfword:
+dword:
+11100010010 iiiiiiiii 10 rrrrr rrrrr
+
+word:
+11100010010 iiiiiiiii 11 rrrrr rrrrr
+
+ldur signed word:
+11100010100 iiiiiiiii 10 rrrrr rrrrr
+
+
+ */
+
+fn enc_ldst_uimm9_cap(op_31_21: u32, uimm9: UImm9, op_11_10: u32, rn: Reg, rd: Reg) -> u32 {
+    (op_31_21 << 21)
+        | (uimm9.bits() << 12)
+        | (op_11_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr_or_vec(rd)
+}
+
+// pub(crate) fn enc_ldst_imm9_cap(rn: Reg, size: OperandSize, load: bool, uimm9: UImm9, rd: Reg) -> u32 {
+//     let load_bit = if load { 1 } else { 0 };
+//     let size_bits = match size {
+//         OperandSize::Size32 => 0b11,
+//         OperandSize::Size64 => 0b10,
+//         OperandSize::Size64C => 0b00,
+//     };
+//     (0b1000001001 << 22)
+//         | (load_bit << 21)
+//         | (uimm9.bits() << 12)
+//         | (size_bits << 10)
+//         | (machreg_to_gpr(rn) << 5)
+//         | machreg_to_gpr_or_vec(rd)
+// }
+
 pub(crate) fn enc_br(rn: Reg) -> u32 {
     0b1101011_0000_11111_000000_00000_00000 | (machreg_to_gpr(rn) << 5)
 }
@@ -403,7 +968,7 @@ fn enc_ccmp_imm(size: OperandSize, rn: Reg, imm: UImm5, nzcv: NZCV, cond: Cond) 
 
 fn enc_bfm(opc: u8, size: OperandSize, rd: Writable<Reg>, rn: Reg, immr: u8, imms: u8) -> u32 {
     match size {
-        OperandSize::Size64 => {
+        OperandSize::Size64 | OperandSize::Size64C => {
             debug_assert!(immr <= 63);
             debug_assert!(imms <= 63);
         }
@@ -643,6 +1208,27 @@ fn enc_asimd_mod_imm(rd: Writable<Reg>, q_op: u32, cmode: u32, imm: u8) -> u32 {
         | (cmode << 12)
         | (defgh << 5)
         | machreg_to_vec(rd.to_reg())
+}
+
+fn enc_cvt_cap(rd: Writable<Reg>, rn: Reg, op31_10: u32) -> u32 {
+    (op31_10 << 10) | (machreg_to_gpr(rn) << 5) | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_scnbnds_imm6(rd: Writable<Reg>, rn: Reg, imm6: Imm6, op31_21: u32, op13_10: u32) -> u32 {
+    (op31_21 << 21)
+        | (imm6.imm_bits() << 15)
+        | (imm6.shift_bits() << 14)
+        | (op13_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
+}
+
+fn enc_scnbnds_reg(rd: Writable<Reg>, rn: Reg, rm: Reg, op31_21: u32, op15_10: u32) -> u32 {
+    (op31_21 << 21)
+        | (machreg_to_gpr(rm) << 16)
+        | (op15_10 << 10)
+        | (machreg_to_gpr(rn) << 5)
+        | machreg_to_gpr(rd.to_reg())
 }
 
 /// State carried between emissions of a sequence of instructions.
@@ -976,6 +1562,45 @@ impl MachInstEmit for Inst {
                 sink.put4(enc_bit_rr(size.sf_bit(), op1, op2, rn, rd))
             }
 
+            &Inst::CapOpRRR {
+                cap_op,
+                rd,
+                rn,
+                rm,
+                extendop,
+            } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                let rm = allocs.next(rm);
+                let op31_21 = match cap_op {
+                    CapOp::Add => 0b11000010101,
+                    CapOp::Sub => panic!("Does not exist"),
+                };
+                sink.put4(enc_cap_op_rrr(op31_21, rd, extendop, 0, rn, rm));
+            }
+
+            &Inst::CapOpImm12 {
+                cap_op,
+                rd,
+                rn,
+                imm12,
+            } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                let is_sub = match cap_op {
+                    CapOp::Add => false,
+                    CapOp::Sub => true,
+                };
+
+                sink.put4(enc_cap_op_imm12(is_sub, imm12, rd, rn));
+            }
+
+            &Inst::MovCap { rd, rm } => {
+                let rd = allocs.next_writable(rd);
+                let rm = allocs.next(rm);
+                sink.put4(enc_cpy_cap(rd, rm));
+            }
+
             &Inst::ULoad8 { rd, ref mem, flags }
             | &Inst::SLoad8 { rd, ref mem, flags }
             | &Inst::ULoad16 { rd, ref mem, flags }
@@ -985,6 +1610,7 @@ impl MachInstEmit for Inst {
             | &Inst::ULoad64 {
                 rd, ref mem, flags, ..
             }
+            | &Inst::LoadC64 { rd, ref mem, flags }
             | &Inst::FpuLoad32 { rd, ref mem, flags }
             | &Inst::FpuLoad64 { rd, ref mem, flags }
             | &Inst::FpuLoad128 { rd, ref mem, flags } => {
@@ -1010,6 +1636,7 @@ impl MachInstEmit for Inst {
                     &Inst::ULoad32 { .. } => (0b1011100001, 32),
                     &Inst::SLoad32 { .. } => (0b1011100010, 32),
                     &Inst::ULoad64 { .. } => (0b1111100001, 64),
+                    &Inst::LoadC64 { .. } => (0b1100001001, 128),
                     &Inst::FpuLoad32 { .. } => (0b1011110001, 32),
                     &Inst::FpuLoad64 { .. } => (0b1111110001, 64),
                     &Inst::FpuLoad128 { .. } => (0b0011110011, 128),
@@ -1022,6 +1649,8 @@ impl MachInstEmit for Inst {
                     sink.add_trap(TrapCode::HeapOutOfBounds);
                 }
 
+                let is_cap = matches!(self, &Inst::LoadC64 { .. });
+
                 match &mem {
                     &AMode::Unscaled { rn, simm9 } => {
                         let reg = allocs.next(rn);
@@ -1032,7 +1661,7 @@ impl MachInstEmit for Inst {
                         if uimm12.value() != 0 {
                             assert_eq!(bits, ty_bits(uimm12.scale_ty()));
                         }
-                        sink.put4(enc_ldst_uimm12(op, uimm12, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op, uimm12, reg, rd, is_cap));
                     }
                     &AMode::RegReg { rn, rm } => {
                         let r1 = allocs.next(rn);
@@ -1079,7 +1708,11 @@ impl MachInstEmit for Inst {
                                 sink.use_label_at_offset(
                                     sink.cur_offset(),
                                     *label,
-                                    LabelUse::Ldr19,
+                                    if matches!(self, &Inst::LoadC64 { .. }) {
+                                        LabelUse::Ldr17
+                                    } else {
+                                        LabelUse::Ldr19
+                                    },
                                 );
                                 0
                             }
@@ -1096,6 +1729,9 @@ impl MachInstEmit for Inst {
                                 sink.put4(enc_ldst_imm19(0b00011100, offset, rd));
                             }
                             &Inst::ULoad64 { .. } => {
+                                sink.put4(enc_ldst_imm19(0b01011000, offset, rd));
+                            }
+                            &Inst::LoadC64 { .. } => {
                                 sink.put4(enc_ldst_imm19(0b01011000, offset, rd));
                             }
                             &Inst::FpuLoad64 { .. } => {
@@ -1126,10 +1762,194 @@ impl MachInstEmit for Inst {
                 }
             }
 
+            &Inst::ULoad8Alt { rd, ref mem, flags }
+            | &Inst::SLoad8Alt { rd, ref mem, flags }
+            | &Inst::ULoad16Alt { rd, ref mem, flags }
+            | &Inst::SLoad16Alt { rd, ref mem, flags }
+            | &Inst::ULoad32Alt { rd, ref mem, flags }
+            | &Inst::SLoad32Alt { rd, ref mem, flags }
+            | &Inst::ULoad64Alt {
+                rd, ref mem, flags, ..
+            }
+            | &Inst::FpuLoad32Alt { rd, ref mem, flags }
+            | &Inst::FpuLoad64Alt { rd, ref mem, flags }
+            | &Inst::FpuLoad128Alt { rd, ref mem, flags }
+            | &Inst::LoadC64Alt { rd, ref mem, flags } => {
+                let rd = allocs.next_writable(rd);
+                let mem = mem.with_allocs(&mut allocs);
+
+                let (mem_insts, mem) = mem_finalize_alt(Some(sink), &mem, state, self);
+
+                for inst in mem_insts.into_iter() {
+                    inst.emit(&[], sink, emit_info, state);
+                }
+
+                // ldst encoding helpers take Reg, not Writable<Reg>.
+                let rd = rd.to_reg();
+
+                // these are the bits for the register offset modes
+                let (op31_21, op11_10, bits) = match self {
+                    &Inst::ULoad8Alt { .. } => (0b10000010110, 0b00, 8),
+                    &Inst::SLoad8Alt { .. } => (0b10000010100, 0b01, 8),
+                    &Inst::ULoad16Alt { .. } => (0b10000010110, 0b11, 16),
+                    &Inst::SLoad16Alt { .. } => (0b10000010100, 0b10, 16),
+                    &Inst::ULoad32Alt { .. } => (0b10000010111, 0b00, 32),
+                    &Inst::ULoad64Alt { .. } => (0b10000010111, 0b01, 64),
+                    &Inst::LoadC64Alt { .. } => (0b11000010111, 0b11, 64),
+                    &Inst::FpuLoad32Alt { .. } => (0b10000010111, 0b11, 32),
+                    &Inst::FpuLoad64Alt { .. } => (0b10000010111, 0b10, 64),
+                    &Inst::SLoad32Alt { .. } | &Inst::FpuLoad128Alt { .. } => {
+                        assert!(matches!(&mem, &CapAMode::Unscaled { .. }));
+                        (0, 0, 0)
+                    }
+                    _ => unreachable!(),
+                };
+
+                let srcloc = state.cur_srcloc();
+                if !srcloc.is_default() && !flags.notrap() {
+                    // Register the offset at which the actual load instruction starts.
+                    sink.add_trap(TrapCode::HeapOutOfBounds);
+                }
+
+                match &mem {
+                    &CapAMode::RegReg { rn, rm } => {
+                        let rn = allocs.next(rn);
+                        let rm = allocs.next(rm);
+
+                        sink.put4(enc_ldst_reg_alt(
+                            rn, rm, op31_21, op11_10, /* shift */ false, None, rd,
+                        ));
+                    }
+                    &CapAMode::RegScaled { rn, rm, ty }
+                    | &CapAMode::RegScaledExtended { rn, rm, ty, .. } => {
+                        let r1 = allocs.next(rn);
+                        let r2 = allocs.next(rm);
+                        assert_eq!(bits, ty_bits(ty));
+                        let extendop = match &mem {
+                            &CapAMode::RegScaled { .. } => None,
+                            &CapAMode::RegScaledExtended { extendop, .. } => Some(extendop),
+                            _ => unreachable!(),
+                        };
+                        sink.put4(enc_ldst_reg_alt(
+                            r1, r2, op31_21, op11_10, /* scaled = */ true, extendop, rd,
+                        ));
+                    }
+                    &CapAMode::RegExtended { rn, rm, extendop } => {
+                        let rn = allocs.next(rn);
+                        let rm = allocs.next(rm);
+                        sink.put4(enc_ldst_reg_alt(
+                            rn,
+                            rm,
+                            op31_21,
+                            op11_10,
+                            /* shift */ false,
+                            Some(extendop),
+                            rd,
+                        ));
+                    }
+                    &CapAMode::Unscaled { rn, simm9 } => {
+                        let (op31_21, op11_10) = match self {
+                            &Inst::ULoad8Alt { .. } => (0b11100010000, 0b01),
+                            // TODO: check that sign extending into the 64 bit reg is the correct thing to do
+                            &Inst::SLoad8Alt { .. } => (0b11100010000, 0b10),
+                            &Inst::ULoad16Alt { .. } => (0b11100010010, 0b01),
+                            &Inst::SLoad16Alt { .. } => (0b11100010010, 0b10),
+                            &Inst::ULoad32Alt { .. } => (0b11100010100, 0b01),
+                            &Inst::SLoad32Alt { .. } => (0b11100010100, 0b10),
+                            &Inst::ULoad64Alt { .. } => (0b11100010110, 0b01),
+                            &Inst::LoadC64Alt { .. } => (0b10100010010, 0b00),
+                            &Inst::FpuLoad32Alt { .. } => (0b11100010101, 0b01),
+                            &Inst::FpuLoad64Alt { .. } => (0b11100010111, 0b01),
+                            &Inst::FpuLoad128Alt { .. } => (0b11100010001, 0b11),
+                            _ => unreachable!(),
+                        };
+
+                        let rn = allocs.next(rn);
+                        sink.put4(enc_ldst_simm9_alt(op31_21, simm9, op11_10, rn, rd));
+                    }
+                    &CapAMode::UnsignedOffset { rn, uimm9 } => {
+                        let (op31_21, op11_10) = match self {
+                            &Inst::ULoad8Alt { .. } => (0b10000010011, 0b01),
+                            &Inst::ULoad32Alt { .. } => (0b10000010011, 0b10),
+                            &Inst::ULoad64Alt { .. } => (0b10000010011, 0b11),
+                            &Inst::LoadC64Alt { .. } => (0b10000010011, 0b00),
+                            &Inst::SLoad32Alt { .. }
+                            | &Inst::SLoad8Alt { .. }
+                            | &Inst::ULoad16Alt { .. }
+                            | &Inst::SLoad16Alt { .. }
+                            | &Inst::FpuLoad32Alt { .. }
+                            | &Inst::FpuLoad64Alt { .. }
+                            | &Inst::FpuLoad128Alt { .. } => {
+                                panic!("should have been converted to a different addressing mode.")
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        let rn = allocs.next(rn);
+                        sink.put4(enc_ldst_uimm9_cap(op31_21, uimm9, op11_10, rn, rd));
+                    }
+                    &CapAMode::Label { ref label } => {
+                        let offset = match label {
+                            // cast i32 to u32 (two's-complement)
+                            MemLabel::PCRel(off) => *off as u32,
+                            // Emit a relocation into the `MachBuffer`
+                            // for the label that's being loaded from and
+                            // encode an address of 0 in its place which will
+                            // get filled in by relocation resolution later on.
+                            MemLabel::Mach(label) => {
+                                sink.use_label_at_offset(
+                                    sink.cur_offset(),
+                                    *label,
+                                    LabelUse::Ldr17,
+                                );
+                                0
+                            }
+                        } / 4;
+                        assert!(offset < (1 << 19));
+                        match self {
+                            &Inst::LoadC64Alt { .. } => {
+                                sink.put4(enc_ldst_imm17(0b1000001000, offset, rd));
+                            }
+                            // // For the remaining ones, just use the non-alternate version.
+                            // &Inst::ULoad32Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b00011000, offset, rd));
+                            // }
+                            // &Inst::SLoad32Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b10011000, offset, rd));
+                            // }
+                            // &Inst::FpuLoad32Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b00011100, offset, rd));
+                            // }
+                            // &Inst::ULoad64Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b01011000, offset, rd));
+                            // }
+                            // &Inst::FpuLoad64Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b01011100, offset, rd));
+                            // }
+                            // &Inst::FpuLoad128Alt { .. } => {
+                            //     sink.put4(enc_ldst_imm19(0b10011100, offset, rd));
+                            // }
+                            _ => panic!("Unspported size for LDR from constant pool!"),
+                        }
+                    }
+                    // Eliminated by `mem_finalize()` above.
+                    &CapAMode::SPOffset { .. }
+                    | &CapAMode::FPOffset { .. }
+                    | &CapAMode::NominalSPOffset { .. }
+                    | &CapAMode::Const { .. }
+                    | &CapAMode::RegOffset { .. }
+                    | &CapAMode::SPPostIndexed { .. }
+                    | &CapAMode::SPPreIndexed { .. } => {
+                        panic!("Should not see {:?} here!", mem)
+                    }
+                }
+            }
+
             &Inst::Store8 { rd, ref mem, flags }
             | &Inst::Store16 { rd, ref mem, flags }
             | &Inst::Store32 { rd, ref mem, flags }
             | &Inst::Store64 { rd, ref mem, flags }
+            | &Inst::StoreC64 { rd, ref mem, flags }
             | &Inst::FpuStore32 { rd, ref mem, flags }
             | &Inst::FpuStore64 { rd, ref mem, flags }
             | &Inst::FpuStore128 { rd, ref mem, flags } => {
@@ -1141,11 +1961,13 @@ impl MachInstEmit for Inst {
                     inst.emit(&[], sink, emit_info, state);
                 }
 
+                // 0b1100001100_000000000000_00010_00101
                 let (op, bits) = match self {
                     &Inst::Store8 { .. } => (0b0011100000, 8),
                     &Inst::Store16 { .. } => (0b0111100000, 16),
                     &Inst::Store32 { .. } => (0b1011100000, 32),
                     &Inst::Store64 { .. } => (0b1111100000, 64),
+                    &Inst::StoreC64 { .. } => (0b1100001000, 64),
                     &Inst::FpuStore32 { .. } => (0b1011110000, 32),
                     &Inst::FpuStore64 { .. } => (0b1111110000, 64),
                     &Inst::FpuStore128 { .. } => (0b0011110010, 128),
@@ -1158,6 +1980,8 @@ impl MachInstEmit for Inst {
                     sink.add_trap(TrapCode::HeapOutOfBounds);
                 }
 
+                let is_cap = matches!(self, &Inst::StoreC64 { .. });
+
                 match &mem {
                     &AMode::Unscaled { rn, simm9 } => {
                         let reg = allocs.next(rn);
@@ -1168,7 +1992,7 @@ impl MachInstEmit for Inst {
                         if uimm12.value() != 0 {
                             assert_eq!(bits, ty_bits(uimm12.scale_ty()));
                         }
-                        sink.put4(enc_ldst_uimm12(op, uimm12, reg, rd));
+                        sink.put4(enc_ldst_uimm12(op, uimm12, reg, rd, is_cap));
                     }
                     &AMode::RegReg { rn, rm } => {
                         let r1 = allocs.next(rn);
@@ -1218,6 +2042,130 @@ impl MachInstEmit for Inst {
                     | &AMode::NominalSPOffset { .. }
                     | &AMode::Const { .. }
                     | &AMode::RegOffset { .. } => {
+                        panic!("Should not see {:?} here!", mem)
+                    }
+                }
+            }
+
+            &Inst::Store8Alt { rd, ref mem, flags }
+            | &Inst::Store16Alt { rd, ref mem, flags }
+            | &Inst::Store32Alt { rd, ref mem, flags }
+            | &Inst::Store64Alt { rd, ref mem, flags }
+            | &Inst::FpuStore32Alt { rd, ref mem, flags }
+            | &Inst::FpuStore64Alt { rd, ref mem, flags }
+            | &Inst::FpuStore128Alt { rd, ref mem, flags }
+            | &Inst::StoreC64Alt { rd, ref mem, flags } => {
+                let rd = allocs.next(rd);
+                let mem = mem.with_allocs(&mut allocs);
+
+                let (mem_insts, mem) = mem_finalize_alt(Some(sink), &mem, state, self);
+
+                for inst in mem_insts.into_iter() {
+                    inst.emit(&[], sink, emit_info, state);
+                }
+
+                // these are the bits for the register offset modes
+                let (op31_21, op11_10, bits) = match self {
+                    &Inst::Store8Alt { .. } => (0b10000010100, 0b00, 8),
+                    &Inst::Store16Alt { .. } => (0b10000010100, 0b11, 16),
+                    &Inst::Store32Alt { .. } => (0b10000010101, 0b00, 32),
+                    &Inst::Store64Alt { .. } => (0b10000010101, 0b01, 64),
+                    &Inst::StoreC64Alt { .. } => (0b11000010111, 0b01, 64),
+                    &Inst::FpuStore32Alt { .. } => (0b10000010101, 0b11, 32),
+                    &Inst::FpuStore64Alt { .. } => (0b10000010101, 0b10, 64),
+                    &Inst::FpuStore128Alt { .. } => {
+                        assert!(matches!(&mem, &CapAMode::Unscaled { .. }));
+                        (0, 0, 0)
+                    }
+                    _ => unreachable!(),
+                };
+
+                let srcloc = state.cur_srcloc();
+                if !srcloc.is_default() && !flags.notrap() {
+                    // Register the offset at which the actual load instruction starts.
+                    sink.add_trap(TrapCode::HeapOutOfBounds);
+                }
+
+                match &mem {
+                    &CapAMode::RegReg { rn, rm } => {
+                        let rn = allocs.next(rn);
+                        let rm = allocs.next(rm);
+
+                        sink.put4(enc_ldst_reg_alt(
+                            rn, rm, op31_21, op11_10, /* shift */ false, None, rd,
+                        ));
+                    }
+                    &CapAMode::RegScaled { rn, rm, ty }
+                    | &CapAMode::RegScaledExtended { rn, rm, ty, .. } => {
+                        let r1 = allocs.next(rn);
+                        let r2 = allocs.next(rm);
+                        assert_eq!(bits, ty_bits(ty));
+                        let extendop = match &mem {
+                            &CapAMode::RegScaled { .. } => None,
+                            &CapAMode::RegScaledExtended { extendop, .. } => Some(extendop),
+                            _ => unreachable!(),
+                        };
+                        sink.put4(enc_ldst_reg_alt(
+                            r1, r2, op31_21, op11_10, /* scaled = */ true, extendop, rd,
+                        ));
+                    }
+                    &CapAMode::RegExtended { rn, rm, extendop } => {
+                        let rn = allocs.next(rn);
+                        let rm = allocs.next(rm);
+                        sink.put4(enc_ldst_reg_alt(
+                            rn,
+                            rm,
+                            op31_21,
+                            op11_10,
+                            /* shift */ false,
+                            Some(extendop),
+                            rd,
+                        ));
+                    }
+                    &CapAMode::Unscaled { rn, simm9 } => {
+                        let (op31_21, op11_10) = match self {
+                            &Inst::Store8Alt { .. } => (0b11100010000, 0b00),
+                            &Inst::Store16Alt { .. } => (0b11100010010, 0b00),
+                            &Inst::Store32Alt { .. } => (0b11100010100, 0b00),
+                            &Inst::Store64Alt { .. } => (0b11100010110, 0b00),
+                            &Inst::StoreC64Alt { .. } => (0b11100010100, 0b11),
+                            &Inst::FpuStore32Alt { .. } => (0b11100010101, 0b00),
+                            &Inst::FpuStore64Alt { .. } => (0b11100010111, 0b00),
+                            &Inst::FpuStore128Alt { .. } => (0b11100010001, 0b10),
+                            _ => unreachable!(),
+                        };
+
+                        let reg = allocs.next(rn);
+                        sink.put4(enc_ldst_simm9_alt(op31_21, simm9, op11_10, reg, rd));
+                    }
+                    &CapAMode::UnsignedOffset { rn, uimm9 } => {
+                        let reg = allocs.next(rn);
+                        let (op31_21, op11_10) = match self {
+                            &Inst::Store8Alt { .. } => (0b10000010010, 0b01),
+                            &Inst::Store32Alt { .. } => (0b10000010010, 0b10),
+                            &Inst::Store64Alt { .. } => (0b10000010010, 0b11),
+                            &Inst::StoreC64Alt { .. } => (0b10000010010, 0b00),
+                            &Inst::Store16Alt { .. }
+                            | &Inst::FpuStore32Alt { .. }
+                            | &Inst::FpuStore64Alt { .. }
+                            | &Inst::FpuStore128Alt { .. } => {
+                                panic!("should have been converted to a different addressing mode.")
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        let reg = allocs.next(reg);
+                        sink.put4(enc_ldst_uimm9_cap(op31_21, uimm9, op11_10, reg, rd));
+                    }
+                    &CapAMode::Label { .. } => panic!("store to label not implemented"),
+                    // Eliminated by `mem_finalize()` above.
+                    &CapAMode::SPOffset { .. }
+                    | &CapAMode::FPOffset { .. }
+                    | &CapAMode::NominalSPOffset { .. }
+                    | &CapAMode::Const { .. }
+                    | &CapAMode::RegOffset { .. }
+                    | &CapAMode::SPPostIndexed { .. }
+                    | &CapAMode::SPPreIndexed { .. } => {
                         panic!("Should not see {:?} here!", mem)
                     }
                 }
@@ -1413,6 +2361,9 @@ impl MachInstEmit for Inst {
                         assert!(machreg_to_gpr(rd.to_reg()) != 31);
                         // Encoded as ORR rd, rm, zero.
                         sink.put4(enc_arith_rrr(0b00101010_000, 0b000_000, rd, zero_reg(), rm));
+                    }
+                    OperandSize::Size64C => {
+                        sink.put4(enc_mov(0b11000010_11000001_110100, rm, rd));
                     }
                 }
             }
@@ -3778,6 +4729,30 @@ impl MachInstEmit for Inst {
                 }
                 .emit(&[], sink, emit_info, state);
                 sink.bind_label(loop_end, &mut state.ctrl_plane);
+            }
+            &Inst::Mrs { .. } => {
+                unimplemented!("MRS not implemented")
+            }
+            &Inst::Scbnds { rd, rn, rm } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                let rm = allocs.next(rm);
+                sink.put4(enc_scnbnds_reg(rd, rn, rm, 0b11000010110, 0b000000));
+            }
+            &Inst::ScbndsImm { rd, rn, imm } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                sink.put4(enc_scnbnds_imm6(rd, rn, imm, 0b11000010110, 0b1110));
+            }
+            &Inst::Cvtdz { rd, rn } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                sink.put4(enc_cvt_cap(rd, rn, 0b1100001011000101110100));
+            }
+            &Inst::Cvtp { rd, rn } => {
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                sink.put4(enc_cvt_cap(rd, rn, 0b1100001011000101001100));
             }
         }
 

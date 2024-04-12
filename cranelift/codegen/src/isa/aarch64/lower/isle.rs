@@ -9,13 +9,13 @@ use smallvec::SmallVec;
 use super::{
     fp_reg, lower_condcode, lower_fp_condcode, stack_reg, writable_link_reg, writable_zero_reg,
     zero_reg, ASIMDFPModImm, ASIMDMovModImm, BranchTarget, CallIndInfo, CallInfo, Cond, CondBrKind,
-    ExtendOp, FPUOpRI, FPUOpRIMod, FloatCC, Imm12, ImmLogic, ImmShift, Inst as MInst, IntCC,
+    ExtendOp, FPUOpRI, FPUOpRIMod, FloatCC, Imm12, Imm6, ImmLogic, ImmShift, Inst as MInst, IntCC,
     MachLabel, MemLabel, MoveWideConst, MoveWideOp, Opcode, OperandSize, Reg, SImm9, ScalarSize,
     ShiftOpAndAmt, UImm12Scaled, UImm5, VecMisc2, VectorSize, NZCV,
 };
 use crate::ir::{condcodes, ArgumentExtension};
 use crate::isa;
-use crate::isa::aarch64::inst::{FPULeftShiftImm, FPURightShiftImm, ReturnCallInfo};
+use crate::isa::aarch64::inst::{FPULeftShiftImm, FPURightShiftImm, ReturnCallInfo, UImm9};
 use crate::isa::aarch64::AArch64Backend;
 use crate::isle_common_prelude_methods;
 use crate::machinst::isle::*;
@@ -186,6 +186,10 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
 
     fn imm12_from_u64(&mut self, n: u64) -> Option<Imm12> {
         Imm12::maybe_from_u64(n)
+    }
+
+    fn imm6_from_u64(&mut self, n: u64) -> Option<Imm6> {
+        Imm6::maybe_from_u64(n)
     }
 
     fn imm_shift_from_u8(&mut self, n: u8) -> ImmShift {
@@ -860,6 +864,10 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
 
     fn simm9_from_i64(&mut self, val: i64) -> Option<SImm9> {
         SImm9::maybe_from_i64(val)
+    }
+
+    fn uimm9_from_i64(&mut self, val: i64) -> Option<UImm9> {
+        UImm9::maybe_from_i64(val)
     }
 
     fn uimm12_scaled_from_i64(&mut self, val: i64, ty: Type) -> Option<UImm12Scaled> {

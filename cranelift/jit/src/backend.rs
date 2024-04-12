@@ -900,6 +900,7 @@ impl Module for JITModule {
             PointerWidth::U16 => panic!(),
             PointerWidth::U32 => Reloc::Abs4,
             PointerWidth::U64 => Reloc::Abs8,
+            PointerWidth::U128 => Reloc::Abs16,
         };
         let relocs = data.all_relocs(pointer_reloc).collect::<Vec<_>>();
 

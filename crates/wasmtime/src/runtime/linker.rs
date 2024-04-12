@@ -341,6 +341,7 @@ impl<T> Linker<T> {
                                     ValType::F32 => Val::F32(0.0_f32.to_bits()),
                                     ValType::F64 => Val::F64(0.0_f64.to_bits()),
                                     ValType::V128 => Val::V128(0_u128.into()),
+                                    ValType::Ptr => todo!("what should happen here?"),
                                     ValType::Ref(r) => {
                                         debug_assert!(r.is_nullable());
                                         match r.heap_type() {

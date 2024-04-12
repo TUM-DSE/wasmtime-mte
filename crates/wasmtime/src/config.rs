@@ -128,6 +128,7 @@ pub struct Config {
     pub(crate) memory_guaranteed_dense_image_size: u64,
     pub(crate) force_memory_init_memfd: bool,
     pub(crate) wmemcheck: bool,
+    pub(crate) cheri: bool,
     pub(crate) coredump_on_trap: bool,
     pub(crate) macos_use_mach_ports: bool,
 }
@@ -243,6 +244,7 @@ impl Config {
             memory_guaranteed_dense_image_size: 16 << 20,
             force_memory_init_memfd: false,
             wmemcheck: false,
+            cheri: false,
             coredump_on_trap: false,
             macos_use_mach_ports: !cfg!(miri),
         };
@@ -920,6 +922,14 @@ impl Config {
         self
     }
 
+    /// Configures whether the WebAssembly memory64 safety proposal will be enabled.
+    ///
+    /// This is `false` by default.
+    pub fn wasm_memory_safety(&mut self, enable: bool) -> &mut Self {
+        self.features.memory_safety = enable;
+        self
+    }
+
     /// Configures whether the WebAssembly component-model [proposal] will
     /// be enabled for compilation.
     ///
@@ -1044,6 +1054,18 @@ impl Config {
         self.compiler_config
             .settings
             .insert("enable_pcc".to_string(), val.to_string());
+        self
+    }
+
+    /// Controls whether cheri support is enabled
+    #[cfg(feature = "cheri")]
+    #[cfg_attr(nightlydoc, doc(cfg(feature = "cheri")))]
+    pub fn cranelift_cheri(&mut self, enable: bool) -> &mut Self {
+        let val = if enable { "true" } else { "false" };
+        self.cheri = enable;
+        self.compiler_config
+            .settings
+            .insert("enable_cheri".to_string(), val.to_string());
         self
     }
 

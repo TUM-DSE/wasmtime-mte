@@ -264,6 +264,10 @@ impl<'dummy_environment> TargetEnvironment for DummyFuncEnvironment<'dummy_envir
     fn proof_carrying_code(&self) -> bool {
         false
     }
+
+    fn has_cap_pointers(&self) -> bool {
+        false
+    }
 }
 
 impl<'dummy_environment> FuncEnvironment for DummyFuncEnvironment<'dummy_environment> {
@@ -285,6 +289,7 @@ impl<'dummy_environment> FuncEnvironment for DummyFuncEnvironment<'dummy_environ
                 WasmValType::F64 => ir::types::F64,
                 WasmValType::V128 => ir::types::I8X16,
                 WasmValType::Ref(_) => ir::types::R64,
+                WasmValType::Ptr => ir::types::C64,
             },
         })
     }
@@ -720,6 +725,10 @@ impl TargetEnvironment for DummyEnvironment {
     fn proof_carrying_code(&self) -> bool {
         false
     }
+
+    fn has_cap_pointers(&self) -> bool {
+        false
+    }
 }
 
 impl<'data> ModuleEnvironment<'data> for DummyEnvironment {
@@ -729,6 +738,7 @@ impl<'data> ModuleEnvironment<'data> for DummyEnvironment {
             let reference_type = match self.pointer_type() {
                 ir::types::I32 => ir::types::R32,
                 ir::types::I64 => ir::types::R64,
+                ir::types::C64 => ir::types::R64,
                 _ => panic!("unsupported pointer type"),
             };
             ir::AbiParam::new(match ty {
@@ -738,6 +748,7 @@ impl<'data> ModuleEnvironment<'data> for DummyEnvironment {
                 WasmValType::F64 => ir::types::F64,
                 WasmValType::V128 => ir::types::I8X16,
                 WasmValType::Ref(_) => reference_type,
+                WasmValType::Ptr => self.pointer_type(),
             })
         };
         sig.params.extend(wasm.params().iter().map(&mut cvt));

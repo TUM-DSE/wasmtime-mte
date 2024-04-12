@@ -192,6 +192,7 @@ struct WasmFeatures {
     extended_const: bool,
     function_references: bool,
     gc: bool,
+    memory_safety: bool,
 }
 
 impl Metadata<'_> {
@@ -215,6 +216,7 @@ impl Metadata<'_> {
             gc,
             component_model_values,
             component_model_nested_names,
+            memory_safety,
 
             // Always on; we don't currently have knobs for these.
             mutable_global: _,
@@ -247,6 +249,7 @@ impl Metadata<'_> {
                 extended_const,
                 function_references,
                 gc,
+                memory_safety,
             },
         }
     }
@@ -443,6 +446,7 @@ impl Metadata<'_> {
             extended_const,
             function_references,
             gc,
+            memory_safety,
         } = self.features;
 
         Self::check_cfg_bool(
@@ -509,6 +513,11 @@ impl Metadata<'_> {
             relaxed_simd,
             other.relaxed_simd,
             "WebAssembly relaxed-simd support",
+        )?;
+        Self::check_bool(
+            memory_safety,
+            other.memory_safety,
+            "WebAssembly memory-safety support",
         )?;
 
         Ok(())

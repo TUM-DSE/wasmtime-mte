@@ -185,14 +185,18 @@ pub fn pretty_print_reg(reg: Reg, allocs: &mut AllocationConsumer<'_>) -> String
 /// its name at the 32-bit size.
 pub fn show_ireg_sized(reg: Reg, size: OperandSize) -> String {
     let mut s = show_reg(reg);
-    if reg.class() != RegClass::Int || !size.is32() {
+    if reg.class() != RegClass::Int || size.is64() {
         // We can't do any better.
         return s;
     }
 
     // Change (eg) "x42" into "w42" as appropriate
-    if reg.class() == RegClass::Int && size.is32() && s.starts_with("x") {
-        s = "w".to_string() + &s[1..];
+    if reg.class() == RegClass::Int && s.starts_with("x") {
+        if size.is32() {
+            s = "w".to_string() + &s[1..];
+        } else if size.is64C() {
+            s = "c".to_string() + &s[1..];
+        }
     }
 
     s

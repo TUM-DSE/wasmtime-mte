@@ -311,6 +311,15 @@ impl Engine {
                 }
             }
 
+            // cheri only available on aarch64
+            "enable_cheri" => {
+                if !matches!(target.architecture, target_lexicon::Architecture::Aarch64(_)) {
+                    *value == FlagValue::Bool(false)
+                } else {
+                    return Ok(())
+                }
+            }
+
             // These settings don't affect the interface or functionality of
             // the module itself, so their configuration values shouldn't
             // matter.

@@ -1302,6 +1302,10 @@ where
         Opcode::X86Pmulhrsw => unimplemented!("X86Pmulhrsw"),
         Opcode::X86Pmaddubsw => unimplemented!("X86Pmaddubsw"),
         Opcode::X86Cvtt2dq => unimplemented!("X86Cvtt2dq"),
+        Opcode::Cadd => unimplemented!("Cadd"),
+        Opcode::PtrToCapDdc => unimplemented!("PtrToCapDdc"),
+        Opcode::CapToPtr => unimplemented!("CapToPtr"),
+        Opcode::CapSetBounds => unimplemented!("CapSetBounds"),
     })
 }
 

@@ -2540,6 +2540,13 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
         | Operator::StructGet { .. } => {
             unimplemented!("GC operators not yet implemented")
         }
+
+        Operator::SegmentNew { memarg } => {
+
+        }
+        Operator::PtrAdd => {
+            todo!("PtrAdd")
+        }
     };
     Ok(())
 }

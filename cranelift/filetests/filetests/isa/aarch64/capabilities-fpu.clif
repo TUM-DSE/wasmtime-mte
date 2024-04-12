@@ -1,0 +1,198 @@
+test compile precise-output
+set unwind_info=false
+target aarch64
+
+function %0(c64) {
+block0(v0: c64):
+  v1 = load.f32 v0+80
+  store.f32 v1, v0+80
+  v2 = load.f64 v0+80
+  store.f64 v2, v0+80
+  return
+}
+
+; VCode:
+; block0:
+;   ldr s3, [c0, #320]
+;   str s3, [c0, #320]
+;   ldr d4, [c0, #80]
+;   str d4, [c0, #80]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   mov x16, #0x140
+;   .byte 0x03, 0x06, 0xa0, 0xe2
+;   mov x16, #0x140
+;   .byte 0x03, 0x02, 0xa0, 0xe2
+;   .byte 0x04, 0x04, 0xe5, 0xe2
+;   .byte 0x04, 0x00, 0xe5, 0xe2
+;   ret
+
+function %asd0(i64) {
+block0(v0: i64):
+  v1 = load.f32 v0+80
+  store.f32 v1, v0+80
+  v2 = load.f64 v0+80
+  store.f64 v2, v0+80
+  return
+}
+
+; VCode:
+; block0:
+;   ldr s3, [x0, #80]
+;   str s3, [x0, #80]
+;   ldr d4, [x0, #80]
+;   str d4, [x0, #80]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   ldr s3, [x0, #0x50]
+;   str s3, [x0, #0x50]
+;   ldr d4, [x0, #0x50]
+;   str d4, [x0, #0x50]
+;   ret
+
+function %1(c64) {
+block0(v0: c64):
+  v1 = load.f64 v0+8000
+  store.f64 v1, v0+8000
+  v2 = load.f32 v0+8000
+  store.f32 v2, v0+8000
+  return
+}
+
+; VCode:
+; block0:
+;   movz x6, #8000
+;   ldr d16, [c0, x6]
+;   movz x7, #8000
+;   str d16, [c0, x7]
+;   movz x7, #8000
+;   ldr s17, [c0, x7]
+;   movz x8, #8000
+;   str s17, [c0, x8]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   mov x6, #0x1f40
+;   .byte 0x10, 0x68, 0xe6, 0x82
+;   mov x7, #0x1f40
+;   .byte 0x10, 0x68, 0xa7, 0x82
+;   mov x7, #0x1f40
+;   .byte 0x11, 0x6c, 0xe7, 0x82
+;   mov x8, #0x1f40
+;   .byte 0x11, 0x6c, 0xa8, 0x82
+;   ret
+
+function %2(c64, i64) {
+block0(v0: c64, v1: i64):
+  v2 = cadd v0, v1
+  v3 = load.f64 v2
+  store.f64 v3, v2
+  v4 = load.f32 v2
+  store.f32 v4, v2
+  return
+}
+
+; VCode:
+; block0:
+;   ldr d4, [c0, x1]
+;   str d4, [c0, x1]
+;   ldr s5, [c0, x1]
+;   str s5, [c0, x1]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x04, 0x68, 0xe1, 0x82
+;   .byte 0x04, 0x68, 0xa1, 0x82
+;   .byte 0x05, 0x6c, 0xe1, 0x82
+;   .byte 0x05, 0x6c, 0xa1, 0x82
+;   ret
+
+function %3(c64, i32) {
+block0(v0: c64, v1: i32):
+  v2 = uextend.i64 v1
+  v3 = cadd v0, v2
+  v4 = load.f64 v3
+  store.f64 v4, v3
+  v5 = load.f32 v3
+  store.f32 v5, v3
+  return
+}
+
+; VCode:
+; block0:
+;   ldr d4, [c0, w1, UXTW]
+;   str d4, [c0, w1, UXTW]
+;   ldr s5, [c0, w1, UXTW]
+;   str s5, [c0, w1, UXTW]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x04, 0x48, 0xe1, 0x82
+;   .byte 0x04, 0x48, 0xa1, 0x82
+;   .byte 0x05, 0x4c, 0xe1, 0x82
+;   .byte 0x05, 0x4c, 0xa1, 0x82
+;   ret
+
+function %4(c64, i32) {
+block0(v0: c64, v1: i32):
+  v2 = sextend.i64 v1
+  v3 = cadd v0, v2
+  v4 = load.f64 v3
+  store.f64 v4, v3
+  v5 = load.f32 v3
+  store.f32 v5, v3
+  return
+}
+
+; VCode:
+; block0:
+;   ldr d4, [c0, w1, SXTW]
+;   str d4, [c0, w1, SXTW]
+;   ldr s5, [c0, w1, SXTW]
+;   str s5, [c0, w1, SXTW]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x04, 0xc8, 0xe1, 0x82
+;   .byte 0x04, 0xc8, 0xa1, 0x82
+;   .byte 0x05, 0xcc, 0xe1, 0x82
+;   .byte 0x05, 0xcc, 0xa1, 0x82
+;   ret
+
+function %5(c64, i64) {
+block0(v0: c64, v1: i64):
+  v2 = iconst.i64 2
+  v3 = ishl v1, v2
+  v4 = cadd v0, v3
+  v5 = load.f64 v4
+  store.f64 v5, v4
+  v6 = load.f32 v4
+  store.f32 v6, v4
+  return
+}
+
+; VCode:
+; block0:
+;   lsl x5, x1, #2
+;   ldr d5, [c0, x5]
+;   str d5, [c0, x5]
+;   ldr s6, [c0, x1, LSL #2]
+;   str s6, [c0, x1, LSL #2]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   lsl x5, x1, #2
+;   .byte 0x05, 0x68, 0xe5, 0x82
+;   .byte 0x05, 0x68, 0xa5, 0x82
+;   .byte 0x06, 0x7c, 0xe1, 0x82
+;   .byte 0x06, 0x7c, 0xa1, 0x82
+;   ret

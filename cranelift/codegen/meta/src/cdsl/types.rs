@@ -421,62 +421,97 @@ impl fmt::Debug for DynamicVectorType {
 
 /// Reference type is scalar type, but not lane type.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ReferenceType(pub shared_types::Reference);
+pub(crate) enum ReferenceType {
+    ReferenceType(shared_types::Reference),
+    CapPointer(shared_types::CapPointer),
+}
 
 impl ReferenceType {
     /// Return a string containing the documentation comment for this reference type.
     pub fn doc(self) -> String {
-        format!("An opaque reference type with {} bits.", self.lane_bits())
+        let ty = match self {
+            ReferenceType::ReferenceType(_) => "reference",
+            ReferenceType::CapPointer(_) => "capability pointer",
+        };
+        format!("An opaque {} type with {} bits.", ty, self.lane_bits())
     }
 
     /// Return the number of bits in a lane.
     pub fn lane_bits(self) -> u64 {
-        match self.0 {
-            shared_types::Reference::R32 => 32,
-            shared_types::Reference::R64 => 64,
+        match self {
+            ReferenceType::ReferenceType(shared_types::Reference::R32) => 32,
+            ReferenceType::ReferenceType(shared_types::Reference::R64) => 64,
+            ReferenceType::CapPointer(shared_types::CapPointer::C64) => 64,
         }
     }
 
     /// Find the unique number associated with this reference type.
     pub fn number(self) -> u16 {
-        constants::REFERENCE_BASE
-            + match self {
-                ReferenceType(shared_types::Reference::R32) => 0,
-                ReferenceType(shared_types::Reference::R64) => 1,
+        match self {
+            ReferenceType::ReferenceType(shared_types::Reference::R32) => {
+                constants::REFERENCE_BASE + 0
             }
+            ReferenceType::ReferenceType(shared_types::Reference::R64) => {
+                constants::REFERENCE_BASE + 1
+            }
+            ReferenceType::CapPointer(shared_types::CapPointer::C64) => constants::LANE_BASE + 5,
+        }
     }
 
     pub fn ref_from_bits(num_bits: u16) -> ReferenceType {
-        ReferenceType(match num_bits {
+        ReferenceType::ReferenceType(match num_bits {
             32 => shared_types::Reference::R32,
             64 => shared_types::Reference::R64,
             _ => unreachable!("unexpected number of bits for a reference type"),
+        })
+    }
+
+    pub fn cap_from_bits(num_bits: u16) -> ReferenceType {
+        ReferenceType::CapPointer(match num_bits {
+            128 => shared_types::CapPointer::C64,
+            _ => unreachable!("unexpected number of bits for a capability pointer type"),
         })
     }
 }
 
 impl fmt::Display for ReferenceType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "r{}", self.lane_bits())
+        let prefix = match self {
+            ReferenceType::ReferenceType(_) => "r",
+            ReferenceType::CapPointer(_) => "c",
+        };
+        write!(f, "{}{}", prefix, self.lane_bits())
     }
 }
 
 impl fmt::Debug for ReferenceType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ReferenceType(bits={})", self.lane_bits())
+        let ty = match self {
+            ReferenceType::ReferenceType(_) => "ReferenceType",
+            ReferenceType::CapPointer(_) => "CapPointerType",
+        };
+        write!(f, "{}(bits={})", ty, self.lane_bits())
     }
 }
 
 /// Create a ReferenceType from a given reference variant.
 impl From<shared_types::Reference> for ReferenceType {
     fn from(r: shared_types::Reference) -> Self {
-        ReferenceType(r)
+        ReferenceType::ReferenceType(r)
+    }
+}
+
+/// Create a ReferenceType from a given capability pointer variant.
+impl From<shared_types::CapPointer> for ReferenceType {
+    fn from(c: shared_types::CapPointer) -> Self {
+        ReferenceType::CapPointer(c)
     }
 }
 
 /// An iterator for different reference types.
 pub(crate) struct ReferenceTypeIterator {
     reference_iter: shared_types::ReferenceIterator,
+    cap_ptr_iter: shared_types::CapPointerIterator,
 }
 
 impl ReferenceTypeIterator {
@@ -484,6 +519,7 @@ impl ReferenceTypeIterator {
     fn new() -> Self {
         Self {
             reference_iter: shared_types::ReferenceIterator::new(),
+            cap_ptr_iter: shared_types::CapPointerIterator::new(),
         }
     }
 }
@@ -491,6 +527,12 @@ impl ReferenceTypeIterator {
 impl Iterator for ReferenceTypeIterator {
     type Item = ReferenceType;
     fn next(&mut self) -> Option<Self::Item> {
-        self.reference_iter.next().map(ReferenceType::from)
+        if let Some(r) = self.reference_iter.next() {
+            Some(ReferenceType::from(r))
+        } else if let Some(c) = self.cap_ptr_iter.next() {
+            Some(ReferenceType::from(c))
+        } else {
+            None
+        }
     }
 }

@@ -193,7 +193,7 @@ impl<'module_environment> FuncEnvironment<'module_environment> {
             isa.pointer_type(),
             match isa.pointer_type() {
                 ir::types::I32 => ir::types::R32,
-                ir::types::I64 => ir::types::R64,
+                ir::types::I64 | ir::types::C64 => ir::types::R64,
                 _ => panic!(),
             },
             CallConv::triple_default(isa.triple()),
@@ -1248,6 +1248,10 @@ impl<'module_environment> TargetEnvironment for FuncEnvironment<'module_environm
     fn proof_carrying_code(&self) -> bool {
         self.isa.flags().enable_pcc()
     }
+
+    fn has_cap_pointers(&self) -> bool {
+        self.isa.flags().enable_cheri()
+    }
 }
 
 impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'module_environment> {
@@ -1869,7 +1873,12 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
     }
 
     fn make_heap(&mut self, func: &mut ir::Function, index: MemoryIndex) -> WasmResult<Heap> {
-        let pointer_type = self.pointer_type();
+        let addr_type = self.pointer_type();
+        let pointer_type = if self.isa.flags().enable_cheri() {
+            C64
+        } else {
+            self.pointer_type()
+        };
         let is_shared = self.module.memory_plans[index].memory.shared;
 
         let min_size = self.module.memory_plans[index]
@@ -1902,7 +1911,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     let memory = func.create_global_value(ir::GlobalValueData::Load {
                         base: vmctx,
                         offset: Offset32::new(i32::try_from(from_offset).unwrap()),
-                        global_type: pointer_type,
+                        global_type: addr_type,
                         flags: MemFlags::trusted().with_readonly(),
                     });
                     let base_offset = i32::from(self.offsets.ptr.vmmemory_definition_base());
@@ -1930,7 +1939,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                 let memory = func.create_global_value(ir::GlobalValueData::Load {
                     base: vmctx,
                     offset: Offset32::new(i32::try_from(from_offset).unwrap()),
-                    global_type: pointer_type,
+                    global_type: addr_type,
                     flags: MemFlags::trusted().with_readonly(),
                 });
                 let base_offset = i32::from(self.offsets.ptr.vmmemory_definition_base());
@@ -1953,7 +1962,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
                     let heap_bound = func.create_global_value(ir::GlobalValueData::Load {
                         base: ptr,
                         offset: Offset32::new(current_length_offset),
-                        global_type: pointer_type,
+                        global_type: addr_type,
                         flags: MemFlags::trusted(),
                     });
 
@@ -2133,7 +2142,7 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
             | WasmValType::I64
             | WasmValType::F32
             | WasmValType::F64
-            | WasmValType::V128 => {}
+            | WasmValType::V128 | WasmValType::Ptr => {}
         }
 
         let (gv, offset) = self.get_global_location(func, index);

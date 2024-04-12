@@ -1,0 +1,306 @@
+test compile precise-output
+set unwind_info=false
+target aarch64
+
+function %test(i64, i64, i64) {
+block0(v0: i64, v1: i64, v2: i64):
+  v3 = ptr_to_cap_ddc v0
+  v4 = cap_set_bounds v3, v1
+  store.c64 v4, v2
+  return
+}
+
+; VCode:
+; block0:
+;   cvtdz c5, x0
+;   scbnds c5, c5, x1
+;   str c5, [x2]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x05, 0xd0, 0xc5, 0xc2
+;   .byte 0xa5, 0x00, 0xc1, 0xc2
+;   .byte 0x45, 0x00, 0x00, 0xc2
+;   ret
+
+function %test2(i64, i64) {
+block0(v0: i64, v1: i64):
+  v2 = load.c64 v0+80
+  store.c64 v2, v1
+  return
+}
+
+; VCode:
+; block0:
+;   ldr c3, [x0, #80]
+;   str c3, [x1]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x03, 0x14, 0x40, 0xc2
+;   .byte 0x23, 0x00, 0x00, 0xc2
+;   ret
+
+function u0:1(i64, i64, i32) -> i32 fast {
+block0(v0: i64, v1: i64, v2: i32):
+    v9 -> v0
+    v10 -> v0
+    v6 = load.c64 notrap aligned checked v0+80
+    v4 = uextend.i64 v2
+    v7 = cadd v6, v4
+    v8 = uload8.i32 little heap v7
+    v3 -> v8
+    jump block1
+
+block1:
+    return v8
+}
+
+; VCode:
+; block0:
+;   ldr c5, [x0, #80]
+;   ldrb w0, [c5, w2, UXTW]
+;   b label1
+; block1:
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x05, 0x14, 0x40, 0xc2
+;   .byte 0xa0, 0x40, 0xc2, 0x82
+; block1: ; offset 0x8
+;   ret
+
+function %f1(i64) {
+block0(v0: i64):
+  v1 = load.c64 v0
+  store.c64 v1, v0
+  return
+}
+
+; VCode:
+; block0:
+;   ldr c2, [x0]
+;   str c2, [x0]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x02, 0x00, 0x40, 0xc2
+;   .byte 0x02, 0x00, 0x00, 0xc2
+;   ret
+
+function %f2(c64) {
+block0(v0: c64):
+  v1 = load.c64 v0
+  store.c64 v1, v0
+  return
+}
+
+; VCode:
+; block0:
+;   ldr c2, [c0]
+;   str c2, [c0]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x02, 0x00, 0x60, 0x82
+;   .byte 0x02, 0x00, 0x40, 0x82
+;   ret
+
+function %f3(c64) {
+block0(v0: c64):
+  v1 = load.i64 v0
+  store.i64 v1, v0
+  return
+}
+
+; VCode:
+; block0:
+;   ldr x2, [c0]
+;   str x2, [c0]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x02, 0x0c, 0x60, 0x82
+;   .byte 0x02, 0x0c, 0x40, 0x82
+;   ret
+
+
+function %f4(c64, i64) {
+block0(v0: c64, v1: i64):
+  v2 = cadd v0, v1
+  v3 = load.c64 v2
+  store.c64 v3, v2
+  return
+}
+
+; VCode:
+; block0:
+;   ldr c3, [c0, x1]
+;   str c3, [c0, x1]
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x03, 0x6c, 0xe1, 0xc2
+;   .byte 0x03, 0x64, 0xe1, 0xc2
+;   ret
+
+function %f5(c64, i64) -> c64 {
+block0(v0: c64, v1: i64):
+  v2 = cadd v0, v1
+  return v2
+}
+
+; VCode:
+; block0:
+;   add c0, c0, x1, UXTX
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x00, 0x60, 0xa1, 0xc2
+;   ret
+
+function %f5(c64, i32) -> c64 {
+block0(v0: c64, v1: i32):
+  v2 = uextend.i64 v1
+  v3 = cadd v0, v2
+  return v3
+}
+
+; VCode:
+; block0:
+;   add c0, c0, w1, UXTW
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x00, 0x40, 0xa1, 0xc2
+;   ret
+
+
+function %f6(c64) -> c64 {
+block0(v0: c64):
+  v1 = iconst.i64 1
+  v2 = cadd v0, v1
+  return v2
+}
+
+; VCode:
+; block0:
+;   add c0, c0, #1
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x00, 0x04, 0x00, 0x02
+;   ret
+
+function %get_cap1(i64) -> c64 {
+block0(v0: i64):
+  v1 = ptr_to_cap_ddc v0
+  v2 = iconst.i64 4
+  v3 = cap_set_bounds v1, v2
+  return v3
+}
+
+; VCode:
+; block0:
+;   cvtdz c3, x0
+;   scbnds c0, c3, #4
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x03, 0xd0, 0xc5, 0xc2
+;   .byte 0x60, 0x38, 0xc2, 0xc2
+;   ret
+
+function %get_cap2(i64) -> c64 {
+block0(v0: i64):
+  v1 = ptr_to_cap_ddc v0
+  v2 = iconst.i64 128
+  v3 = cap_set_bounds v1, v2
+  return v3
+}
+
+; VCode:
+; block0:
+;   cvtdz c3, x0
+;   scbnds c0, c3, #128
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x03, 0xd0, 0xc5, 0xc2
+;   .byte 0x60, 0x78, 0xc4, 0xc2
+;   ret
+
+function %get_cap2(i64) -> c64 {
+block0(v0: i64):
+  v1 = ptr_to_cap_ddc v0
+  v2 = iconst.i64 129
+  v3 = cap_set_bounds v1, v2
+  return v3
+}
+
+; VCode:
+; block0:
+;   cvtdz c4, x0
+;   movz x5, #129
+;   scbnds c0, c4, x5
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   .byte 0x04, 0xd0, 0xc5, 0xc2
+;   mov x5, #0x81
+;   .byte 0x80, 0x00, 0xc5, 0xc2
+;   ret
+
+function %mem_grow(i64, i64, i32) -> i32 fast {
+block0(v0: i64, v1: i64, v2: i32):
+  v6 -> v0
+  v17 -> v0
+  v18 -> v0
+  v7 = load.i64 notrap aligned readonly v0+56
+  v8 = load.i64 notrap aligned readonly v7
+  v19 = iconst.i64 1
+  v5 = iconst.i32 0
+;;  v10 = call_indirect sig1, v8(v0, v19, v5)  ; v19 = 1, v5 = 0
+  v14 = load.c64 notrap aligned checked v0+80
+  v12 = uextend.i64 v2
+  v15 = cadd v14, v12
+  v16 = load.i32 little heap v15
+  v3 -> v16
+  jump block1
+
+block1:
+  return v16
+}
+
+; VCode:
+; block0:
+;   ldr x7, [x0, #56]
+;   ldr x7, [x7]
+;   ldr c7, [x0, #80]
+;   ldr w0, [c7, w2, UXTW]
+;   b label1
+; block1:
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   ldr x7, [x0, #0x38]
+;   ldr x7, [x7]
+;   .byte 0x07, 0x14, 0x40, 0xc2
+;   .byte 0xe0, 0x40, 0xe2, 0x82
+; block1: ; offset 0x10
+;   ret
+

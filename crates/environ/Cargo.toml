@@ -50,3 +50,4 @@ component-model = [
 ]
 demangle = ['dep:rustc-demangle', 'dep:cpp_demangle']
 gc = []
+cheri = []

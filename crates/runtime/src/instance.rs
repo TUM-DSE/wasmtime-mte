@@ -22,7 +22,7 @@ use std::alloc::{self, Layout};
 use std::any::Any;
 use std::ops::Range;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr};
 use wasmtime_environ::ModuleInternedTypeIndex;
@@ -148,6 +148,9 @@ pub struct Instance {
     pub(crate) wmemcheck_state: Option<Wmemcheck>,
     // TODO: add support for multiple memories, wmemcheck_state corresponds to
     // memory 0.
+    #[cfg(feature = "cheri")]
+    pub(crate) cheri: bool,
+
     /// Additional context used by compiled wasm code. This field is last, and
     /// represents a dynamically-sized array that extends beyond the nominal
     /// end of the struct (similar to a flexible array member).
@@ -210,6 +213,8 @@ impl Instance {
                         None
                     }
                 },
+                #[cfg(feature = "cheri")]
+                cheri: req.cheri,
             },
         );
 
@@ -340,10 +345,47 @@ impl Instance {
         unsafe { VMMemoryDefinition::load(self.memory_ptr(index)) }
     }
 
+    unsafe fn write_defined_memory(
+        &self,
+        mem_ptr: *mut VMMemoryDefinition,
+        mem: VMMemoryDefinition,
+    ) {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_arch = "aarch64", feature = "cheri"))] {
+                // First we write the whole thing. If we are on cheri, we then need to write the capability
+                // carrying pointer using inline assembly
+                let base = mem.base;
+                let current_length = mem.current_length.load(Ordering::Acquire);
+            }
+        }
+
+        ptr::write(mem_ptr, mem);
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_arch = "aarch64", feature = "cheri"))] {
+                if self.cheri {
+                    // Since llvm doesn't support all these fancy morello instructions, we might
+                    // need to use .byte directives and directly emit the encoded instructions.
+                    std::arch::asm!(
+                        ".byte 0x05, 0xd0, 0xc5, 0xc2", // cvtdz c5, x0
+                        ".byte 0xa5, 0x00, 0xc1, 0xc2", // scbnds c5, c5, x1
+                        ".byte 0x45, 0x00, 0x00, 0xc2", // str c5, [x2]
+                        in("x0") base,
+                        in("x1") current_length,
+                        in("x2") mem_ptr,
+                        out("x5") _, // clobber x5 as we use it
+                    );
+                }
+            }
+        }
+    }
+
     /// Set the indexed memory to `VMMemoryDefinition`.
     fn set_memory(&self, index: DefinedMemoryIndex, mem: VMMemoryDefinition) {
         unsafe {
-            *self.memory_ptr(index) = mem;
+            let mem_ptr = self.memory_ptr(index);
+
+            mem_ptr.drop_in_place();
+            self.write_defined_memory(mem_ptr, mem);
         }
     }
 
@@ -926,6 +968,7 @@ impl Instance {
         let src = self.validate_inbounds(src_mem.current_length(), src, len)?;
         let dst = self.validate_inbounds(dst_mem.current_length(), dst, len)?;
 
+        // TODO(MF): add a cheri-enabled implementation of this if it impacts performance a lot.
         // Bounds and casts are checked above, by this point we know that
         // everything is safe.
         unsafe {
@@ -1230,7 +1273,8 @@ impl Instance {
                     .vmmemory_ptr();
                 ptr::write(ptr, def_ptr.cast_mut());
             } else {
-                ptr::write(owned_ptr, self.memories[defined_memory_index].1.vmmemory());
+                let mem = self.memories[defined_memory_index].1.vmmemory();
+                self.write_defined_memory(owned_ptr, mem);
                 ptr::write(ptr, owned_ptr);
                 owned_ptr = owned_ptr.add(1);
             }

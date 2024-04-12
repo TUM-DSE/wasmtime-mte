@@ -428,6 +428,7 @@ impl Module for ObjectModule {
             PointerWidth::U16 => unimplemented!("16bit pointers"),
             PointerWidth::U32 => Reloc::Abs4,
             PointerWidth::U64 => Reloc::Abs8,
+            PointerWidth::U128 => Reloc::Abs16,
         };
         let relocs = data
             .all_relocs(pointer_reloc)

@@ -854,6 +854,7 @@ impl TrampolineCompiler<'_> {
     }
 
     fn load_runtime_memory_base(&mut self, vmctx: ir::Value, mem: RuntimeMemoryIndex) -> ir::Value {
+        // TODO(MF): should this also use a capability pointer here? I guess for now we're fine..
         let pointer_type = self.isa.pointer_type();
         let from_vmmemory_definition = self.builder.ins().load(
             pointer_type,

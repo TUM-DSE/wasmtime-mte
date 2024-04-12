@@ -27,6 +27,8 @@ pub enum Reloc {
     Abs4,
     /// absolute 8-byte
     Abs8,
+    /// absolute 16-byte
+    Abs16,
     /// x86 PC-relative 4-byte
     X86PCRel4,
     /// x86 call to PC-relative 4-byte
@@ -131,6 +133,7 @@ impl fmt::Display for Reloc {
         match *self {
             Self::Abs4 => write!(f, "Abs4"),
             Self::Abs8 => write!(f, "Abs8"),
+            Self::Abs16 => write!(f, "Abs16"),
             Self::S390xPCRel32Dbl => write!(f, "PCRel32Dbl"),
             Self::S390xPLTRel32Dbl => write!(f, "PLTRel32Dbl"),
             Self::X86PCRel4 => write!(f, "PCRel4"),

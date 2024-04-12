@@ -104,6 +104,35 @@ impl Iterator for ReferenceIterator {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub(crate) enum CapPointer {
+    /// 64-bit pointer
+    C64 = 64,
+}
+
+/// This provides an iterator through all of the supported reference variants.
+pub(crate) struct CapPointerIterator {
+    index: u8,
+}
+
+impl CapPointerIterator {
+    pub fn new() -> Self {
+        Self { index: 0 }
+    }
+}
+
+impl Iterator for CapPointerIterator {
+    type Item = CapPointer;
+    fn next(&mut self) -> Option<Self::Item> {
+        let res = match self.index {
+            0 => Some(CapPointer::C64),
+            _ => return None,
+        };
+        self.index += 1;
+        res
+    }
+}
+
 #[cfg(test)]
 mod iter_tests {
     use super::*;
@@ -133,5 +162,12 @@ mod iter_tests {
         assert_eq!(reference_iter.next(), Some(Reference::R32));
         assert_eq!(reference_iter.next(), Some(Reference::R64));
         assert_eq!(reference_iter.next(), None);
+    }
+
+    #[test]
+    fn cap_pointer_iter_works() {
+        let mut cap_pointer_iter = CapPointerIterator::new();
+        assert_eq!(cap_pointer_iter.next(), Some(CapPointer::C64));
+        assert_eq!(cap_pointer_iter.next(), None);
     }
 }

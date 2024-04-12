@@ -69,6 +69,9 @@ pub fn block_with_params<PE: TargetEnvironment + ?Sized>(
             wasmparser::ValType::V128 => {
                 builder.append_block_param(block, ir::types::I8X16);
             }
+            wasmparser::ValType::Ptr => {
+                builder.append_block_param(block, ir::types::C64);
+            }
         }
     }
     Ok(block)

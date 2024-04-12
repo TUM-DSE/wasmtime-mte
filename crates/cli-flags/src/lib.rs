@@ -126,6 +126,8 @@ wasmtime_option_group! {
         pub parallel_compilation: Option<bool>,
         /// Whether to enable proof-carrying code (PCC)-based validation.
         pub pcc: Option<bool>,
+        /// Whether to emit capability instructions
+        pub cheri: Option<bool>,
 
         #[prefixed = "cranelift"]
         /// Set a cranelift-specific option. Use `wasmtime settings` to see
@@ -242,6 +244,8 @@ wasmtime_option_group! {
         pub component_model: Option<bool>,
         /// Configure support for the function-references proposal.
         pub function_references: Option<bool>,
+        /// Configure support for the memory safety proposal.
+        pub memory_safety: Option<bool>,
     }
 
     enum Wasm {
@@ -456,6 +460,19 @@ impl CommonOptions {
             enable => config.cranelift_pcc(enable),
             true => err,
         }
+        match_feature! {
+            ["cheri" : self.codegen.cheri]
+            enable => {
+                config.cranelift_cheri(enable);
+                config.guard_before_linear_memory(false);
+                config.dynamic_memory_guard_size(0);
+                config.static_memory_guard_size(0);
+                // TODO(MF): figure out how to remove guard pages and re-enable static heaps then
+                //  realistically, once we store a proper capability in the heap base, this doesn't make a difference anymore.
+                config.static_memory_maximum_size(0);
+            },
+            true => err,
+        }
 
         self.enable_wasm_features(&mut config)?;
 
@@ -636,6 +653,9 @@ impl CommonOptions {
             if enable && all.is_none() {
                 anyhow::bail!("support for the component model was disabled at compile-time");
             }
+        }
+        if let Some(enable) = self.wasm.memory_safety.or(all)  {
+            config.wasm_memory_safety(enable);
         }
         Ok(())
     }

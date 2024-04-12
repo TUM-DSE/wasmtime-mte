@@ -123,6 +123,7 @@ impl TestGlobal {
                 global_type: match self.type_.as_str() {
                     "i32" => ir::types::I32,
                     "i64" => ir::types::I64,
+                    "c64" => ir::types::C64,
                     other => panic!("test globals cannot be of type '{other}'"),
                 },
                 flags,
@@ -184,6 +185,7 @@ impl TestHeap {
             index_type: match self.index_type.as_str() {
                 "i32" => ir::types::I32,
                 "i64" => ir::types::I64,
+                "c64" => ir::types::C64,
                 other => panic!("heap indices may only be i32 or i64, found '{other}'"),
             },
             memory_type: None,

@@ -61,6 +61,9 @@ pub struct InstanceAllocationRequest<'a> {
     /// Indicates '--wmemcheck' flag.
     pub wmemcheck: bool,
 
+    /// Indicates if cheri is enabled
+    pub cheri: bool,
+
     /// Request that the instance's memories be protected by a specific
     /// protection key.
     pub pkey: Option<ProtectionKey>,

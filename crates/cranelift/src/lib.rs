@@ -47,6 +47,7 @@ fn value_type(isa: &dyn TargetIsa, ty: WasmValType) -> ir::types::Type {
         WasmValType::F32 => ir::types::F32,
         WasmValType::F64 => ir::types::F64,
         WasmValType::V128 => ir::types::I8X16,
+        WasmValType::Ptr => ir::types::C64,
         WasmValType::Ref(rt) => reference_type(rt.heap_type, isa.pointer_type()),
     }
 }

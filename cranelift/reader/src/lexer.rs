@@ -374,6 +374,7 @@ impl<'a> Lexer<'a> {
             "f64" => types::F64,
             "r32" => types::R32,
             "r64" => types::R64,
+            "c64" => types::C64,
             _ => return None,
         };
         if is_vector {

@@ -51,6 +51,8 @@ pub enum ValType {
     F64,
     /// A 128 bit number.
     V128,
+    /// A pointer
+    Ptr,
     /// An opaque reference to some type on the heap.
     Ref(RefType),
 }
@@ -69,6 +71,7 @@ impl Display for ValType {
             ValType::F32 => write!(f, "f32"),
             ValType::F64 => write!(f, "f64"),
             ValType::V128 => write!(f, "v128"),
+            ValType::Ptr => write!(f, "ptr"),
             ValType::Ref(r) => Display::fmt(r, f),
         }
     }
@@ -194,12 +197,14 @@ impl ValType {
             (Self::F32, Self::F32) => true,
             (Self::F64, Self::F64) => true,
             (Self::V128, Self::V128) => true,
+            (Self::Ptr, Self::Ptr) => true,
             (Self::Ref(a), Self::Ref(b)) => a.matches(b),
             (Self::I32, _)
             | (Self::I64, _)
             | (Self::F32, _)
             | (Self::F64, _)
             | (Self::V128, _)
+            | (Self::Ptr, _)
             | (Self::Ref(_), _) => false,
         }
     }
@@ -229,7 +234,7 @@ impl ValType {
 
     pub(crate) fn comes_from_same_engine(&self, engine: &Engine) -> bool {
         match self {
-            Self::I32 | Self::I64 | Self::F32 | Self::F64 | Self::V128 => true,
+            Self::I32 | Self::I64 | Self::F32 | Self::F64 | Self::V128 | Self::Ptr => true,
             Self::Ref(r) => r.comes_from_same_engine(engine),
         }
     }
@@ -241,6 +246,7 @@ impl ValType {
             Self::F32 => WasmValType::F32,
             Self::F64 => WasmValType::F64,
             Self::V128 => WasmValType::V128,
+            Self::Ptr => WasmValType::Ptr,
             Self::Ref(r) => WasmValType::Ref(r.to_wasm_type()),
         }
     }
@@ -253,6 +259,7 @@ impl ValType {
             WasmValType::F32 => Self::F32,
             WasmValType::F64 => Self::F64,
             WasmValType::V128 => Self::V128,
+            WasmValType::Ptr => Self::Ptr,
             WasmValType::Ref(r) => Self::Ref(RefType::from_wasm_type(engine, r)),
         }
     }

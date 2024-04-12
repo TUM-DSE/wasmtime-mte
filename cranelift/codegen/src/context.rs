@@ -165,6 +165,8 @@ impl Context {
             self.func.dfg.num_blocks()
         );
 
+        println!("{}", self.func.display());
+
         let opt_level = isa.flags().opt_level();
         crate::trace!(
             "Optimizing (opt level {:?}):\n{}",

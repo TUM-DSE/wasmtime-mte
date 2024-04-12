@@ -63,6 +63,7 @@ pub fn create_memory(
         store: StorePtr::new(store.traitobj()),
         runtime_info,
         wmemcheck: false,
+        cheri: false,
         pkey: None,
     };
 
@@ -95,10 +96,7 @@ impl RuntimeLinearMemory for LinearMemoryProxy {
     }
 
     fn vmmemory(&mut self) -> VMMemoryDefinition {
-        VMMemoryDefinition {
-            base: self.mem.as_ptr(),
-            current_length: self.mem.byte_size().into(),
-        }
+        VMMemoryDefinition::new(self.mem.as_ptr(), self.mem.byte_size().into())
     }
 
     fn needs_init(&self) -> bool {

@@ -18,12 +18,25 @@ impl Mmap {
         }
     }
 
+    /// This enables R+W+X on mmap when running on CheriBSD.
+    /// This is currently required, as I (MF) haven't figured out why mprotect fails when trying to enable EXEC
+    /// with memory that didn't have this flag in the first place.
+    fn get_mmap_flags(flags: rustix::mm::ProtFlags) -> rustix::mm::ProtFlags {
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))] {
+                rustix::mm::ProtFlags::EXEC | rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE
+            } else {
+                flags
+            }
+        }
+    }
+
     pub fn new(size: usize) -> Result<Self> {
         let ptr = unsafe {
             rustix::mm::mmap_anonymous(
                 ptr::null_mut(),
                 size,
-                rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
+                Self::get_mmap_flags(rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE),
                 rustix::mm::MapFlags::PRIVATE,
             )?
         };
@@ -37,7 +50,7 @@ impl Mmap {
             rustix::mm::mmap_anonymous(
                 ptr::null_mut(),
                 size,
-                rustix::mm::ProtFlags::empty(),
+                Self::get_mmap_flags(rustix::mm::ProtFlags::empty()),
                 rustix::mm::MapFlags::PRIVATE,
             )?
         };

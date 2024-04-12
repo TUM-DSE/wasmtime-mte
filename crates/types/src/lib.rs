@@ -43,6 +43,8 @@ pub enum WasmValType {
     F64,
     /// V128 type
     V128,
+    /// Opaque pointer type
+    Ptr,
     /// Reference type
     Ref(WasmRefType),
 }
@@ -55,6 +57,7 @@ impl fmt::Display for WasmValType {
             WasmValType::F32 => write!(f, "f32"),
             WasmValType::F64 => write!(f, "f64"),
             WasmValType::V128 => write!(f, "v128"),
+            WasmValType::Ptr => write!(f, "ptr"),
             WasmValType::Ref(rt) => write!(f, "{rt}"),
         }
     }
@@ -71,6 +74,7 @@ impl TypeTrace for WasmValType {
             | WasmValType::I64
             | WasmValType::F32
             | WasmValType::F64
+            | WasmValType::Ptr
             | WasmValType::V128 => Ok(()),
         }
     }
@@ -85,6 +89,7 @@ impl TypeTrace for WasmValType {
             | WasmValType::I64
             | WasmValType::F32
             | WasmValType::F64
+            | WasmValType::Ptr
             | WasmValType::V128 => Ok(()),
         }
     }
@@ -601,6 +606,7 @@ pub trait TypeConvert {
             wasmparser::ValType::F32 => WasmValType::F32,
             wasmparser::ValType::F64 => WasmValType::F64,
             wasmparser::ValType::V128 => WasmValType::V128,
+            wasmparser::ValType::Ptr => WasmValType::Ptr,
             wasmparser::ValType::Ref(t) => WasmValType::Ref(self.convert_ref_type(t)),
         }
     }

@@ -167,6 +167,7 @@ impl WasmCoreDump {
                     ValType::F32 => wasm_encoder::ValType::F32,
                     ValType::F64 => wasm_encoder::ValType::F64,
                     ValType::V128 => wasm_encoder::ValType::V128,
+                    ValType::Ptr => wasm_encoder::ValType::Ptr,
                     ValType::Ref(r) => match r.heap_type() {
                         HeapType::Extern => wasm_encoder::ValType::EXTERNREF,
 

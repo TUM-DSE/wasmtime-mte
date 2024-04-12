@@ -98,7 +98,11 @@ fn define_control_flow(
     let iAddr = &TypeVar::new(
         "iAddr",
         "An integer address type",
-        TypeSetBuilder::new().ints(32..64).refs(32..64).build(),
+        TypeSetBuilder::new()
+            .ints(32..64)
+            .refs(32..64)
+            .cap_ptrs(128..128)
+            .build(),
     );
 
     ig.push(
@@ -630,6 +634,7 @@ pub(crate) fn define(
 
     // Operand kind shorthands.
     let i8: &TypeVar = &ValueType::from(LaneType::from(types::Int::I8)).into();
+    let i64: &TypeVar = &ValueType::from(LaneType::from(types::Int::I64)).into();
     let f32_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F32)).into();
     let f64_: &TypeVar = &ValueType::from(LaneType::from(types::Float::F64)).into();
 
@@ -649,6 +654,12 @@ pub(crate) fn define(
         "An integer type of width up to `i64`",
         TypeSetBuilder::new().ints(8..64).build(),
     );
+
+    let CapPtr = &dbg!(TypeVar::new(
+        "CapPtr",
+        "A capability carrying pointer",
+        TypeSetBuilder::new().cap_ptrs(Interval::All).build(),
+    ));
 
     let ScalarTruthy = &TypeVar::new(
         "ScalarTruthy",
@@ -671,7 +682,11 @@ pub(crate) fn define(
     let iAddr = &TypeVar::new(
         "iAddr",
         "An integer address type",
-        TypeSetBuilder::new().ints(32..64).refs(32..64).build(),
+        TypeSetBuilder::new()
+            .ints(32..64)
+            .refs(32..64)
+            .cap_ptrs(Interval::All)
+            .build(),
     );
 
     let Ref = &TypeVar::new(
@@ -698,6 +713,7 @@ pub(crate) fn define(
             .floats(Interval::All)
             .refs(Interval::All)
             .simd_lanes(Interval::All)
+            .cap_ptrs(Interval::All)
             .includes_scalars(true)
             .build(),
     );
@@ -711,6 +727,7 @@ pub(crate) fn define(
             .simd_lanes(Interval::All)
             .refs(Interval::All)
             .dynamic_simd_lanes(Interval::All)
+            .cap_ptrs(Interval::All)
             .build(),
     );
 
@@ -3193,8 +3210,8 @@ pub(crate) fn define(
             "#,
             &formats.binary,
         )
-        .operands_in(vec![Operand::new("x", I16or32or64xN), Operand::new("y", I16or32or64xN)])
-        .operands_out(vec![Operand::new("a", &I16or32or64xN.split_lanes())]),
+            .operands_in(vec![Operand::new("x", I16or32or64xN), Operand::new("y", I16or32or64xN)])
+            .operands_out(vec![Operand::new("a", &I16or32or64xN.split_lanes())]),
     );
 
     let I8or16or32xN = &TypeVar::new(
@@ -3805,6 +3822,69 @@ pub(crate) fn define(
         ])
         .operands_out(vec![
             Operand::new("a", &TxN.dynamic_to_vector()).with_doc("New fixed vector")
+        ]),
+    );
+
+    // Morello specific instructions
+    ig.push(
+        Inst::new(
+            "cadd",
+            r#"
+            Add a integer to a capability.
+            "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("x", CapPtr).with_doc("The first capability"),
+            Operand::new("y", i64).with_doc("The value being added"),
+        ])
+        .operands_out(vec![
+            Operand::new("a", CapPtr).with_doc("The result of the addition")
+        ]),
+    );
+
+    ig.push(
+        Inst::new(
+            "ptr_to_cap_ddc",
+            r#"
+            Convert a pointer to a capability using the DDC (default data capability).
+            "#,
+            &formats.unary,
+        )
+        .operands_in(vec![Operand::new("x", i64).with_doc("The pointer")])
+        .operands_out(vec![
+            Operand::new("a", CapPtr).with_doc("The resulting capability")
+        ]),
+    );
+
+    ig.push(
+        Inst::new(
+            "cap_to_ptr",
+            r#"
+            Convert a capability to a pointer.
+            "#,
+            &formats.unary,
+        )
+        .operands_in(vec![Operand::new("x", CapPtr).with_doc("The capability")])
+        .operands_out(vec![
+            Operand::new("a", i64).with_doc("The resulting pointer")
+        ]),
+    );
+
+    ig.push(
+        Inst::new(
+            "cap_set_bounds",
+            r#"
+            Set bounds for a capability
+            "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("x", CapPtr).with_doc("The capability"),
+            Operand::new("y", i64).with_doc("Bound"),
+        ])
+        .operands_out(vec![
+            Operand::new("a", CapPtr).with_doc("The newly bounded capability")
         ]),
     );
 }

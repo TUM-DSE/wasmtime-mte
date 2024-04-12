@@ -83,6 +83,7 @@ pub struct VMFunctionImport {
 // Declare that this type is send/sync, it's the responsibility of users of
 // `VMFunctionImport` to uphold this guarantee.
 unsafe impl Send for VMFunctionImport {}
+
 unsafe impl Sync for VMFunctionImport {}
 
 #[cfg(test)]
@@ -152,6 +153,7 @@ pub struct VMTableImport {
 // Declare that this type is send/sync, it's the responsibility of users of
 // `VMTableImport` to uphold this guarantee.
 unsafe impl Send for VMTableImport {}
+
 unsafe impl Sync for VMTableImport {}
 
 #[cfg(test)]
@@ -198,6 +200,7 @@ pub struct VMMemoryImport {
 // Declare that this type is send/sync, it's the responsibility of users of
 // `VMMemoryImport` to uphold this guarantee.
 unsafe impl Send for VMMemoryImport {}
+
 unsafe impl Sync for VMMemoryImport {}
 
 #[cfg(test)]
@@ -242,6 +245,7 @@ pub struct VMGlobalImport {
 // Declare that this type is send/sync, it's the responsibility of users of
 // `VMGlobalImport` to uphold this guarantee.
 unsafe impl Send for VMGlobalImport {}
+
 unsafe impl Sync for VMGlobalImport {}
 
 #[cfg(test)]
@@ -275,6 +279,11 @@ pub struct VMMemoryDefinition {
     /// The start address.
     pub base: *mut u8,
 
+    /// The capability bits for the base address.
+    /// This is only set if this VMMemoryDefinition lives in the vmctx struct of a live instance.
+    #[cfg(feature = "cheri")]
+    padding: u64,
+
     /// The current logical size of this linear memory in bytes.
     ///
     /// This is atomic because shared memories must be able to grow their length
@@ -284,6 +293,16 @@ pub struct VMMemoryDefinition {
 }
 
 impl VMMemoryDefinition {
+    /// Creates a new `VMMemoryDefinition` with the given `base` and `bound`.
+    pub fn new(base: *mut u8, bound: usize) -> Self {
+        Self {
+            base: base,
+            #[cfg(feature = "cheri")]
+            padding: 0,
+            current_length: AtomicUsize::new(bound.into()),
+        }
+    }
+
     /// Return the current length of the [`VMMemoryDefinition`] by performing a
     /// relaxed load; do not use this function for situations in which a precise
     /// length is needed. Owned memories (i.e., non-shared) will always return a
@@ -301,6 +320,8 @@ impl VMMemoryDefinition {
         let other = &*ptr;
         VMMemoryDefinition {
             base: other.base,
+            #[cfg(feature = "cheri")]
+            padding: 0,
             current_length: other.current_length().into(),
         }
     }
@@ -660,6 +681,7 @@ pub struct VMFuncRef {
 }
 
 unsafe impl Send for VMFuncRef {}
+
 unsafe impl Sync for VMFuncRef {}
 
 #[cfg(test)]
@@ -846,6 +868,7 @@ pub struct VMRuntimeLimits {
 // otherwise not available due to the `fuel_consumed` and `epoch_deadline`
 // variables in `VMRuntimeLimits`.
 unsafe impl Send for VMRuntimeLimits {}
+
 unsafe impl Sync for VMRuntimeLimits {}
 
 impl Default for VMRuntimeLimits {
@@ -1041,6 +1064,7 @@ pub union ValRaw {
 // This type is just a bag-of-bits so it's up to the caller to figure out how
 // to safely deal with threading concerns and safely access interior bits.
 unsafe impl Send for ValRaw {}
+
 unsafe impl Sync for ValRaw {}
 
 impl ValRaw {

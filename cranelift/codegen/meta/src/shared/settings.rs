@@ -77,6 +77,15 @@ pub(crate) fn define() -> SettingGroup {
         false,
     );
 
+    settings.add_bool(
+        "enable_cheri",
+        "Enable cheri.",
+        r#"
+            This adds support for cheri (in our case morello) instructions/
+        "#,
+        false,
+    );
+
     // Note that Cranelift doesn't currently need an is_pie flag, because PIE is
     // just PIC where symbols can't be pre-empted, which can be expressed with the
     // `colocated` flag on external functions and global values.

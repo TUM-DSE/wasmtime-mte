@@ -26,6 +26,7 @@ use cranelift_codegen::{
     ir::{self, condcodes::IntCC, InstBuilder, RelSourceLoc},
     ir::{Expr, Fact},
 };
+use cranelift_codegen::ir::Type;
 use cranelift_frontend::FunctionBuilder;
 use wasmtime_types::WasmResult;
 use Reachability::*;
@@ -113,6 +114,28 @@ where
         }
         result
     };
+
+    if env.has_cap_pointers() {
+        // For now, we insert the bounds here. At some point, they should be incorporated into the
+        // heap base pointer.
+        let bound = match (heap.max_size, &heap.style) {
+            (Some(bound), _) => builder.ins().iconst(ir::types::I64, bound as i64),
+            (None, &HeapStyle::Static { bound }) => {
+                builder.ins().iconst(ir::types::I64, bound as i64)
+            }
+            (None, &HeapStyle::Dynamic { bound_gv }) => {
+                builder.ins().global_value(ir::types::I64, bound_gv)
+            }
+        };
+        return Ok(Reachable(compute_addr_cheri(
+            &mut builder.cursor(),
+            heap,
+            bound,
+            env.pointer_type(),
+            index,
+            offset,
+        )));
+    }
 
     // We need to emit code that will trap (or compute an address that will trap
     // when accessed) if
@@ -476,7 +499,7 @@ fn cast_index_to_pointer_ty(
     pcc: bool,
     pos: &mut FuncCursor,
 ) -> ir::Value {
-    if index_ty == pointer_ty {
+    if index_ty == pointer_ty || pos.func.dfg.value_type(index) == ir::types::C64 {
         return index;
     }
     // Note that using 64-bit heaps on a 32-bit host is not currently supported,
@@ -703,6 +726,43 @@ fn compute_addr(
             }
         }
         result
+    }
+}
+
+/// Emit code for the native address computation of a Wasm address,
+/// using CHERI.
+fn compute_addr_cheri(
+    pos: &mut FuncCursor,
+    heap: &HeapData,
+    bound: ir::Value,
+    addr_ty: ir::Type,
+    index: ir::Value,
+    offset: u32,
+) -> ir::Value {
+    debug_assert!(matches!(pos.func.dfg.value_type(index), ir::types::I64 | ir::types::C64));
+
+    let base_and_index = match pos.func.dfg.value_type(index) {
+        ir::types::I64 => {
+            let heap_base = pos.ins().global_value(ir::types::C64, heap.base);
+
+            pos.ins().cadd(heap_base, index)
+        },
+        ir::types::C64 => {
+            // here we assume the pointer is a valid capability, we just load the pointer without
+            // capability from the base pointer.
+            let heap_base = pos.ins().global_value(ir::types::I64, heap.base);
+
+            pos.ins().cadd(index, heap_base)
+        },
+        ty => panic!("Expected index to be of type I64 or C64, got {:?}", ty),
+    };
+
+    if offset == 0 {
+        base_and_index
+    } else {
+        let offset_val = pos.ins().iconst(addr_ty, i64::from(offset));
+
+        pos.ins().cadd(base_and_index, offset_val)
     }
 }
 

@@ -216,6 +216,36 @@ impl SImm9 {
     }
 }
 
+/// a 9-bit unsigned offset.
+#[derive(Clone, Copy, Debug)]
+pub struct UImm9 {
+    /// The value.
+    pub value: u16,
+}
+
+impl UImm9 {
+    /// Create a signed 9-bit offset from a full-range value, if possible.
+    pub fn maybe_from_i64(value: i64) -> Option<UImm9> {
+        if value >= 0 && value < 512 {
+            Some(UImm9 {
+                value: value as u16,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Bits for encoding.
+    pub fn bits(&self) -> u32 {
+        (self.value as u32) & 0x1ff
+    }
+
+    /// Signed value of immediate.
+    pub fn value(&self) -> u32 {
+        self.value as u32
+    }
+}
+
 /// An unsigned, scaled 12-bit offset.
 #[derive(Clone, Copy, Debug)]
 pub struct UImm12Scaled {
@@ -314,6 +344,53 @@ impl Imm12 {
         } else {
             base
         }
+    }
+}
+
+/// An immediate value in 'imm6' format.
+#[derive(Copy, Clone, Debug)]
+pub struct Imm6 {
+    /// The immediate bits.
+    pub bits: u16,
+    /// Is the value left-shifted by 4
+    pub shift4: bool,
+}
+
+impl Imm6 {
+    /// Compute a Imm6 from raw bits, if possible.
+    pub fn maybe_from_u64(val: u64) -> Option<Imm6> {
+        if val & !0x3f == 0 {
+            Some(Imm6 {
+                bits: val as u16,
+                shift4: false,
+            })
+        } else if val & !(0xfff << 4) == 0 {
+            Some(Imm6 {
+                bits: (val >> 4) as u16,
+                shift4: true,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Bits for 6-bit "imm" field
+    pub fn imm_bits(&self) -> u32 {
+        self.bits as u32
+    }
+
+    /// Bits for the shift field
+    pub fn shift_bits(&self) -> u32 {
+        if self.shift4 {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Get the actual value that this immediate corresponds to.
+    pub fn value(&self) -> u32 {
+        (self.bits as u32) << if self.shift4 { 4 } else { 0 }
     }
 }
 
@@ -684,7 +761,7 @@ impl ASIMDMovModImm {
                         is_64bit: false,
                         shift_ones: true,
                     })
-                // Value is of the form 0x0000MMFF.
+                    // Value is of the form 0x0000MMFF.
                 } else if value & 0xFFFF00FF == 0x000000FF {
                     let imm = (value >> 8) as u8;
 
@@ -858,6 +935,12 @@ impl PrettyPrint for Imm12 {
     }
 }
 
+impl PrettyPrint for Imm6 {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
+        format!("#{}", self.value())
+    }
+}
+
 impl PrettyPrint for SImm7Scaled {
     fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("#{}", self.value)
@@ -877,6 +960,12 @@ impl PrettyPrint for FPURightShiftImm {
 }
 
 impl PrettyPrint for SImm9 {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
+        format!("#{}", self.value)
+    }
+}
+
+impl PrettyPrint for UImm9 {
     fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("#{}", self.value)
     }

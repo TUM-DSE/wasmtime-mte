@@ -69,6 +69,21 @@
         (rm Reg)
         (extendop ExtendOp))
 
+       ;; Capability Op
+       (CapOpRRR
+        (cap_op CapOp)
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg)
+        (extendop ExtendOp))
+
+       ;; Capability Op
+       (CapOpImm12
+        (cap_op CapOp)
+        (rd WritableReg)
+        (rn Reg)
+        (imm12 Imm12))
+
        ;; A bit op instruction with a single register source.
        (BitRR
         (op BitOp)
@@ -118,6 +133,12 @@
         (mem AMode)
         (flags MemFlags))
 
+       ;; A capability load
+       (LoadC64
+        (rd WritableReg)
+        (mem AMode)
+        (flags MemFlags))
+
        ;; An 8-bit store.
        (Store8
         (rd Reg)
@@ -142,6 +163,12 @@
         (mem AMode)
         (flags MemFlags))
 
+       ;; A capability store
+       (StoreC64
+        (rd Reg)
+        (mem AMode)
+        (flags MemFlags))
+
        ;; A store of a pair of registers.
        (StoreP64
         (rt Reg)
@@ -156,12 +183,115 @@
         (mem PairAMode)
         (flags MemFlags))
 
+       ;; Morello store instructions
+       ;; Alt versions
+
+       (Store8Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A 16-bit store.
+       (Store16Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A 32-bit store.
+       (Store32Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A 64-bit store.
+       (Store64Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A capability store
+       (StoreC64Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+
+       ;; Morello loading instructions (alt)
+       ;; I.e. not purecap instructions
+
+       ;; An unsigned (zero-extending) 8-bit load.
+       (ULoad8Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 8-bit load.
+       (SLoad8Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; An unsigned (zero-extending) 16-bit load.
+       (ULoad16Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 16-bit load.
+       (SLoad16Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; An unsigned (zero-extending) 32-bit load.
+       (ULoad32Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A signed (sign-extending) 32-bit load.
+       (SLoad32Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A 64-bit load.
+       (ULoad64Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; A capability load
+       (LoadC64Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+;;       ;; A store of a pair of registers.
+;;       (StoreP64Alt
+;;        (rt Reg)
+;;        (rt2 Reg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
+;;
+;;       ;; A load of a pair of registers.
+;;       (LoadP64Alt
+;;        (rt WritableReg)
+;;        (rt2 WritableReg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
+
        ;; A MOV instruction. These are encoded as ORR's (AluRRR form).
        ;; The 32-bit version zeroes the top 32 bits of the
        ;; destination, which is effectively an alias for an unsigned
        ;; 32-to-64-bit extension.
        (Mov
         (size OperandSize)
+        (rd WritableReg)
+        (rm Reg))
+
+       ;; Move capability. This is encoded as CPY
+       (MovCap
         (rd WritableReg)
         (rm Reg))
 
@@ -465,6 +595,71 @@
         (rt2 Reg)
         (mem PairAMode)
         (flags MemFlags))
+
+       ;; Morello Alt instructions
+       ;; Floating-point load, single-precision (32 bit).
+       (FpuLoad32Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; Floating-point store, single-precision (32 bit).
+       (FpuStore32Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; Floating-point load, double-precision (64 bit).
+       (FpuLoad64Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; Floating-point store, double-precision (64 bit).
+       (FpuStore64Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; Floating-point/vector load, 128 bit.
+       (FpuLoad128Alt
+        (rd WritableReg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+       ;; Floating-point/vector store, 128 bit.
+       (FpuStore128Alt
+        (rd Reg)
+        (mem CapAMode)
+        (flags MemFlags))
+
+;;       ;; A load of a pair of floating-point registers, double precision (64-bit).
+;;       (FpuLoadP64Alt
+;;        (rt WritableReg)
+;;        (rt2 WritableReg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
+;;
+;;       ;; A store of a pair of floating-point registers, double precision (64-bit).
+;;       (FpuStoreP64Alt
+;;        (rt Reg)
+;;        (rt2 Reg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
+;;
+;;       ;; A load of a pair of floating-point registers, 128-bit.
+;;       (FpuLoadP128Alt
+;;        (rt WritableReg)
+;;        (rt2 WritableReg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
+;;
+;;       ;; A store of a pair of floating-point registers, 128-bit.
+;;       (FpuStoreP128Alt
+;;        (rt Reg)
+;;        (rt2 Reg)
+;;        (mem CapPairAMode)
+;;        (flags MemFlags))
 
        ;; Conversion: FP -> integer.
        (FpuToInt
@@ -979,7 +1174,35 @@
        ;; means that the internal codegen can't use these registers.
        (StackProbeLoop (start WritableReg)
                        (end Reg)
-                       (step Imm12))))
+                       (step Imm12))
+
+       ;; Move System Register to Capability Register
+       ;; Only used here to load the DDC
+       (Mrs
+        (rd WritableReg))
+
+       ;; Set bounds
+       (Scbnds
+        (rd WritableReg)
+        (rn Reg)
+        (rm Reg))
+
+        ;; Set bounds with immediate
+       (ScbndsImm
+        (rd WritableReg)
+        (rn Reg)
+        (imm Imm6))
+
+
+       ;; Convert to capability using DDC
+       (Cvtdz
+        (rd WritableReg)
+        (rn Reg))
+
+       ;; Convert capability to pointer
+       (Cvtp
+        (rd WritableReg)
+        (rn Reg))))
 
 ;; An ALU operation. This can be paired with several instruction formats
 ;; below (see `Inst`) in any combination.
@@ -1039,8 +1262,16 @@
     (MovN)
 ))
 
+(type CapOp
+  (enum
+    (Add)
+    (Sub)
+  )
+)
+
 (type UImm5 (primitive UImm5))
 (type Imm12 (primitive Imm12))
+(type Imm6 (primitive Imm6))
 (type ImmLogic (primitive ImmLogic))
 (type ImmShift (primitive ImmShift))
 (type ShiftOpAndAmt (primitive ShiftOpAndAmt))
@@ -1087,6 +1318,7 @@
 
 (type MemLabel extern (enum))
 (type SImm9 extern (enum))
+(type UImm9 extern (enum))
 (type UImm12Scaled extern (enum))
 
 ;; An addressing mode specified for a load/store operation.
@@ -1205,17 +1437,122 @@
   (SPPostIndexed (simm7 SImm7Scaled))
 ))
 
+;; An addressing mode specified for a load/store operation.
+(type CapAMode
+      (enum
+        ;;
+        ;; Real ARM64 addressing modes:
+        ;;
+        ;; "post-indexed" mode as per AArch64 docs: postincrement reg after
+        ;; address computation.
+        ;; Specialized here to SP so we don't have to emit regalloc metadata.
+        (SPPostIndexed
+         (simm9 SImm9))
+
+        ;; "pre-indexed" mode as per AArch64 docs: preincrement reg before
+        ;; address computation.
+        ;; Specialized here to SP so we don't have to emit regalloc metadata.
+        (SPPreIndexed
+         (simm9 SImm9))
+
+        ;; N.B.: RegReg, RegScaled, and RegScaledExtended all correspond to
+        ;; what the ISA calls the "register offset" addressing mode. We split
+        ;; out several options here for more ergonomic codegen.
+        ;;
+        ;; Register plus register offset.
+        (RegReg
+         (rn Reg)
+         (rm Reg))
+
+        ;; Register plus register offset, scaled by type's size.
+        (RegScaled
+         (rn Reg)
+         (rm Reg)
+         (ty Type))
+
+        ;; Register plus register offset, scaled by type's size, with index
+        ;; sign- or zero-extended first.
+        (RegScaledExtended
+         (rn Reg)
+         (rm Reg)
+         (ty Type)
+         (extendop ExtendOp))
+
+        ;; Register plus register offset, with index sign- or zero-extended
+        ;; first.
+        (RegExtended
+         (rn Reg)
+         (rm Reg)
+         (extendop ExtendOp))
+
+        ;; Unscaled signed 9-bit immediate offset from reg.
+        (Unscaled
+         (rn Reg)
+         (simm9 SImm9))
+
+        ;; Scaled (by size of a type) unsigned 12-bit immediate offset from reg.
+        (UnsignedOffset
+         (rn Reg)
+         (uimm9 UImm9))
+
+        ;; virtual addressing modes that are lowered at emission time:
+        ;;
+        ;; Reference to a "label": e.g., a symbol.
+        (Label
+         (label MemLabel))
+
+        ;; Arbitrary offset from a register. Converted to generation of large
+        ;; offsets with multiple instructions as necessary during code emission.
+        (RegOffset
+         (rn Reg)
+         (off i64)
+         (ty Type))
+
+        ;; Offset from the stack pointer.
+        (SPOffset
+         (off i64)
+         (ty Type))
+
+        ;; Offset from the frame pointer.
+        (FPOffset
+         (off i64)
+         (ty Type))
+
+        ;; A reference to a constant which is placed outside of the function's
+        ;; body, typically at the end.
+        (Const
+          (addr VCodeConstant))
+
+        ;; Offset from the "nominal stack pointer", which is where the real SP is
+        ;; just after stack and spill slots are allocated in the function prologue.
+        ;; At emission time, this is converted to `SPOffset` with a fixup added to
+        ;; the offset constant. The fixup is a running value that is tracked as
+        ;; emission iterates through instructions in linear order, and can be
+        ;; adjusted up and down with [Inst::VirtualSPOffsetAdj].
+        ;;
+        ;; The standard ABI is in charge of handling this (by emitting the
+        ;; adjustment meta-instructions). It maintains the invariant that "nominal
+        ;; SP" is where the actual SP is after the function prologue and before
+        ;; clobber pushes. See the diagram in the documentation for
+        ;; [crate::isa::aarch64::abi](the ABI module) for more details.
+        (NominalSPOffset
+         (off i64)
+         (ty Type))))
+
+
 (type FPUOpRI extern (enum))
 (type FPUOpRIMod extern (enum))
 
 (type OperandSize extern
       (enum Size32
-            Size64))
+            Size64
+            Size64C))
 
 (type TestBitAndBranchKind (enum (Z) (NZ)))
 
 ;; Helper for calculating the `OperandSize` corresponding to a type
 (decl operand_size (Type) OperandSize)
+(rule 2 (operand_size $C64) (OperandSize.Size64C))
 (rule 1 (operand_size (fits_in_32 _ty)) (OperandSize.Size32))
 (rule (operand_size (fits_in_64 _ty)) (OperandSize.Size64))
 
@@ -1724,6 +2061,9 @@
 (decl imm12_from_u64 (Imm12) u64)
 (extern extractor imm12_from_u64 imm12_from_u64)
 
+(decl imm6_from_u64 (Imm6) u64)
+(extern extractor imm6_from_u64 imm6_from_u64)
+
 (decl u8_into_uimm5 (u8) UImm5)
 (extern constructor u8_into_uimm5 u8_into_uimm5)
 
@@ -1795,6 +2135,11 @@
 (extractor
   (imm12_from_value n)
   (iconst (u64_from_imm64 (imm12_from_u64 n))))
+
+(decl imm6_from_value (Imm6) Value)
+(extractor
+  (imm6_from_value n)
+  (iconst (u64_from_imm64 (imm6_from_u64 n))))
 
 ;; Conceptually the same as `imm12_from_value`, but tries negating the constant
 ;; value (first sign-extending to handle narrow widths).
@@ -1892,6 +2237,19 @@
 (rule (alu_rrr op ty src1 src2)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.AluRRR op (operand_size ty) dst src1 src2))))
+        dst))
+
+;; Helper for emitting `MInst.CapOpRRR` instructions.
+(decl cap_rrr (CapOp Type Reg Reg) Reg)
+(rule (cap_rrr op ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.CapOpRRR op dst src1 src2 (ExtendOp.UXTX)))))
+        dst))
+
+(decl cap_rrr_extend (CapOp Type Reg ExtendedValue) Reg)
+(rule (cap_rrr_extend op ty src1 src2)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.CapOpRRR op dst src1 (put_extended_in_reg src2) (get_extended_op src2)))))
         dst))
 
 ;; Helper for emitting `MInst.VecRRR` instructions.
@@ -1996,6 +2354,13 @@
 (rule (alu_rr_imm12 op ty src imm)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.AluRRImm12 op (operand_size ty) dst src imm))))
+        dst))
+
+;; Helper for emitting `MInst.CapRRImm` instructions.
+(decl cap_rr_imm12 (CapOp Type Reg Imm12) Reg)
+(rule (cap_rr_imm12 op ty src imm)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.CapOpImm12 op dst src imm))))
         dst))
 
 ;; Helper for emitting `MInst.AluRRRShift` instructions.
@@ -2423,12 +2788,15 @@
 
 (decl add (Type Reg Reg) Reg)
 (rule (add ty x y) (alu_rrr (ALUOp.Add) ty x y))
+(rule 1 (add $C64 x y) (cap_rrr (CapOp.Add) $C64 x y))
 
 (decl add_imm (Type Reg Imm12) Reg)
 (rule (add_imm ty x y) (alu_rr_imm12 (ALUOp.Add) ty x y))
+(rule 1 (add_imm $C64 x y) (cap_rr_imm12 (CapOp.Add) $C64 x y))
 
 (decl add_extend (Type Reg ExtendedValue) Reg)
 (rule (add_extend ty x y) (alu_rr_extend_reg (ALUOp.Add) ty x y))
+(rule 1 (add_extend $C64 x y) (cap_rrr_extend (CapOp.Add) $C64 x y))
 
 (decl add_extend_op (Type Reg Reg ExtendOp) Reg)
 (rule (add_extend_op ty x y extend) (alu_rrr_extend (ALUOp.Add) ty x y extend))
@@ -2443,12 +2811,15 @@
 
 (decl sub (Type Reg Reg) Reg)
 (rule (sub ty x y) (alu_rrr (ALUOp.Sub) ty x y))
+(rule 1 (sub $C64 x y) (cap_rrr (CapOp.Sub) $C64 x y))
 
 (decl sub_imm (Type Reg Imm12) Reg)
 (rule (sub_imm ty x y) (alu_rr_imm12 (ALUOp.Sub) ty x y))
+(rule 1 (sub_imm $C64 x y) (cap_rr_imm12 (CapOp.Sub) $C64 x y))
 
 (decl sub_extend (Type Reg ExtendedValue) Reg)
 (rule (sub_extend ty x y) (alu_rr_extend_reg (ALUOp.Sub) ty x y))
+(rule 1 (sub_extend $C64 x y) (cap_rrr_extend (CapOp.Sub) $C64 x y))
 
 (decl sub_shift (Type Reg Reg ShiftOpAndAmt) Reg)
 (rule (sub_shift ty x y z) (alu_rrr_shift (ALUOp.Sub) ty x y z))
@@ -2816,50 +3187,110 @@
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.ULoad8 dst amode flags))))
         dst))
+(decl aarch64_uload8Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_uload8Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad8Alt dst amode flags))))
+        dst))
 (decl aarch64_sload8 (AMode MemFlags) Reg)
 (rule (aarch64_sload8 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.SLoad8 dst amode flags))))
+        dst))
+(decl aarch64_sload8Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_sload8Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad8Alt dst amode flags))))
         dst))
 (decl aarch64_uload16 (AMode MemFlags) Reg)
 (rule (aarch64_uload16 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.ULoad16 dst amode flags))))
         dst))
+(decl aarch64_uload16Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_uload16Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad16Alt dst amode flags))))
+        dst))
 (decl aarch64_sload16 (AMode MemFlags) Reg)
 (rule (aarch64_sload16 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.SLoad16 dst amode flags))))
+        dst))
+(decl aarch64_sload16Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_sload16Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad16Alt dst amode flags))))
         dst))
 (decl aarch64_uload32 (AMode MemFlags) Reg)
 (rule (aarch64_uload32 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.ULoad32 dst amode flags))))
         dst))
+(decl aarch64_uload32Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_uload32Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad32Alt dst amode flags))))
+        dst))
 (decl aarch64_sload32 (AMode MemFlags) Reg)
 (rule (aarch64_sload32 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.SLoad32 dst amode flags))))
+        dst))
+(decl aarch64_sload32Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_sload32Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.SLoad32Alt dst amode flags))))
         dst))
 (decl aarch64_uload64 (AMode MemFlags) Reg)
 (rule (aarch64_uload64 amode flags)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.ULoad64 dst amode flags))))
         dst))
+(decl aarch64_uload64Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_uload64Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.ULoad64Alt dst amode flags))))
+        dst))
+(decl aarch64_loadC64 (AMode MemFlags) Reg)
+(rule (aarch64_loadC64 amode flags)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.LoadC64 dst amode flags))))
+        dst))
+(decl aarch64_loadC64Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_loadC64Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.LoadC64Alt dst amode flags))))
+        dst))
 (decl aarch64_fpuload32 (AMode MemFlags) Reg)
 (rule (aarch64_fpuload32 amode flags)
       (let ((dst WritableReg (temp_writable_reg $F64))
             (_ Unit (emit (MInst.FpuLoad32 dst amode flags))))
+        dst))
+(decl aarch64_fpuload32Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_fpuload32Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuLoad32Alt dst amode flags))))
         dst))
 (decl aarch64_fpuload64 (AMode MemFlags) Reg)
 (rule (aarch64_fpuload64 amode flags)
       (let ((dst WritableReg (temp_writable_reg $F64))
             (_ Unit (emit (MInst.FpuLoad64 dst amode flags))))
         dst))
+(decl aarch64_fpuload64Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_fpuload64Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64))
+            (_ Unit (emit (MInst.FpuLoad64Alt dst amode flags))))
+        dst))
 (decl aarch64_fpuload128 (AMode MemFlags) Reg)
 (rule (aarch64_fpuload128 amode flags)
       (let ((dst WritableReg (temp_writable_reg $F64X2))
             (_ Unit (emit (MInst.FpuLoad128 dst amode flags))))
+        dst))
+(decl aarch64_fpuload128Alt (CapAMode MemFlags) Reg)
+(rule (aarch64_fpuload128Alt amode flags)
+      (let ((dst WritableReg (temp_writable_reg $F64X2))
+            (_ Unit (emit (MInst.FpuLoad128Alt dst amode flags))))
         dst))
 (decl aarch64_loadp64 (PairAMode MemFlags) ValueRegs)
 (rule (aarch64_loadp64 amode flags)
@@ -2873,24 +3304,51 @@
 (decl aarch64_store8 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_store8 amode flags val)
       (SideEffectNoResult.Inst (MInst.Store8 val amode flags)))
+(decl aarch64_store8Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store8Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store8Alt val amode flags)))
 (decl aarch64_store16 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_store16 amode flags val)
       (SideEffectNoResult.Inst (MInst.Store16 val amode flags)))
+(decl aarch64_store16Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store16Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store16Alt val amode flags)))
 (decl aarch64_store32 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_store32 amode flags val)
       (SideEffectNoResult.Inst (MInst.Store32 val amode flags)))
+(decl aarch64_store32Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store32Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store32Alt val amode flags)))
 (decl aarch64_store64 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_store64 amode flags val)
       (SideEffectNoResult.Inst (MInst.Store64 val amode flags)))
+(decl aarch64_store64Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store64Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.Store64Alt val amode flags)))
+(decl aarch64_store64C (AMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store64C amode flags val)
+      (SideEffectNoResult.Inst (MInst.StoreC64 val amode flags)))
+(decl aarch64_store64CAlt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_store64CAlt amode flags val)
+      (SideEffectNoResult.Inst (MInst.StoreC64Alt val amode flags)))
 (decl aarch64_fpustore32 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_fpustore32 amode flags val)
       (SideEffectNoResult.Inst (MInst.FpuStore32 val amode flags)))
+(decl aarch64_fpustore32Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore32Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore32Alt val amode flags)))
 (decl aarch64_fpustore64 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_fpustore64 amode flags val)
       (SideEffectNoResult.Inst (MInst.FpuStore64 val amode flags)))
+(decl aarch64_fpustore64Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore64Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore64Alt val amode flags)))
 (decl aarch64_fpustore128 (AMode MemFlags Reg) SideEffectNoResult)
 (rule (aarch64_fpustore128 amode flags val)
       (SideEffectNoResult.Inst (MInst.FpuStore128 val amode flags)))
+(decl aarch64_fpustore128Alt (CapAMode MemFlags Reg) SideEffectNoResult)
+(rule (aarch64_fpustore128Alt amode flags val)
+      (SideEffectNoResult.Inst (MInst.FpuStore128Alt val amode flags)))
 (decl aarch64_storep64 (PairAMode MemFlags Reg Reg) SideEffectNoResult)
 (rule (aarch64_storep64 amode flags val1 val2)
       (SideEffectNoResult.Inst (MInst.StoreP64 val1 val2 amode flags)))
@@ -3192,6 +3650,89 @@
         (add_imm $I64 x imm12))
 (rule 2 (amode_add x 0) x)
 
+
+;; Lower the address of a load or a store.
+;;
+;; This will create an `AMode` representing the address of the `Value` provided
+;; at runtime plus the immediate offset `i32` provided. The `Type` here is used
+;; to represent the size of the value being loaded or stored for offset scaling
+;; if necessary.
+;;
+;; Note that this is broken up into two phases. In the first phase this attempts
+;; to find constants within the `val` provided and fold them in to the `offset`
+;; provided. Afterwards though the `amode_no_more_iconst` helper is used at
+;; which pointer constants are no longer pattern-matched and instead only
+;; various modes are generated. This in theory would not be necessary with
+;; mid-end optimizations that fold constants into load/store immediate offsets
+;; instead, but for now each backend needs to do this.
+(decl cap_amode (Type Value i32) CapAMode)
+(rule 0 (cap_amode ty val offset)
+        (cap_amode_no_more_iconst ty val offset))
+(rule 1 (cap_amode ty (cadd x (iconst (simm32 y))) offset)
+        (if-let new_offset (s32_add_fallible y offset))
+        (cap_amode_no_more_iconst ty x new_offset))
+
+(decl cap_amode_no_more_iconst (Type Value i32) CapAMode)
+;; Base case: move the `offset` into a register and add it to `val` via the
+;; cap_amode
+(rule 0 (cap_amode_no_more_iconst ty val offset)
+        (CapAMode.RegReg val (imm $I64 (ImmExtend.Zero) (i64_as_u64 offset))))
+
+;; Optimize cases where the `offset` provided fits into a immediates of
+;; various kinds of addressing modes.
+;; TODO(MF): Why tf does regalloc not work if we switch the priority of these two rules?
+(rule 2 (cap_amode_no_more_iconst ty val offset)
+        (if-let simm9 (simm9_from_i64 offset))
+        (CapAMode.Unscaled val simm9))
+(rule 1 (cap_amode_no_more_iconst ty val offset)
+        (if-let uimm9 (uimm9_from_i64 offset))
+        (CapAMode.UnsignedOffset val uimm9))
+
+;; Optimizations where addition can fold some operations into the `cap_amode`.
+;;
+;; Note that here these take higher priority than constants because an
+;; add-of-extend can be folded into an cap_amode, representing 2 otherwise emitted
+;; instructions. Constants on the other hand added to the cap_amode represent only
+;; a single instruction folded in, so fewer instructions should be generated
+;; with these higher priority than the rules above.
+(rule 3 (cap_amode_no_more_iconst ty (cadd x y) offset)
+        (CapAMode.RegReg (cap_amode_add x offset) y))
+(rule 4 (cap_amode_no_more_iconst ty (cadd x (uextend y @ (value_type $I32))) offset)
+        (CapAMode.RegExtended (cap_amode_add x offset) y (ExtendOp.UXTW)))
+(rule 4 (cap_amode_no_more_iconst ty (cadd x (sextend y @ (value_type $I32))) offset)
+        (CapAMode.RegExtended (cap_amode_add x offset) y (ExtendOp.SXTW)))
+
+;; `RegScaled*` rules where this matches an addition of an "index register" to a
+;; base register. The index register is shifted by the size of the type loaded
+;; in bytes to enable this mode matching.
+;;
+;; Note that this can additionally bundle an extending operation but the
+;; extension must happen before the shift. This will pattern-match the shift
+;; first and then if that succeeds afterwards try to find an extend.
+(rule 6 (cap_amode_no_more_iconst ty (cadd x (ishl y (iconst (u64_from_imm64 n)))) offset)
+        (if-let $true (u64_eq (ty_bytes ty) (u64_shl 1 n)))
+        (cap_amode_reg_scaled (cap_amode_add x offset) y ty))
+
+(decl cap_amode_reg_scaled (Reg Value Type) CapAMode)
+(rule 0 (cap_amode_reg_scaled base index ty)
+        (CapAMode.RegScaled base index ty))
+(rule 1 (cap_amode_reg_scaled base (uextend index @ (value_type $I32)) ty)
+        (CapAMode.RegScaledExtended base index ty (ExtendOp.UXTW)))
+(rule 2 (cap_amode_reg_scaled base (sextend index @ (value_type $I32)) ty)
+        (CapAMode.RegScaledExtended base index ty (ExtendOp.SXTW)))
+
+;; Helper to add a 32-bit signed immediate to the register provided. This will
+;; select an appropriate `add` instruction to use.
+(decl cap_amode_add (Reg i32) Reg)
+(rule 0 (cap_amode_add x y)
+        (add $C64 x (imm $I64 (ImmExtend.Zero) (i64_as_u64 y))))
+(rule 1 (cap_amode_add x y)
+        (if-let (imm12_from_u64 imm12) (i64_as_u64 y))
+        (add_imm $C64 x imm12))
+(rule 2 (cap_amode_add x 0) x)
+
+;; TODO: add rules for shift of 4
+
 ;; Creates a `PairAMode` for the `Value` provided plus the `i32` constant
 ;; offset provided.
 (decl pair_amode (Value i32) PairAMode)
@@ -3214,6 +3755,9 @@
 
 (decl pure partial simm9_from_i64 (i64) SImm9)
 (extern constructor simm9_from_i64 simm9_from_i64)
+
+(decl pure partial uimm9_from_i64 (i64) UImm9)
+(extern constructor uimm9_from_i64 uimm9_from_i64)
 
 
 (decl sink_load_into_addr (Type Inst) Reg)
@@ -4195,3 +4739,30 @@
       (let ((dst WritableReg (temp_writable_reg $I8X16))
             (_ Unit (emit (MInst.FpuLoad128 dst amode flags))))
        dst))
+
+;; Helper for emitting convert ptr to cap using ddc
+(decl cvtdz (Reg) Reg)
+(rule (cvtdz x)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.Cvtdz dst x))))
+        dst))
+
+;; Helper for emitting convert cap to ptr
+(decl cvtp (Reg) Reg)
+(rule (cvtp x)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Cvtp dst x))))
+        dst))
+
+;; Helper for emitting set bounds
+(decl scbnds_imm (Reg Imm6) Reg)
+(rule (scbnds_imm x imm)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.ScbndsImm dst x imm))))
+        dst))
+
+(decl scbnds (Reg Reg) Reg)
+(rule (scbnds x y)
+      (let ((dst WritableReg (temp_writable_reg $C64))
+            (_ Unit (emit (MInst.Scbnds dst x y))))
+        dst))

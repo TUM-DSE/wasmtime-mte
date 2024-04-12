@@ -288,6 +288,10 @@ impl<'a> TargetEnvironment for FuncEnv<'a> {
     fn proof_carrying_code(&self) -> bool {
         self.proof_carrying_code
     }
+
+    fn has_cap_pointers(&self) -> bool {
+        self.inner.has_cap_pointers()
+    }
 }
 
 impl<'a> FuncEnvironment for FuncEnv<'a> {

@@ -226,6 +226,10 @@ fn declare_locals<FE: FuncEnvironment + ?Sized>(
             };
             (ty, init)
         }
+        Ptr => {
+            let null = builder.ins().iconst(ir::types::I64, 0);
+            (ir::types::C64, Some(builder.ins().ptr_to_cap_ddc(null)))
+        }
     };
 
     for _ in 0..count {

@@ -2695,7 +2695,8 @@ impl Compiler<'_, '_> {
             (ValType::I32, ValType::I32)
             | (ValType::I64, ValType::I64)
             | (ValType::F32, ValType::F32)
-            | (ValType::F64, ValType::F64) => {}
+            | (ValType::F64, ValType::F64)
+            | (ValType::Ptr, ValType::Ptr) => {}
 
             (ValType::I32, ValType::F32) => self.instruction(F32ReinterpretI32),
             (ValType::I64, ValType::I32) => {
@@ -2722,6 +2723,8 @@ impl Compiler<'_, '_> {
             // not used in the component model
             | (ValType::Ref(_), _)
             | (_, ValType::Ref(_))
+            | (ValType::Ptr, _)
+            | (_, ValType::Ptr)
             | (ValType::V128, _)
             | (_, ValType::V128) => {
                 panic!("cannot get {dst_ty:?} from {src_ty:?} local");
@@ -2754,7 +2757,8 @@ impl Compiler<'_, '_> {
             (ValType::I32, ValType::I32)
             | (ValType::I64, ValType::I64)
             | (ValType::F32, ValType::F32)
-            | (ValType::F64, ValType::F64) => {}
+            | (ValType::F64, ValType::F64)
+            | (ValType::Ptr, ValType::Ptr) => {}
 
             (ValType::F32, ValType::I32) => self.instruction(I32ReinterpretF32),
             (ValType::I32, ValType::I64) => self.instruction(I64ExtendI32U),
@@ -2777,6 +2781,8 @@ impl Compiler<'_, '_> {
             // not used in the component model
             | (ValType::Ref(_), _)
             | (_, ValType::Ref(_))
+            | (ValType::Ptr, _)
+            | (_, ValType::Ptr)
             | (ValType::V128, _)
             | (_, ValType::V128) => {
                 panic!("cannot get {dst_ty:?} from {src_ty:?} local");

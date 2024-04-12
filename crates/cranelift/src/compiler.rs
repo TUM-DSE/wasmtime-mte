@@ -1268,6 +1268,8 @@ impl NativeRet {
                         WasmValType::I32 | WasmValType::F32 => 4,
                         WasmValType::I64 | WasmValType::F64 => 8,
                         WasmValType::Ref(_) => pointer_type.bytes(),
+                        // TODO(MF): only if we compile for cheri
+                        WasmValType::Ptr => 16,
                         WasmValType::V128 => 16,
                     };
                     offset = align_to(offset, size);

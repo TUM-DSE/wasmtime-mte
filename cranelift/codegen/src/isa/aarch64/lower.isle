@@ -39,6 +39,19 @@
 (rule (lower (nop))
       (invalid_reg))
 
+;;;; Rules for `cadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Base case, simply adding things in registers.
+(rule -1 (lower (cadd x y))
+      (add $C64 x y))
+
+(rule 0 (lower (cadd x (extended_value_from_value y)))
+      (add_extend $C64 x y))
+
+;; Special cases for when one operand is an immediate that fits in 12 bits.
+(rule 4 (lower (cadd x (imm12_from_value y)))
+      (add_imm $C64 x y))
+
 ;;;; Rules for `iadd` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; `i64` and smaller
@@ -2281,24 +2294,52 @@
 (rule (lower
        (has_type $I8 (load flags address offset)))
       (aarch64_uload8 (amode $I8 address offset) flags))
+(rule 1 (lower
+       (has_type $I8 (load flags address @ (value_type $C64) offset)))
+      (aarch64_uload8Alt (cap_amode $I8 address offset) flags))
 (rule (lower
        (has_type $I16 (load flags address offset)))
       (aarch64_uload16 (amode $I16 address offset) flags))
+(rule 1 (lower
+       (has_type $I16 (load flags address @ (value_type $C64) offset)))
+      (aarch64_uload16Alt (cap_amode $I16 address offset) flags))
 (rule (lower
        (has_type $I32 (load flags address offset)))
       (aarch64_uload32 (amode $I32 address offset) flags))
+(rule 1 (lower
+       (has_type $I32 (load flags address @ (value_type $C64) offset)))
+      (aarch64_uload32Alt (cap_amode $I32 address offset) flags))
 (rule (lower
        (has_type $I64 (load flags address offset)))
       (aarch64_uload64 (amode $I64 address offset) flags))
+(rule 1 (lower
+       (has_type $I64 (load flags address @ (value_type $C64) offset)))
+      (aarch64_uload64Alt (cap_amode $I64 address offset) flags))
 (rule (lower
        (has_type $R64 (load flags address offset)))
       (aarch64_uload64 (amode $I64 address offset) flags))
+(rule 1 (lower
+       (has_type $R64 (load flags address @ (value_type $C64) offset)))
+      (aarch64_uload64Alt (cap_amode $I64 address offset) flags))
+(rule (lower
+       (has_type $C64 (load flags address offset)))
+      (aarch64_loadC64 (amode $C64 address offset) flags))
+(rule 1 (lower
+       (has_type $C64 (load flags address @ (value_type $C64) offset)))
+      (aarch64_loadC64Alt (cap_amode $C64 address offset) flags))
 (rule (lower
        (has_type $F32 (load flags address offset)))
       (aarch64_fpuload32 (amode $F32 address offset) flags))
+(rule 1 (lower
+       (has_type $F32 (load flags address @ (value_type $C64) offset)))
+      (aarch64_fpuload32Alt (cap_amode $F32 address offset) flags))
 (rule (lower
        (has_type $F64 (load flags address offset)))
       (aarch64_fpuload64 (amode $F64 address offset) flags))
+(rule 1 (lower
+       (has_type $F64 (load flags address @ (value_type $C64) offset)))
+      (aarch64_fpuload64Alt (cap_amode $F64 address offset) flags))
+; TODO: add pair alt load/stores
 (rule (lower
        (has_type $I128 (load flags address offset)))
       (aarch64_loadp64 (pair_amode address offset) flags))
@@ -2322,21 +2363,39 @@
 (rule (lower
        (uload8 flags address offset))
       (aarch64_uload8 (amode $I8 address offset) flags))
+(rule 1 (lower
+       (uload8 flags address @ (value_type $C64) offset))
+      (aarch64_uload8Alt (cap_amode $I8 address offset) flags))
 (rule (lower
        (sload8 flags address offset))
       (aarch64_sload8 (amode $I8 address offset) flags))
+(rule 1 (lower
+       (sload8 flags address @ (value_type $C64) offset))
+      (aarch64_sload8Alt (cap_amode $I8 address offset) flags))
 (rule (lower
        (uload16 flags address offset))
       (aarch64_uload16 (amode $I16 address offset) flags))
+(rule 1 (lower
+       (uload16 flags address @ (value_type $C64) offset))
+      (aarch64_uload16Alt (cap_amode $I16 address offset) flags))
 (rule (lower
        (sload16 flags address offset))
       (aarch64_sload16 (amode $I16 address offset) flags))
+(rule 1 (lower
+       (sload16 flags address @ (value_type $C64) offset))
+      (aarch64_sload16Alt (cap_amode $I16 address offset) flags))
 (rule (lower
        (uload32 flags address offset))
       (aarch64_uload32 (amode $I32 address offset) flags))
+(rule 1 (lower
+       (uload32 flags address @ (value_type $C64) offset))
+      (aarch64_uload32Alt (cap_amode $I32 address offset) flags))
 (rule (lower
        (sload32 flags address offset))
       (aarch64_sload32 (amode $I32 address offset) flags))
+(rule 1 (lower
+       (sload32 flags address @ (value_type $C64) offset))
+      (aarch64_sload32Alt (cap_amode $I32 address offset) flags))
 
 (rule (lower
        (sload8x8 flags address offset))
@@ -2381,44 +2440,92 @@
        (store flags value @ (value_type $I8) address offset))
       (side_effect
        (aarch64_store8 (amode $I8 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $I8) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store8Alt (cap_amode $I8 address offset) flags value)))
 (rule (lower
        (store flags value @ (value_type $I16) address offset))
       (side_effect
        (aarch64_store16 (amode $I16 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $I16) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store16Alt (cap_amode $I16 address offset) flags value)))
 (rule (lower
        (store flags value @ (value_type $I32) address offset))
       (side_effect
        (aarch64_store32 (amode $I32 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $I32) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store32Alt (cap_amode $I32 address offset) flags value)))
 (rule (lower
        (store flags value @ (value_type $I64) address offset))
       (side_effect
        (aarch64_store64 (amode $I64 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $I64) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store64Alt (cap_amode $I64 address offset) flags value)))
 (rule (lower
        (store flags value @ (value_type $R64) address offset))
       (side_effect
        (aarch64_store64 (amode $I64 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $R64) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store64Alt (cap_amode $I64 address offset) flags value)))
+(rule (lower
+       (store flags value @ (value_type $C64) address offset))
+      (side_effect
+       (aarch64_store64C (amode $I64 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $C64) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store64CAlt (cap_amode $I64 address offset) flags value)))
 
 (rule (lower
        (istore8 flags value address offset))
       (side_effect
        (aarch64_store8 (amode $I8 address offset) flags value)))
+(rule 1 (lower
+       (istore8 flags value address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store8Alt (cap_amode $I8 address offset) flags value)))
 (rule (lower
        (istore16 flags value address offset))
       (side_effect
        (aarch64_store16 (amode $I16 address offset) flags value)))
+(rule 1 (lower
+       (istore16 flags value address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store16Alt (cap_amode $I16 address offset) flags value)))
 (rule (lower
        (istore32 flags value address offset))
       (side_effect
        (aarch64_store32 (amode $I32 address offset) flags value)))
+(rule 1 (lower
+       (istore32 flags value address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_store32Alt (cap_amode $I32 address offset) flags value)))
 
 (rule (lower
        (store flags value @ (value_type $F32) address offset))
       (side_effect
        (aarch64_fpustore32 (amode $F32 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $F32) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_fpustore32Alt (cap_amode $F32 address offset) flags value)))
 (rule (lower
        (store flags value @ (value_type $F64) address offset))
       (side_effect
        (aarch64_fpustore64 (amode $F64 address offset) flags value)))
+(rule 1 (lower
+       (store flags value @ (value_type $F64) address @ (value_type $C64) offset))
+      (side_effect
+       (aarch64_fpustore64Alt (cap_amode $F64 address offset) flags value)))
 
 (rule (lower
        (store flags value @ (value_type $I128) address offset))
@@ -2915,3 +3022,23 @@
                   (emit_island (targets_jt_space targets))))
             (ridx Reg (put_in_reg_zext32 idx)))
        (br_table_impl (u32_as_u64 jt_size) ridx default targets)))
+
+;;;; Rules for `ptr_to_cap_ddc` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (ptr_to_cap_ddc x))
+      (cvtdz x))
+
+;;;; Rules for `cap_to_ptr` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (cap_to_ptr x))
+      (cvtp x))
+
+;;;; Rules for `cap_set_bounds` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Base case, simply adding things in registers.
+(rule (lower (cap_set_bounds x y))
+      (scbnds x y))
+
+;; Special cases for when one operand is an immediate that fits in 6 bits.
+(rule 1 (lower (cap_set_bounds x (imm6_from_value y)))
+      (scbnds_imm x y))
