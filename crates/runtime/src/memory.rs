@@ -6,7 +6,7 @@ use crate::mmap::Mmap;
 use crate::mte::{ExcludedTags, MTEConfig, MTEMode};
 use crate::parking_spot::ParkingSpot;
 use crate::vmcontext::VMMemoryDefinition;
-use crate::{MemoryImage, MemoryImageSlot, mte, SendSyncPtr, Store, WaitResult};
+use crate::{mte, MemoryImage, MemoryImageSlot, SendSyncPtr, Store, WaitResult};
 use anyhow::Error;
 use anyhow::{bail, format_err, Result};
 use std::convert::TryFrom;

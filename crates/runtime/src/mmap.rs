@@ -1,13 +1,13 @@
 //! Low-level abstraction for allocating and managing zero-filled pages
 //! of memory.
 
+use crate::mte;
 use crate::mte::MTEConfig;
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
-use crate::mte;
 
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
