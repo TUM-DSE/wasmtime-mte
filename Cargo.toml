@@ -232,15 +232,24 @@ rustix = "0.38.31"
 wit-bindgen = { version = "0.20.0", default-features = false }
 
 # wasm-tools family:
-wasmparser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmparser", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wat = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wat", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wast = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wast", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wasmprinter = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmprinter", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wasm-encoder = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-encoder", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wasm-smith = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-smith", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wasm-mutate = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-mutate", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wit-parser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-parser", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
-wit-component = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-component", rev = "ffdf49fa0d831d598c5c31e2bb68a551b5bd9380" }
+wasmparser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmparser", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wat = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wat", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wast = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wast", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wasmprinter = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasmprinter", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wasm-encoder = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-encoder", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wasm-smith = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-smith", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wasm-mutate = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wasm-mutate", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wit-parser = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-parser", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+wit-component = { git = "https://github.com/TUM-DSE/wasm-tools-mte", package = "wit-component", rev = "4db43a158f0ec745754176a702431f8c5de85891" }
+#wasmparser = { path = "../wasm-tools/crates/wasmparser" }
+#wat = { path = "../wasm-tools/crates/wat" }
+#wast = { path = "../wasm-tools/crates/wast" }
+#wasmprinter = { path = "../wasm-tools/crates/wasmprinter" }
+#wasm-encoder = { path = "../wasm-tools/crates/wasm-encoder" }
+#wasm-smith = { path = "../wasm-tools/crates/wasm-smith" }
+#wasm-mutate = { path = "../wasm-tools/crates/wasm-mutate" }
+#wit-parser = { path = "../wasm-tools/crates/wit-parser" }
+#wit-component = { path = "../wasm-tools/crates/wit-component" }
 
 # Non-Bytecode Alliance maintained dependencies:
 # --------------------------

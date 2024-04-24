@@ -2541,11 +2541,19 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             unimplemented!("GC operators not yet implemented")
         }
 
-        Operator::SegmentNew { memarg } => {
-
+        Operator::SegmentNew { memarg: _ } => {
+            unimplemented!();
         }
         Operator::PtrAdd => {
-            todo!("PtrAdd")
+            let ptr = state.pop1();
+            let offset = state.pop1();
+            state.push1(builder.ins().cadd(ptr, offset));
+        }
+        Operator::PtrLoad { memarg } => {
+            unwrap_or_return_unreachable_state!(
+                state,
+                translate_load(memarg, ir::Opcode::Load, C64, builder, state, environ)?
+            );
         }
     };
     Ok(())
