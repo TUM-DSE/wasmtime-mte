@@ -411,6 +411,15 @@ fn pairmemarg_operands<F: Fn(VReg) -> VReg>(
 
 fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut OperandCollector<'_, F>) {
     match inst {
+        &Inst::Pacda { rd, rn, rm } | &Inst::Autda { rd, rn, rm } => {
+            collector.reg_use(rn);
+            collector.reg_use(rm);
+            collector.reg_reuse_def(rd, 0);
+        }
+        &Inst::Pacdza { rd, rn } | &Inst::Autdza { rd, rn } | &Inst::Xpacd { rd, rn } => {
+            collector.reg_use(rn);
+            collector.reg_reuse_def(rd, 0);
+        }
         &Inst::Irg { rd, rn } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1278,6 +1287,28 @@ impl Inst {
         // pretty-printing or memarg.with_allocs()) needs to match the
         // order in `aarch64_get_operands` above.
         match self {
+            &Inst::Pacda { rd, rm, .. } | &Inst::Autda { rd, rm, .. } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rm = pretty_print_ireg(rm, OperandSize::Size64, allocs);
+                let op = match self {
+                    &Inst::Pacda { .. } => "pacda",
+                    &Inst::Autda { .. } => "autda",
+                    _ => unreachable!(),
+                };
+
+                format!("{op} {rd}, {rm}")
+            }
+            &Inst::Pacdza { rd, .. } | &Inst::Autdza { rd, .. } | &Inst::Xpacd { rd, .. } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let op = match self {
+                    &Inst::Pacdza { .. } => "pacdza",
+                    &Inst::Autdza { .. } => "autdza",
+                    &Inst::Xpacd { .. } => "xpacd",
+                    _ => unreachable!(),
+                };
+
+                format!("{op} {rd}")
+            }
             &Inst::Irg { rd, rn } => {
                 let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
                 let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);

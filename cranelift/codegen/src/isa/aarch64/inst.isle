@@ -932,6 +932,21 @@
        ;; ST2G
        (Stzg (rt Reg) (mem AMode))
 
+       ;; PACDA
+       (Pacda (rd WritableReg) (rn Reg) (rm Reg))
+
+       ;; PACDZA
+       (Pacdza (rd WritableReg) (rn Reg))
+
+       ;; AUTDA
+       (Autda (rd WritableReg) (rn Reg) (rm Reg))
+
+       ;; AUTDZA
+       (Autdza (rd WritableReg) (rn Reg))
+
+       ;; XPACD
+       (Xpacd (rd WritableReg) (rn Reg))
+
        ;; Branch target identification; equivalent to a no-op if Branch Target
        ;; Identification (FEAT_BTI) is not supported.
        (Bti
@@ -1878,6 +1893,37 @@
 (rule (emit_arm64_irg src)
       (let ((dst WritableReg (temp_writable_reg $I64))
             (_ Unit (emit (MInst.Irg dst src))))
+        dst))
+
+
+(decl emit_arm64_pacda (Reg Reg) Reg)
+(rule (emit_arm64_pacda src mod)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Pacda dst src mod))))
+        dst))
+
+(decl emit_arm64_pacdza (Reg) Reg)
+(rule (emit_arm64_pacdza src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Pacdza dst src))))
+        dst))
+
+(decl emit_arm64_autda (Reg Reg) Reg)
+(rule (emit_arm64_autda src mod)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Autda dst src mod))))
+        dst))
+
+(decl emit_arm64_autdza (Reg) Reg)
+(rule (emit_arm64_autdza src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Autdza dst src))))
+        dst))
+
+(decl emit_arm64_xpacd (Reg) Reg)
+(rule (emit_arm64_xpacd src)
+      (let ((dst WritableReg (temp_writable_reg $I64))
+            (_ Unit (emit (MInst.Xpacd dst src))))
         dst))
 
 

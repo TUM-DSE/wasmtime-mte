@@ -656,6 +656,14 @@ fn enc_asimd_mod_imm(rd: Writable<Reg>, q_op: u32, cmode: u32, imm: u8) -> u32 {
         | machreg_to_vec(rd.to_reg())
 }
 
+fn enc_pac_inst(rd: Writable<Reg>, rm: Option<Reg>, op31_14: u32, op12_10: u32) -> u32 {
+    let (z, rm) = match rm {
+        Some(reg) => (0b0, machreg_to_gpr(reg)),
+        None => (0b1, 0b11111),
+    };
+    (op31_14 << 14) | z << 13 | (op12_10 << 10) | (rm << 5) | machreg_to_gpr(rd.to_reg())
+}
+
 /// State carried between emissions of a sequence of instructions.
 #[derive(Default, Clone, Debug)]
 pub struct EmitState {
@@ -746,6 +754,36 @@ impl MachInstEmit for Inst {
         let mut start_off = sink.cur_offset();
 
         match self {
+            &MInst::Pacda { rd, rn, .. }
+            | &MInst::Pacdza { rd, rn }
+            | &MInst::Autda { rd, rn, .. }
+            | &MInst::Autdza { rd, rn } => {
+                let rn = allocs.next(rn);
+                let rm = match self {
+                    &MInst::Pacda { rm, .. } | &MInst::Autda { rm, .. } => Some(allocs.next(rm)),
+                    _ => None,
+                };
+                let rd = allocs.next_writable(rd);
+                debug_assert_eq!(rd.to_reg(), rn);
+                let bits31_14 = 0b110110101100000100;
+                let bits12_10 = match self {
+                    &MInst::Pacda { .. } | &MInst::Pacdza { .. } => 0b010,
+                    &MInst::Autda { .. } | &MInst::Autdza { .. } => 0b110,
+                    _ => unreachable!(),
+                };
+
+                sink.put4(enc_pac_inst(rd, rm, bits31_14, bits12_10));
+            }
+            &MInst::Xpacd { rd, rn } => {
+                let rn = allocs.next(rn);
+                let rd = allocs.next_writable(rd);
+                debug_assert_eq!(rd.to_reg(), rn);
+                let bits31_11 = 0b110110101100000101000;
+                let d = 0b1;
+                let rn = 0b11111;
+                let rd = machreg_to_gpr(rd.to_reg());
+                sink.put4((bits31_11 << 11) | (d << 10) | (rn << 5) | rd);
+            }
             &MInst::Irg { rd, rn } => {
                 // 10011010110_11111_000100_01001_01001
                 let top11 = 0b10011010_110;

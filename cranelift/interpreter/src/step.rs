@@ -1303,6 +1303,13 @@ where
         Opcode::X86Pmulhrsw => unimplemented!("X86Pmulhrsw"),
         Opcode::X86Pmaddubsw => unimplemented!("X86Pmaddubsw"),
         Opcode::X86Cvtt2dq => unimplemented!("X86Cvtt2dq"),
+        Opcode::Arm64Irg => unimplemented!("Arm64Irg"),
+        Opcode::Arm64Stg => unimplemented!("Arm64Stg"),
+        Opcode::Arm64St2g => unimplemented!("Arm64St2g"),
+        Opcode::Arm64Stzg => unimplemented!("Arm64Stzg"),
+        Opcode::PointerSign => unimplemented!("PointerSign"),
+        Opcode::PointerAuth => unimplemented!("PointerAuth"),
+        Opcode::PointerStrip => unimplemented!("PointerStrip"),
     })
 }
 

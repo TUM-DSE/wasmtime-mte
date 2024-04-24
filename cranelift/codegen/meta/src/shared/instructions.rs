@@ -2163,6 +2163,11 @@ pub(crate) fn define(
         "A 32 or 64-bit scalar integer type",
         TypeSetBuilder::new().ints(32..64).build(),
     );
+    let i64 = &TypeVar::new(
+        "i64",
+        "A 64-bit scalar integer type",
+        TypeSetBuilder::new().ints(64..64).build(),
+    );
 
     ig.push(
         Inst::new(
@@ -3868,5 +3873,48 @@ pub(crate) fn define(
         ])
         .can_store()
         .other_side_effects(),
+    );
+
+    ig.push(
+        Inst::new(
+            "pointer_sign",
+            r#"
+            Sign a pointer.
+           "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("ptr", i64).with_doc("Pointer to be signed."),
+            Operand::new("m", i64).with_doc("Modifier."),
+        ])
+        .operands_out(vec![Operand::new("x", i64)]),
+    );
+    ig.push(
+        Inst::new(
+            "pointer_auth",
+            r#"
+            Authenticate a pointer. Traps on failure.
+           "#,
+            &formats.binary,
+        )
+        .operands_in(vec![
+            Operand::new("ptr", i64).with_doc("Pointer to be authenticated."),
+            Operand::new("m", i64).with_doc("Modifier."),
+        ])
+        .operands_out(vec![Operand::new("x", i64)])
+        .can_trap(),
+    );
+    ig.push(
+        Inst::new(
+            "pointer_strip",
+            r#"
+            Strip the signature from a pointer.
+           "#,
+            &formats.unary,
+        )
+        .operands_in(vec![
+            Operand::new("ptr", i64).with_doc("Pointer to be stripped.")
+        ])
+        .operands_out(vec![Operand::new("x", i64)]),
     );
 }

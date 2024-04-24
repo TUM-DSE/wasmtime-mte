@@ -2547,6 +2547,9 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
 
             tag_memory_region(base_ptr, free_tag, size, builder, environ)?;
         }
+        Operator::PointerSign => todo!(),
+        Operator::PointerAuth => todo!(),
+        Operator::PointerStrip => todo!(),
     };
     Ok(())
 }

@@ -2948,3 +2948,34 @@
 
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
+
+
+;; Rules for `pointer_sign` instructions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (pointer_sign ptr mod))
+    (emit_arm64_pacda ptr mod))
+
+;; special case if the modified is zero
+(rule 1 (lower (pointer_sign ptr (u64_from_iconst 0)))
+    (emit_arm64_pacdza ptr))
+
+;; Rules for `pointer_auth` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule (lower (pointer_auth ptr mod))
+    (emit_arm64_autda ptr mod))
+
+;; special case if the modified is zero
+(rule 1 (lower (pointer_auth ptr (u64_from_iconst 0)))
+    (emit_arm64_autdza ptr))
+
+;; special case if we are authenticating a just signed pointer with the same modifier
+(rule 2 (lower (pointer_auth (pointer_sign ptr m) m))
+    ptr)
+
+;; Rules for `pointer_strip` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(rule (lower (pointer_strip ptr))
+    (emit_arm64_xpacd ptr))
+
+;; special case if we are stripping a just signed pointer
+(rule 2 (lower (pointer_strip (pointer_sign ptr m)))
+    ptr)
+

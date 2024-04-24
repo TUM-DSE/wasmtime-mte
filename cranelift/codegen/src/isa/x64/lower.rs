@@ -11,6 +11,7 @@ use crate::isa::x64::inst::*;
 use crate::isa::x64::pcc;
 use crate::isa::{x64::X64Backend, CallConv};
 use crate::machinst::abi::SmallInstVec;
+use crate::machinst::inst_common::InsnInput;
 use crate::machinst::lower::*;
 use crate::machinst::*;
 use crate::result::CodegenResult;

@@ -12,6 +12,7 @@ use super::{is_int_or_ref_ty, is_mergeable_load, lower_to_amode, MergeableLoadSi
 use crate::ir::LibCall;
 use crate::isa::x64::lower::emit_vm_call;
 use crate::isa::x64::X64Backend;
+use crate::machinst::inst_common::{InsnInput, MachAtomicRmwOp};
 use crate::{
     ir::{
         condcodes::{CondCode, FloatCC, IntCC},
@@ -24,8 +25,7 @@ use crate::{
         inst::{args::*, regs, CallInfo, ReturnCallInfo},
     },
     machinst::{
-        isle::*, valueregs, ArgPair, InsnInput, InstOutput, Lower, MachAtomicRmwOp, MachInst,
-        VCodeConstant, VCodeConstantData,
+        isle::*, valueregs, ArgPair, InstOutput, Lower, MachInst, VCodeConstant, VCodeConstantData,
     },
 };
 use alloc::vec::Vec;

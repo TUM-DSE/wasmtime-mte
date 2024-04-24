@@ -1,0 +1,141 @@
+test compile precise-output
+set unwind_info=false
+target aarch64
+
+function %sign_mod(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = pointer_sign v0, v1
+    return v2
+}
+
+; VCode:
+; block0:
+;   pacda x0, x1
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pacda x0, x1
+;   ret
+
+function %sign_0(i64) -> i64 {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    v2 = pointer_sign v0, v1
+    return v2
+}
+
+; VCode:
+; block0:
+;   pacdza x0
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   pacdza x0
+;   ret
+
+function %auth_mod(i64, i64) -> i64 {
+block0(v0: i64, v1: i64):
+    v2 = pointer_auth v0, v1
+    return v2
+}
+
+; VCode:
+; block0:
+;   autda x0, x1
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   autda x0, x1
+;   ret
+
+function %auth_0(i64) -> i64 {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    v2 = pointer_auth v0, v1
+    return v2
+}
+
+; VCode:
+; block0:
+;   autdza x0
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   autdza x0
+;   ret
+
+function %strip(i64) -> i64 {
+block0(v0: i64):
+    v1 = pointer_strip v0
+    return v1
+}
+
+; VCode:
+; block0:
+;   xpacd x0
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   xpacd x0
+;   ret
+
+function %opt_strip(i64) -> i64 {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    v2 = pointer_sign v0, v1
+    v3 = pointer_strip v2
+    return v3
+}
+
+; VCode:
+; block0:
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   ret
+
+function %opt_sign_same_mod(i64) -> i64 {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    v2 = pointer_sign v0, v1
+    v3 = pointer_auth v2, v1
+    return v3
+}
+
+; VCode:
+; block0:
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   ret
+
+function %opt_sign_different_mod(i64) -> i64 {
+block0(v0: i64):
+    v1 = iconst.i64 0
+    v2 = iconst.i64 1
+    v3 = pointer_sign v0, v1
+    v4 = pointer_auth v3, v2
+    return v4
+}
+
+; VCode:
+; block0:
+;   movz x4, #1
+;   pacdza x0
+;   autda x0, x4
+;   ret
+;
+; Disassembled:
+; block0: ; offset 0x0
+;   mov x4, #1
+;   pacdza x0
+;   autda x0, x4
+;   ret
+
