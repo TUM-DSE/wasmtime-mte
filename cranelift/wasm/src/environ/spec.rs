@@ -54,14 +54,14 @@ pub trait TargetEnvironment: TypeConvert {
     /// Whether to add proof-carrying-code facts to verify memory accesses.
     fn proof_carrying_code(&self) -> bool;
 
-    /// Whether we have mte
-    fn mte(&self) -> bool;
-
     /// Whether to use mte to do bounds checks
     fn mte_bounds_checks(&self) -> bool;
 
     /// Whether to use mte to do bounds checks
-    fn mem_safety(&self) -> bool;
+    fn mte_mem_safety(&self) -> bool;
+
+    /// Whether to enable pointer authentication
+    fn ptr_auth(&self) -> bool;
 
     /// Get the Cranelift integer type to use for native pointers.
     ///

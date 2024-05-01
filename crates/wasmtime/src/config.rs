@@ -784,18 +784,6 @@ impl Config {
         self
     }
 
-    /// Enable mte for memories
-    ///
-    /// This is `false` by default.
-    pub fn enable_mte(&mut self, enable: bool) -> &mut Self {
-        self.tunables.enable_mte = enable;
-        let val = if enable { "true" } else { "false" };
-        self.compiler_config
-            .settings
-            .insert("enable_mte".to_string(), val.to_string());
-        self
-    }
-
     /// Enable mte bounds checks for memories
     ///
     /// This is `false` by default.
@@ -888,7 +876,7 @@ impl Config {
         self
     }
 
-    /// Configures whether the WebAssembly mem_safet proposal will
+    /// Configures whether the WebAssembly mem_safety proposal will
     /// be enabled for compilation.
     ///
     /// Note that this the upstream specification is not finalized and Wasmtime
@@ -896,12 +884,28 @@ impl Config {
     /// much.
     ///
     /// This is `false` by default.
-    pub fn wasm_mem_safety(&mut self, enable: bool) -> &mut Self {
+    pub fn wasm_mte_mem_safety(&mut self, enable: bool) -> &mut Self {
         self.features.mem_safety = enable;
         let val = if enable { "true" } else { "false" };
         self.compiler_config
             .settings
             .insert("enable_mte_mem_safety".to_string(), val.to_string());
+        self
+    }
+
+    /// Configures whether the WebAssembly ptr_auth proposal will be enabled for compilation.
+    ///
+    /// Note that this the upstream specification is not finalized and Wasmtime
+    /// may also have bugs for this feature since it hasn't been exercised
+    /// much.
+    ///
+    /// This is `false` by default.
+    pub fn wasm_pac_ptr_auth(&mut self, enable: bool) -> &mut Self {
+        self.features.ptr_auth = enable;
+        let val = if enable { "true" } else { "false" };
+        self.compiler_config
+            .settings
+            .insert("enable_pac_ptr_auth".to_string(), val.to_string());
         self
     }
 

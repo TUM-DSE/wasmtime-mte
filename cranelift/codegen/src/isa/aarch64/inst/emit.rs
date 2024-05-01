@@ -772,6 +772,9 @@ impl MachInstEmit for Inst {
                     _ => unreachable!(),
                 };
 
+                if std::env::var("INSERT_BRK").is_ok() {
+                    sink.put4(0b11010100001_0000000000000000_00000u32);
+                }
                 sink.put4(enc_pac_inst(rd, rm, bits31_14, bits12_10));
             }
             &MInst::Xpacd { rd, rn } => {

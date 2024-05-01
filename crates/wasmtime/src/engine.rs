@@ -411,8 +411,17 @@ impl Engine {
             }
 
             // only available on linux
-            "enable_mte" | "enable_mte_mem_safety" | "enable_mte_bounds_checks" => {
-                if target.operating_system != target_lexicon::OperatingSystem::Linux {
+            "enable_mte_mem_safety" | "enable_mte_bounds_checks" => {
+                if target.operating_system != target_lexicon::OperatingSystem::Linux || !matches!(target.architecture, target_lexicon::Architecture::Aarch64(_)) {
+                    *value == FlagValue::Bool(false)
+                } else {
+                    return Ok(())
+                }
+            }
+
+            // only available on linux
+            "enable_pac_ptr_auth" => {
+                if  !matches!(target.architecture, target_lexicon::Architecture::Aarch64(_)) {
                     *value == FlagValue::Bool(false)
                 } else {
                     return Ok(())

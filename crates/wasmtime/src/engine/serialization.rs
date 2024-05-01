@@ -200,6 +200,7 @@ struct WasmFeatures {
     extended_const: bool,
     function_references: bool,
     mem_safety: bool,
+    ptr_auth: bool,
 }
 
 impl Metadata<'_> {
@@ -223,6 +224,7 @@ impl Metadata<'_> {
             gc,
             component_model_values,
             mem_safety,
+            ptr_auth,
 
             // Always on; we don't currently have knobs for these.
             mutable_global: _,
@@ -255,6 +257,7 @@ impl Metadata<'_> {
                 extended_const,
                 function_references,
                 mem_safety,
+                ptr_auth,
             },
         }
     }
@@ -438,6 +441,7 @@ impl Metadata<'_> {
             extended_const,
             function_references,
             mem_safety,
+            ptr_auth,
         } = self.features;
 
         Self::check_bool(
@@ -497,6 +501,11 @@ impl Metadata<'_> {
             mem_safety,
             other.mem_safety,
             "WebAssembly memory safety support",
+        )?;
+        Self::check_bool(
+            ptr_auth,
+            other.ptr_auth,
+            "WebAssembly pointer authentication support",
         )?;
 
         Ok(())

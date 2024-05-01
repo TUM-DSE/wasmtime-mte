@@ -1226,16 +1226,16 @@ impl<'module_environment> TargetEnvironment for FuncEnvironment<'module_environm
         self.isa.flags().enable_pcc()
     }
 
-    fn mte(&self) -> bool {
-        self.isa.flags().enable_mte()
-    }
-
     fn mte_bounds_checks(&self) -> bool {
         self.isa.flags().enable_mte_bounds_checks()
     }
 
-    fn mem_safety(&self) -> bool {
+    fn mte_mem_safety(&self) -> bool {
         self.isa.flags().enable_mte_mem_safety()
+    }
+
+    fn ptr_auth(&self) -> bool {
+        self.isa.flags().enable_pac_ptr_auth()
     }
 }
 

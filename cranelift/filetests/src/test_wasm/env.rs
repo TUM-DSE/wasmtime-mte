@@ -256,9 +256,9 @@ pub struct FuncEnv<'a> {
     pub next_heap: usize,
     pub heap_access_spectre_mitigation: bool,
     pub proof_carrying_code: bool,
-    pub mte: bool,
     pub mte_bounds_checks: bool,
-    pub mem_safety: bool,
+    pub mte_mem_safety: bool,
+    pub ptr_auth: bool,
 }
 
 impl<'a> FuncEnv<'a> {
@@ -270,7 +270,7 @@ impl<'a> FuncEnv<'a> {
         proof_carrying_code: bool,
         mte: bool,
         mte_bounds_checks: bool,
-        mem_safety: bool,
+        mte_mem_safety: bool,
     ) -> Self {
         let inner = cranelift_wasm::DummyFuncEnvironment::new(mod_info, expected_reachability);
         Self {
@@ -280,9 +280,9 @@ impl<'a> FuncEnv<'a> {
             next_heap: 0,
             heap_access_spectre_mitigation,
             proof_carrying_code,
-            mte,
             mte_bounds_checks,
-            mem_safety,
+            mte_mem_safety,
+            ptr_auth: false,
         }
     }
 }
@@ -306,16 +306,16 @@ impl<'a> TargetEnvironment for FuncEnv<'a> {
         self.proof_carrying_code
     }
 
-    fn mte(&self) -> bool {
-        self.mte
-    }
-
     fn mte_bounds_checks(&self) -> bool {
         self.mte_bounds_checks
     }
 
-    fn mem_safety(&self) -> bool {
-        self.mem_safety
+    fn mte_mem_safety(&self) -> bool {
+        self.mte_mem_safety
+    }
+
+    fn ptr_auth(&self) -> bool {
+        self.ptr_auth
     }
 }
 

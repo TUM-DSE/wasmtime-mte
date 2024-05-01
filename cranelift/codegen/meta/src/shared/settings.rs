@@ -78,15 +78,6 @@ pub(crate) fn define() -> SettingGroup {
     );
 
     settings.add_bool(
-        "enable_mte",
-        "Enable mte.",
-        r#"
-            This enables MTE.
-        "#,
-        false,
-    );
-
-    settings.add_bool(
         "enable_mte_bounds_checks",
         "Enable mte bounds checks.",
         r#"
@@ -100,6 +91,15 @@ pub(crate) fn define() -> SettingGroup {
         "Enable the mte mem safety.",
         r#"
             This enables the MTE mem safety feature
+        "#,
+        false,
+    );
+
+    settings.add_bool(
+        "enable_pac_ptr_auth",
+        "Enable the pointer authentication feature.",
+        r#"
+            This enables the pointer authentication feature.
         "#,
         false,
     );

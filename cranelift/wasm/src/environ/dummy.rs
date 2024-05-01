@@ -266,15 +266,15 @@ impl<'dummy_environment> TargetEnvironment for DummyFuncEnvironment<'dummy_envir
         false
     }
 
-    fn mte(&self) -> bool {
-        false
-    }
-
     fn mte_bounds_checks(&self) -> bool {
         false
     }
 
-    fn mem_safety(&self) -> bool {
+    fn mte_mem_safety(&self) -> bool {
+        false
+    }
+
+    fn ptr_auth(&self) -> bool {
         false
     }
 }
@@ -734,15 +734,15 @@ impl TargetEnvironment for DummyEnvironment {
         false
     }
 
-    fn mte(&self) -> bool {
-        false
-    }
-
     fn mte_bounds_checks(&self) -> bool {
         false
     }
 
-    fn mem_safety(&self) -> bool {
+    fn mte_mem_safety(&self) -> bool {
+        false
+    }
+
+    fn ptr_auth(&self) -> bool {
         false
     }
 }

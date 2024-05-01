@@ -105,6 +105,8 @@ wasmtime_option_group! {
         pub mte: Option<bool>,
         /// Whether to enable mte bounds checks
         pub mte_bounds_checks: Option<bool>,
+        /// Whether to enable pac
+        pub pac: Option<bool>,
 
         #[prefixed = "cranelift"]
         /// Set a cranelift-specific option. Use `wasmtime settings` to see
@@ -223,6 +225,8 @@ wasmtime_option_group! {
         pub function_references: Option<bool>,
         /// Configure support for the memory-safety proposal.
         pub mem_safety: Option<bool>,
+        /// Configure support for the ptr-auth proposal.
+        pub ptr_auth: Option<bool>,
     }
 
     enum Wasm {
@@ -477,13 +481,10 @@ impl CommonOptions {
             true => err,
         }
 
-        if let Some(enable) = self.codegen.mte {
-            config.enable_mte(enable);
-        }
         if let Some(enable) = self.codegen.mte_bounds_checks {
             if enable {
-                if let Some(false) = self.codegen.mte {
-                    anyhow::bail!("mte needs to be enabled for mte bounds checks");
+                if !matches!(self.codegen.mte, Some(true)) {
+                    anyhow::bail!("mte bounds checks require mte to be enabled");
                 }
 
                 if self.opts.dynamic_memory_guard_size.is_none() {
@@ -597,7 +598,20 @@ impl CommonOptions {
             config.wasm_memory64(enable);
         }
         if let Some(enable) = self.wasm.mem_safety.or(all) {
-            config.wasm_mem_safety(enable);
+            if enable {
+                if !matches!(self.codegen.mte, Some(true)) {
+                    anyhow::bail!("memory safety proposal requires mte to be enabled");
+                }
+            }
+            config.wasm_mte_mem_safety(enable);
+        }
+        if let Some(enable) = self.wasm.ptr_auth.or(all) {
+            if enable {
+                if !matches!(self.codegen.pac, Some(true)) {
+                    anyhow::bail!("memory ptr auth requires pac to be enabled");
+                }
+            }
+            config.wasm_pac_ptr_auth(enable);
         }
         if let Some(enable) = self.wasm.component_model.or(all) {
             #[cfg(feature = "component-model")]
