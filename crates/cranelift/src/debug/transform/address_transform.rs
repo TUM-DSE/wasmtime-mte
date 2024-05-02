@@ -319,7 +319,13 @@ impl<'a> TransformRangeEndIter<'a> {
                 ranges: &func.lookup.ranges,
             }
         } else {
-            unreachable!();
+            TransformRangeEndIter {
+                addr,
+                indices: &[],
+                ranges: &func.lookup.ranges,
+            }
+            //
+            // unreachable!();
         }
     }
 }
