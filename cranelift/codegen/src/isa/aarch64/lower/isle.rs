@@ -11,7 +11,7 @@ use super::{
     zero_reg, ASIMDFPModImm, ASIMDMovModImm, BranchTarget, CallIndInfo, CallInfo, Cond, CondBrKind,
     ExtendOp, FPUOpRI, FPUOpRIMod, FloatCC, Imm12, ImmLogic, ImmShift, Inst as MInst, IntCC,
     MachLabel, MemLabel, MoveWideConst, MoveWideOp, Opcode, OperandSize, Reg, SImm9, ScalarSize,
-    ShiftOpAndAmt, UImm12Scaled, UImm5, VecMisc2, VectorSize, NZCV,
+    ShiftOpAndAmt, UImm12Scaled, UImm4, UImm5, UImm6Scaled, VecMisc2, VectorSize, NZCV,
 };
 use crate::ir::{condcodes, ArgumentExtension};
 use crate::isa;
@@ -492,8 +492,16 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
         NZCV::new(n, z, c, v)
     }
 
+    fn u8_into_uimm4(&mut self, x: u8) -> UImm4 {
+        UImm4::maybe_from_u8(x).unwrap()
+    }
+
     fn u8_into_uimm5(&mut self, x: u8) -> UImm5 {
         UImm5::maybe_from_u8(x).unwrap()
+    }
+
+    fn u16_into_uimm6_scaled(&mut self, x: u16) -> UImm6Scaled {
+        UImm6Scaled::maybe_from_u16(x).unwrap()
     }
 
     fn u8_into_imm12(&mut self, x: u8) -> Imm12 {

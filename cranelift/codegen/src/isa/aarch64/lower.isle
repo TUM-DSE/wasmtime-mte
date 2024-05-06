@@ -2949,6 +2949,10 @@
 (rule (lower (arm64_irg src))
       (emit_arm64_irg src))
 
+;; Rules for `arm64_add_tag` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(rule (lower (arm64_add_tag ptr (u8_from_uimm8 uimm4)))
+    (emit_arm64_addg ptr 0 uimm4))
 
 ;; Rules for `pointer_sign` instructions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

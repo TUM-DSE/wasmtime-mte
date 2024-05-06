@@ -36,6 +36,29 @@ impl NZCV {
     }
 }
 
+/// An unsigned 4-bit immediate.
+#[derive(Clone, Copy, Debug)]
+pub struct UImm4 {
+    /// The value.
+    value: u8,
+}
+
+impl UImm4 {
+    /// Create an unsigned 4-bit immediate from u8.
+    pub fn maybe_from_u8(value: u8) -> Option<UImm4> {
+        if value < 16 {
+            Some(UImm4 { value })
+        } else {
+            None
+        }
+    }
+
+    /// Bits for encoding.
+    pub fn bits(&self) -> u32 {
+        u32::from(self.value)
+    }
+}
+
 /// An unsigned 5-bit immediate.
 #[derive(Clone, Copy, Debug)]
 pub struct UImm5 {
@@ -48,6 +71,31 @@ impl UImm5 {
     pub fn maybe_from_u8(value: u8) -> Option<UImm5> {
         if value < 32 {
             Some(UImm5 { value })
+        } else {
+            None
+        }
+    }
+
+    /// Bits for encoding.
+    pub fn bits(&self) -> u32 {
+        u32::from(self.value)
+    }
+}
+
+/// An unsigned 6-bit immediate scaled by 16.
+#[derive(Clone, Copy, Debug)]
+pub struct UImm6Scaled {
+    /// The value.
+    value: u8,
+}
+
+impl UImm6Scaled {
+    /// Create an unsigned 6-bit immediate from u8.
+    pub fn maybe_from_u16(value: u16) -> Option<UImm6Scaled> {
+        if value % 16 == 0 && value < 1008 {
+            Some(UImm6Scaled {
+                value: (value >> 4) as u8,
+            })
         } else {
             None
         }
@@ -846,7 +894,19 @@ impl PrettyPrint for NZCV {
     }
 }
 
+impl PrettyPrint for UImm4 {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
+        format!("#{}", self.value)
+    }
+}
+
 impl PrettyPrint for UImm5 {
+    fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
+        format!("#{}", self.value)
+    }
+}
+
+impl PrettyPrint for UImm6Scaled {
     fn pretty_print(&self, _: u8, _: &mut AllocationConsumer<'_>) -> String {
         format!("#{}", self.value)
     }

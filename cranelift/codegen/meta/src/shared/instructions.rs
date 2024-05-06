@@ -3877,6 +3877,23 @@ pub(crate) fn define(
 
     ig.push(
         Inst::new(
+            "arm64_add_tag",
+            r#"
+        Wrapping add to tag.
+        "#,
+            &formats.binary_imm8,
+        )
+        .operands_in(vec![
+            Operand::new("x", iAddr).with_doc("Tagged address"),
+            Operand::new("z", &imm.uimm8).with_doc("Value to be added to the tag"),
+        ])
+        .operands_out(vec![
+            Operand::new("a", iAddr).with_doc("Resulting tagged address.")
+        ]),
+    );
+
+    ig.push(
+        Inst::new(
             "pointer_sign",
             r#"
             Sign a pointer.

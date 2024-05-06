@@ -6,7 +6,8 @@
 use crate::environ::{FuncEnvironment, GlobalVariable};
 use crate::{FuncIndex, GlobalIndex, Heap, MemoryIndex, TableIndex, TypeIndex, WasmResult};
 use crate::{HashMap, Occupied, Vacant};
-use cranelift_codegen::ir::{self, Block, Inst, Value};
+use cranelift_codegen::ir::{self, Block, Inst, InstBuilder, Value};
+use cranelift_frontend::FunctionBuilder;
 use std::vec::Vec;
 
 /// Information about the presence of an associated `else` for an `if`, or the
@@ -241,6 +242,11 @@ pub struct FuncTranslationState {
     // `FuncEnvironment::make_direct_func()`.
     // Stores both the function reference and the number of WebAssembly arguments
     functions: HashMap<FuncIndex, (ir::FuncRef, usize)>,
+
+    // Last generated tag
+    // This falls apart for more complex code that has different segment.new instructions in
+    // different branches, but should be fine for now.
+    last_random_tag: Option<Value>,
 }
 
 // Public methods that are exposed to non-`cranelift_wasm` API consumers.
@@ -264,6 +270,7 @@ impl FuncTranslationState {
             tables: HashMap::new(),
             signatures: HashMap::new(),
             functions: HashMap::new(),
+            last_random_tag: None,
         }
     }
 
@@ -436,6 +443,24 @@ impl FuncTranslationState {
             consequent_ends_reachable: None,
             blocktype,
         });
+    }
+
+    /// Insert a new, random tag into `index` and return the new tagged index. This function ensures
+    /// that adjacent allocations have different tags.
+    pub fn tag_index(&mut self, index: Value, builder: &mut FunctionBuilder) -> Value {
+        let tagged_index = match self.last_random_tag.take() {
+            None => builder.ins().arm64_irg(index),
+            Some(tag) => {
+                let last_tag = builder.ins().band_imm(tag, 0x0F00_0000_0000_0000);
+                let new_tag = builder.ins().arm64_add_tag(last_tag, 1);
+                let untagged_index = builder
+                    .ins()
+                    .band_imm(index, 0xF0FF_FFFF_FFFF_FFFFu64 as i64);
+                builder.ins().bor(untagged_index, new_tag)
+            }
+        };
+        self.last_random_tag = Some(tagged_index);
+        tagged_index
     }
 }
 

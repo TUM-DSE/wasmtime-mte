@@ -436,6 +436,10 @@ fn aarch64_get_operands<F: Fn(VReg) -> VReg>(inst: &Inst, collector: &mut Operan
             collector.reg_use(rt);
             memarg_operands(mem, collector);
         }
+        &Inst::Addg { rd, rn, .. } => {
+            collector.reg_def(rd);
+            collector.reg_use(rn);
+        }
         &Inst::AluRRR { rd, rn, rm, .. } => {
             collector.reg_def(rd);
             collector.reg_use(rn);
@@ -1340,6 +1344,19 @@ impl Inst {
                 let mem = mem.pretty_print_default();
 
                 format!("{}{} {}, {}", mem_str, op, rt, mem)
+            }
+            &Inst::Addg {
+                rd,
+                rn,
+                uimm6,
+                uimm4,
+            } => {
+                let rd = pretty_print_ireg(rd.to_reg(), OperandSize::Size64, allocs);
+                let rn = pretty_print_ireg(rn, OperandSize::Size64, allocs);
+                let uimm6 = uimm6.pretty_print(0, allocs);
+                let uimm4 = uimm4.pretty_print(0, allocs);
+
+                format!("addg {}, {}, {}, {}", rd, rn, uimm6, uimm4)
             }
             &Inst::Nop0 => "nop-zero-len".to_string(),
             &Inst::Nop4 => "nop".to_string(),

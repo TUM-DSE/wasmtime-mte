@@ -862,6 +862,25 @@ impl MachInstEmit for Inst {
 
                 sink.put4(enc_stg_simm9(top11, simm9, op_11_10, rn, rt));
             }
+            &Inst::Addg {
+                rd,
+                rn,
+                uimm6,
+                uimm4,
+            } => {
+                let top10 = 0b1001000110;
+                let op3 = 0b00;
+                let rd = allocs.next_writable(rd);
+                let rn = allocs.next(rn);
+                sink.put4(
+                    (top10 << 22)
+                        | (uimm6.bits() << 16)
+                        | (op3 << 14)
+                        | (uimm4.bits() << 10)
+                        | (machreg_to_gpr(rn) << 5)
+                        | machreg_to_gpr(rd.to_reg()),
+                );
+            }
             &Inst::AluRRR {
                 alu_op,
                 size,
