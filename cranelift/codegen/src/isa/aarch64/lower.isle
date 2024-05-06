@@ -1227,13 +1227,6 @@
 (rule -1 (lower (has_type (fits_in_64 ty) (band x y)))
       (alu_rs_imm_logic_commutative (ALUOp.And) ty x y))
 
-;; special case when we mask out a mte tag from a just generated irg instruction
-(rule 1 (lower (has_type $I64 (band (arm64_irg x) (u64_from_iconst 0xf0ffffffffffffff))))
-      x)
-
-(rule 2 (lower (has_type $I64 (band (u64_from_iconst 0xf0ffffffffffffff) (arm64_irg x))))
-      x)
-
 (rule (lower (has_type $I128 (band x y))) (i128_alu_bitop (ALUOp.And) $I64 x y))
 
 (rule -2 (lower (has_type (ty_vec128 ty) (band x y)))
