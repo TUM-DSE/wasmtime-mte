@@ -2549,12 +2549,16 @@ pub fn translate_operator<FE: FuncEnvironment + ?Sized>(
             tag_memory_region(base_ptr, free_tag, size, builder, environ)?;
         }
         Operator::PointerSign => {
-            let (ptr, modifier) = state.pop2();
+            let ptr = state.pop1();
+             // TODO: once we support multiple instances in the same process, we need to get the unique key from the global state here
+            let modifier = builder.ins().iconst(I64, 0);
             let signed_ptr = builder.ins().pointer_sign(ptr, modifier);
             state.push1(signed_ptr);
         }
         Operator::PointerAuth => {
-            let (signed_ptr, modifier) = state.pop2();
+            let signed_ptr = state.pop1();
+             // TODO: once we support multiple instances in the same process, we need to get the unique key from the global state here
+            let modifier = builder.ins().iconst(I64, 0);
             let ptr = builder.ins().pointer_auth(signed_ptr, modifier);
             state.push1(ptr);
         }
