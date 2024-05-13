@@ -283,6 +283,7 @@ impl FuncTranslationState {
         self.tables.clear();
         self.signatures.clear();
         self.functions.clear();
+        self.last_random_tag = None;
     }
 
     /// Initialize the state for compiling a function with the given signature.
