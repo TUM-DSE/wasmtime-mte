@@ -1,0 +1,82 @@
+cff-version: 1.2.0
+message: "If you use this project, please cite the associated paper (see preferred-citation)."
+authors:
+  - family-names: Fink
+    given-names: Martin
+    orcid: 'https://orcid.org/0000-0002-3280-8974'
+    affiliation: Technical University of Munich
+    email: martin.fink@cit.tum.de
+  - family-names: Stavrakakis
+    given-names: Dimitrios
+    email: dimitrios.stavrakakis@tum.de
+    affiliation: Technical University of Munich
+    orcid: 'https://orcid.org/0000-0002-3667-3763'
+  - family-names: Sprokholt
+    given-names: Dennis
+    email: d.g.sprokholt@tudelft.nl
+    orcid: 'https://orcid.org/0000-0002-2132-7315'
+    affiliation: Delft University of Technology
+  - family-names: Chakraborty
+    given-names: Soham
+    affiliation: Delft University of Technology
+    orcid: 'https://orcid.org/0000-0002-4454-2050'
+    email: S.S.Chakraborty@tudelft.nl
+  - family-names: Ekberg
+    given-names: Jan-Erik
+    email: jan.erik.ekberg@huawei.com
+    affiliation: Huawei Technologies
+    orcid: 'https://orcid.org/0009-0007-5432-6128'
+  - family-names: Bhatotia
+    given-names: Pramod
+    orcid: 'https://orcid.org/0000-0002-3220-5735'
+    affiliation: Technical University of Munich
+    email: pramod.bhatotia@tum.de
+title: "Cage: Hardware-Accelerated Safe WebAssembly"
+preferred-citation:
+  type: conference-paper
+  doi: 10.1145/3696443.3708920
+  conference:
+    name: "CGO '25"
+    website: https://2025.cgo.org/
+    city: Las Vegas
+    country: US
+  collection-title: Proceedings of the 23rd ACM/IEEE International Symposium on Code Generation and Optimization (CGO)
+  authors:
+    - family-names: Fink
+      given-names: Martin
+      orcid: 'https://orcid.org/0000-0002-3280-8974'
+      affiliation: Technical University of Munich
+      email: martin.fink@cit.tum.de
+    - family-names: Stavrakakis
+      given-names: Dimitrios
+      email: dimitrios.stavrakakis@tum.de
+      affiliation: Technical University of Munich
+      orcid: 'https://orcid.org/0000-0002-3667-3763'
+    - family-names: Sprokholt
+      given-names: Dennis
+      email: d.g.sprokholt@tudelft.nl
+      orcid: 'https://orcid.org/0000-0002-2132-7315'
+      affiliation: Delft University of Technology
+    - family-names: Chakraborty
+      given-names: Soham
+      affiliation: Delft University of Technology
+      orcid: 'https://orcid.org/0000-0002-4454-2050'
+      email: S.S.Chakraborty@tudelft.nl
+    - family-names: Ekberg
+      given-names: Jan-Erik
+      email: jan.erik.ekberg@huawei.com
+      affiliation: Huawei Technologies
+      orcid: 'https://orcid.org/0009-0007-5432-6128'
+    - family-names: Bhatotia
+      given-names: Pramod
+      orcid: 'https://orcid.org/0000-0002-3220-5735'
+      affiliation: Technical University of Munich
+      email: pramod.bhatotia@tum.de
+  publisher:
+    name: ACM
+  date-published: 2025-03-05
+  year: 2025
+  month: 3
+  title: "Cage: Hardware-Accelerated Safe WebAssembly"
+  start: 538
+  end: 552
