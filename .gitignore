@@ -17,7 +17,7 @@ tags
 target
 .z3-trace
 foo
-.cargo
+#.cargo
 publish
 vendor
 examples/build
