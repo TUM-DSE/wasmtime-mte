@@ -1335,6 +1335,12 @@ fn memory_images(engine: &Engine, module: &CompiledModule) -> Result<Option<Modu
         return Ok(None);
     }
 
+    // MTE only supports tagging on anonymous mappings, so file-backed memory
+    // images would drop tags. Disable COW images when MTE is enabled.
+    if engine.config().tunables.enable_mte {
+        return Ok(None);
+    }
+
     // ... otherwise logic is delegated to the `ModuleMemoryImages::new`
     // constructor.
     let mmap = if engine.config().force_memory_init_memfd {

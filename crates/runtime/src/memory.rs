@@ -337,6 +337,9 @@ impl RuntimeLinearMemory for MmapMemory {
             // MemoryImageSlot has its own growth mechanisms; defer to its
             // implementation.
             image.set_heap_limit(new_size)?;
+            if self.mmap.mte_config().enabled {
+                bail!("when using MTE, memory images should be disabled");
+            }
         } else {
             // If the new size of this heap fits within the existing allocation
             // then all we need to do is to make the new pages accessible. This
