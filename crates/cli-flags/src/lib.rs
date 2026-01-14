@@ -481,6 +481,10 @@ impl CommonOptions {
             true => err,
         }
 
+        if let Some(enable) = self.codegen.mte {
+            config.enable_mte(enable);
+        }
+
         if let Some(enable) = self.codegen.mte_bounds_checks {
             if enable {
                 if !matches!(self.codegen.mte, Some(true)) {
